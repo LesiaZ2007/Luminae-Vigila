@@ -33,7 +33,6 @@ function CrowIcon({ size = 18, color = 'currentColor' }) {
       />
     </svg>
   )
-}
   
 }
 
