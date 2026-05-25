@@ -64,16 +64,22 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
           const list = error ? [] : (cals ?? [])
           setCalendars(prev => ({ ...prev, [acc.id]: list }))
 
-          // Seed prefs with color/summary metadata
+          // Seed prefs with color/summary metadata.
+          // For known calendars: only update the summary; preserve the
+          // user's enabled toggle and any custom colour they've set.
+          // For brand-new calendars: seed with API defaults.
           setPrefs(p => {
             const accPref = p[acc.id] ?? { enabled: true, calendars: {} }
             const calMap  = { ...accPref.calendars }
             for (const cal of list) {
               const existing = calMap[cal.id]
-              calMap[cal.id] = {
-                enabled: typeof existing === 'boolean' ? existing : (existing?.enabled !== false),
+              calMap[cal.id] = existing == null ? {
+                enabled: true,
                 color:   cal.backgroundColor ?? '#4285f4',
                 summary: cal.summary,
+              } : {
+                ...(typeof existing === 'boolean' ? { enabled: existing } : existing),
+                summary: cal.summary,   // always refresh the display name
               }
             }
             return { ...p, [acc.id]: { ...accPref, calendars: calMap } }
