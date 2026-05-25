@@ -1454,36 +1454,20 @@ export default function Home() {
         />
       )}
 
-      {/* ── Import / Export FAB ── */}
-      <ImportExportButton
-        events={events}
-        todos={todos}
-        todoCategories={todoCategories}
-        onImport={handleImport}
-        isMobile={isMobile}
-      />
+      {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
+      {!isMobile && (
+        <ImportExportButton
+          events={events}
+          todos={todos}
+          todoCategories={todoCategories}
+          onImport={handleImport}
+        />
+      )}
 
       {/* ── Floating Corvus widget (desktop only) ── */}
-      {/* On mobile the bottom tab bar already has a Corvus item, so we       */}
-      {/* navigate to the full tab instead of showing a small popup.          */}
-      {activeNav !== 'corvus' && (
-        isMobile ? (
-          /* Mobile: single tap-target that opens the full Corvus tab */
-          <button
-            onClick={() => setActiveNav('corvus')}
-            title="Open Corvus"
-            style={{
-              position: 'fixed', bottom: 76, right: 16,
-              width: 48, height: 48, borderRadius: '50%', border: 'none',
-              background: 'var(--blue)', color: '#fff', cursor: 'pointer',
-              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-              transition: 'transform .15s, box-shadow .15s',
-            }}
-          >
-            <CrowIcon size={20} />
-          </button>
-        ) : corvusFloat ? (
+      {/* On mobile the bottom tab bar has a Corvus item — no floating button needed. */}
+      {!isMobile && activeNav !== 'corvus' && (
+        corvusFloat ? (
           <div style={{
             position: 'fixed', bottom: 24, right: 20,
             width: 360, height: 500, zIndex: 200,
