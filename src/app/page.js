@@ -75,6 +75,8 @@ function expandRecurring(base) {
         ...base,
         id,
         recurrenceGroupId: newId,
+        seriesRecurrence:  recurrence,   // preserved so EventModal can pre-populate "Edit all"
+        seriesStart:       base.start,   // first occurrence start for "Edit all" date reset
         start: new Date(cur).toISOString(),
         end:   new Date(cur.getTime() + duration).toISOString(),
         recurrence: undefined,
@@ -413,13 +415,25 @@ export default function Home() {
   }, [events, todos, pushToast])
 
   /* ── Event CRUD ── */
-  const saveEvent = useCallback((ev) => {
-    const expanded = expandRecurring(ev)
-    if (ev.id && events.some(e => e.id === ev.id)) {
-      // Single edit — replace just that one
-      setEvents(prev => prev.map(e => e.id === ev.id ? expanded[0] : e))
+  const saveEvent = useCallback((ev, scope = 'single') => {
+    if (scope === 'all') {
+      // "Edit all in series": delete every existing instance then re-expand from scratch
+      const groupId = ev.recurrenceGroupId
+      if (!groupId) return
+      const baseEvent = { ...ev, id: groupId }
+      const newExpanded = expandRecurring(baseEvent)
+      setEvents(prev => [
+        ...prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== groupId),
+        ...newExpanded,
+      ])
     } else {
-      setEvents(prev => [...prev, ...expanded])
+      const expanded = expandRecurring(ev)
+      if (ev.id && events.some(e => e.id === ev.id)) {
+        // Single edit — replace just that one instance
+        setEvents(prev => prev.map(e => e.id === ev.id ? expanded[0] : e))
+      } else {
+        setEvents(prev => [...prev, ...expanded])
+      }
     }
   }, [events])
 

@@ -24,6 +24,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Link tasks to a class** — tag any task with a class schedule entry (shows a color-coded chip on the task row)
 - **Hide events** — hide individual events from view; reveal them back semi-transparently anytime
 - **Overlapping events** — when events start at the same time the shorter one is indented; same-duration events get a stable stagger so both are always visible
+- **Recurring event edit scope** — clicking a repeating event asks whether to edit *this occurrence only* or *all events in the series*; choosing "all" reopens the full form pre-populated with the original recurrence config (type, days, end date) and the series start date so every occurrence is regenerated
 - **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
 
 ### 🔵 Google Calendar
