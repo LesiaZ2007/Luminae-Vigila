@@ -1352,11 +1352,29 @@ export default function Home() {
         isMobile={isMobile}
       />
 
-      {/* ── Floating Corvus widget ── */}
+      {/* ── Floating Corvus widget (desktop only) ── */}
+      {/* On mobile the bottom tab bar already has a Corvus item, so we       */}
+      {/* navigate to the full tab instead of showing a small popup.          */}
       {activeNav !== 'corvus' && (
-        corvusFloat ? (
+        isMobile ? (
+          /* Mobile: single tap-target that opens the full Corvus tab */
+          <button
+            onClick={() => setActiveNav('corvus')}
+            title="Open Corvus"
+            style={{
+              position: 'fixed', bottom: 76, right: 16,
+              width: 48, height: 48, borderRadius: '50%', border: 'none',
+              background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+              transition: 'transform .15s, box-shadow .15s',
+            }}
+          >
+            <CrowIcon size={20} />
+          </button>
+        ) : corvusFloat ? (
           <div style={{
-            position: 'fixed', bottom: isMobile ? 76 : 24, right: 20,
+            position: 'fixed', bottom: 24, right: 20,
             width: 360, height: 500, zIndex: 200,
             borderRadius: 18, overflow: 'hidden',
             border: '1px solid var(--border)',
@@ -1378,7 +1396,7 @@ export default function Home() {
             onClick={() => setCorvusFloat(true)}
             title="Open Corvus"
             style={{
-              position: 'fixed', bottom: isMobile ? 76 : 24, right: 20,
+              position: 'fixed', bottom: 24, right: 20,
               width: 50, height: 50, borderRadius: '50%', border: 'none',
               background: 'var(--blue)', color: '#fff', cursor: 'pointer',
               zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
