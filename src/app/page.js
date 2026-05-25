@@ -669,12 +669,12 @@ export default function Home() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: isTablet && activeNav === 'calendar' ? 'column' : 'row' }}>
         {activeNav === 'calendar' && (
           <>
-            <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 20, position: 'relative' }}>
+            <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: isMobile ? '10px 6px 6px' : 20, position: 'relative' }}>
               {isMobile && (
                 <button
                   onClick={() => setShowGoogleSettings(true)}
                   title="Google Calendar settings"
-                  style={{ position: 'absolute', top: 14, right: 14, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, boxShadow: 'var(--shadow)', color: 'var(--text-2)', fontSize: '0.72rem', fontWeight: 600 }}>
+                  style={{ position: 'absolute', bottom: hiddenEventCount > 0 ? 58 : 18, left: 18, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, boxShadow: 'var(--shadow)', color: 'var(--text-2)', fontSize: '0.72rem', fontWeight: 600, transition: 'bottom .2s' }}>
                   <GoogleLogo size={14} />
                   {googleEvents.length > 0 && <span>{googleEvents.length}</span>}
                 </button>
@@ -705,7 +705,8 @@ export default function Home() {
               )}
               <WeeklyCalendar events={allCalendarEvents} todos={todos}
                               onDateClick={handleDateClick} onEventClick={handleEventClick}
-                              onViewChange={handleViewChange} onEventReceive={handleEventReceive} />
+                              onViewChange={handleViewChange} onEventReceive={handleEventReceive}
+                              isMobile={isMobile} />
             </main>
 
             {/* Resize handle — desktop only */}

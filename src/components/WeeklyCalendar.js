@@ -7,7 +7,7 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive }) {
+export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile }) {
   const calendarRef = useRef(null)
   const touchStart  = useRef(null)
   const wheelTimer  = useRef(null)
@@ -125,24 +125,25 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     const priority  = arg.event.extendedProps?.priority
     const priorityColor = priority === 'high' ? '#ef4444' : priority === 'medium' ? '#f59e0b' : null
 
-    // Detect short events (≤ 45 min) to compact the layout
+    // Detect short events to compact the layout
+    // On mobile day view there's full width, so only truly tiny events (≤30 min) go compact
     const durationMins = arg.event.end && arg.event.start && !arg.event.allDay
       ? (arg.event.end - arg.event.start) / 60000
       : 999
-    const isShort = durationMins <= 45
+    const isShort = durationMins <= (isMobile ? 30 : 45)
 
     if (isShort && !arg.event.allDay) {
       // Compact single-line layout for short events
       return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', padding: '0 2px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', padding: '0 2px', minWidth: 0 }}>
           {isTodo && priorityColor && (
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: priorityColor, flexShrink: 0, display: 'inline-block', boxShadow: '0 0 0 1px rgba(255,255,255,0.5)' }} />
           )}
-          <span style={{ fontSize: '0.72rem', opacity: 0.8, flexShrink: 0 }}>{arg.timeText}</span>
+          <span style={{ fontSize: '0.72rem', opacity: 0.8, flexShrink: 0, whiteSpace: 'nowrap' }}>{arg.timeText}</span>
           {isGoogle && (
             <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '12px', flexShrink: 0 }}>G</span>
           )}
-          <span style={{ fontWeight: 600, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
             {arg.event.title}
           </span>
         </div>
@@ -152,26 +153,27 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     return (
       <div className="flex flex-col h-full overflow-hidden px-0.5" style={{ position: 'relative' }}>
         {!arg.event.allDay && (
-          <div style={{ fontSize: '0.68rem', opacity: 0.85, lineHeight: 1.2 }}>
+          <div style={{ fontSize: '0.68rem', opacity: 0.85, lineHeight: 1.2, flexShrink: 0, whiteSpace: 'nowrap' }}>
             {arg.timeText}
           </div>
         )}
-        <div style={{ fontWeight: 600, fontSize: '0.76rem', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* Title: wraps so you can read the full name — block is clipped at event bottom */}
+        <div style={{ fontWeight: 600, fontSize: '0.76rem', lineHeight: 1.3, overflow: 'hidden', wordBreak: 'break-word' }}>
           {isTodo && priorityColor && (
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: priorityColor, flexShrink: 0, display: 'inline-block', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.5)' }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: priorityColor, display: 'inline-block', marginRight: 3, verticalAlign: 'middle', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.5)', position: 'relative', top: -1 }} />
           )}
           {isGoogle && (
-            <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '13px', flexShrink: 0 }}>G</span>
+            <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '13px', marginRight: 3, verticalAlign: 'middle', display: 'inline-block' }}>G</span>
           )}
           {arg.event.title}
         </div>
         {linkedTodos.slice(0, 3).map(t => (
-          <div key={t.id} style={{ fontSize: '0.63rem', opacity: 0.88, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div key={t.id} style={{ fontSize: '0.63rem', opacity: 0.88, marginTop: 1, overflow: 'hidden', wordBreak: 'break-word' }}>
             ↳ {t.title}
           </div>
         ))}
         {linkedTodos.length > 3 && (
-          <div style={{ fontSize: '0.63rem', opacity: 0.7, marginTop: 1 }}>
+          <div style={{ fontSize: '0.63rem', opacity: 0.7, marginTop: 1, flexShrink: 0 }}>
             +{linkedTodos.length - 3} more
           </div>
         )}
@@ -195,11 +197,23 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
         <FullCalendar
           ref={calendarRef}
           plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
+          initialView={isMobile ? 'timeGridDay' : 'timeGridWeek'}
           headerToolbar={{
             left:   'prev,next today',
             center: 'title',
             right:  'dayGridMonth,timeGridWeek,timeGridDay',
+          }}
+          views={{
+            timeGridWeek: {
+              // Narrow day letters (M/T/W…) + date number → "M 26" fits the tight columns
+              dayHeaderFormat: isMobile
+                ? { weekday: 'narrow', day: 'numeric' }
+                : { weekday: 'short', day: 'numeric' },
+            },
+            timeGridDay: {
+              // Full date in the single-column header
+              dayHeaderFormat: { weekday: 'long', month: 'short', day: 'numeric' },
+            },
           }}
           customButtons={{
             prev: { click: () => navigate('prev') },
@@ -228,7 +242,9 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           slotMaxTime="24:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
-          slotLabelFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}
+          slotLabelFormat={isMobile
+            ? { hour: 'numeric', hour12: true }                                         // "8 AM" – fits 38 px axis
+            : { hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}  // "8:00 AM"
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}
           nowIndicator={true}
           firstDay={0}
@@ -237,7 +253,7 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           dayMaxEvents={4}
           expandRows={true}
           scrollTime="08:00:00"
-          eventMinHeight={28}
+          eventMinHeight={isMobile ? 32 : 28}
           eventDisplay="block"
           businessHours={{ daysOfWeek: [1,2,3,4,5], startTime: '08:00', endTime: '20:00' }}
           droppable={true}
