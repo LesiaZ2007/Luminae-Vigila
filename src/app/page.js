@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -957,10 +957,12 @@ export default function Home() {
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
+    // Settings tab — mobile only (sidebar handles settings on desktop)
+    ...(isMobile ? [{ id: 'settings', label: 'Settings', icon: <Settings size={22}/> }] : []),
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100vh', overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100dvh', overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }}>
 
       {/* ── Sidebar (hidden on mobile — replaced by bottom tabs) ── */}
       {!isMobile && <aside style={{ width: isTablet ? 168 : 220, background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: 'var(--shadow-lg)', position: 'relative', overflow: 'hidden', transition: 'width 0.25s cubic-bezier(0.16,1,0.3,1)' }}>
@@ -1272,6 +1274,113 @@ export default function Home() {
             />
           </main>
         )}
+
+        {/* ── Mobile Settings tab ── Shows all the sidebar features on small screens */}
+        {activeNav === 'settings' && isMobile && (
+          <main style={{ flex: 1, overflowY: 'auto', background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            {/* Decorative blobs (match sidebar) */}
+            <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'radial-gradient(circle, rgba(147,197,253,.1), transparent)', pointerEvents: 'none' }} />
+
+            <div style={{ padding: '20px 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <CrowIcon size={24} />
+              <span style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                <span style={{ color: '#fff' }}>luminae</span><span style={{ color: '#93c5fd', marginLeft: 4 }}>Vigila</span>
+              </span>
+            </div>
+
+            {/* Live info */}
+            <div style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: '1.1rem', fontWeight: 800, color: '#fff', letterSpacing: '0.01em', lineHeight: 1.2 }}>
+                  {militaryTime
+                    ? clockTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+                    : clockTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
+                </div>
+                <button type="button" onClick={() => setMilitaryTime(v => !v)}
+                        style={{ fontSize: '0.56rem', fontWeight: 700, color: 'rgba(147,197,253,.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
+                  {militaryTime ? '12h' : '24h'}
+                </button>
+              </div>
+              <div style={{ fontSize: '0.66rem', color: 'rgba(147,197,253,.55)', marginTop: 3, fontWeight: 500 }}>
+                {clockTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              </div>
+              {weather && (
+                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '1rem' }}>{weatherIcon(weather.code)}</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>{weather.temp}°C</span>
+                  {weather.rainMsg && <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#93c5fd' }}>{weather.rainMsg}</span>}
+                </div>
+              )}
+            </div>
+
+            {/* Account */}
+            <div style={{ margin: '10px 12px 0', padding: '10px 12px', borderRadius: 12, background: 'rgba(0,0,0,0.15)' }}>
+              {currentUser ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signed in as</div>
+                    <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,.85)', fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
+                  </div>
+                  <form action="/api/auth/logout" method="POST">
+                    <button type="submit" title="Sign out"
+                            style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <LogOut size={12} /> Sign out
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <a href="/login"
+                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 12px', borderRadius: 10, textDecoration: 'none', border: '1px solid rgba(255,255,255,.15)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600 }}>
+                  <GoogleLogo size={14} /> Sign in to sync
+                </a>
+              )}
+            </div>
+
+            {/* Google Calendar */}
+            <SidebarGoogleSection
+              onOpenSettings={() => setShowGoogleSettings(true)}
+              onSync={syncGoogleCalendar}
+              syncing={gcSyncing}
+            />
+
+            {/* Canvas */}
+            <SidebarCanvasSection
+              onOpenSettings={() => setShowCanvasSettings(true)}
+              onSync={syncCanvas}
+              syncing={cvSyncing}
+              canvasCalPrefs={canvasCalPrefs}
+              onToggleCanvasOnCalendar={toggleCanvasOnCalendar}
+              onToggleCourseOnCalendar={toggleCourseOnCalendar}
+            />
+
+            {/* Class Schedule */}
+            <SidebarScheduleSection
+              canvasClasses={canvasClasses}
+              onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+              onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+            />
+
+            {/* Quick actions + theme */}
+            <div style={{ padding: '10px 12px', marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
+                <Plus size={14}/> Add Event
+              </button>
+              <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                <Plus size={14}/> Add Task
+              </button>
+              <ImportExportButton
+                events={events} todos={todos} todoCategories={todoCategories}
+                onImport={handleImport}
+              />
+              <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
+                {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
+              </button>
+            </div>
+          </main>
+        )}
       </div>
 
       {/* ── Mobile bottom tab bar ── */}
@@ -1279,6 +1388,8 @@ export default function Home() {
         <nav style={{
           display: 'flex', background: 'var(--sidebar)', borderTop: '1px solid rgba(255,255,255,.08)',
           flexShrink: 0, zIndex: 20,
+          // Respect iOS home-indicator and Android navigation bar
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
           {NAV_ITEMS.map(item => (
             <button key={item.id} onClick={() => setActiveNav(item.id)}
