@@ -203,6 +203,17 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
             center: 'title',
             right:  'dayGridMonth,timeGridWeek,timeGridDay',
           }}
+          buttonText={isMobile ? {
+            today: 'today',
+            month: 'M',
+            week:  'W',
+            day:   'D',
+          } : {
+            today: 'today',
+            month: 'Month',
+            week:  'Week',
+            day:   'Day',
+          }}
           views={{
             timeGridWeek: {
               // Narrow day letters (M/T/W…) + date number → "M 26" fits the tight columns

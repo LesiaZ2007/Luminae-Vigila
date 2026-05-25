@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -25,6 +25,8 @@ import SidebarCanvasSection   from '@/components/SidebarCanvasSection'
 import SidebarScheduleSection from '@/components/SidebarScheduleSection'
 import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
 import ClassScheduleModal     from '@/components/ClassScheduleModal'
+import CoursesPanel           from '@/components/CoursesPanel'
+import ImportExportButton     from '@/components/ImportExportButton'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -152,6 +154,13 @@ export default function Home() {
   const [cvSyncing,          setCvSyncing]          = useState(false)
   const [canvasTodoModal,    setCanvasTodoModal]    = useState(false)
   const [editingCanvas,      setEditingCanvas]      = useState(null)
+  // Canvas calendar visibility prefs (lifted to state for immediate re-render)
+  const [canvasCalPrefs, setCanvasCalPrefs] = useState(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      return { showOnCalendar: p.showOnCalendar !== false, coursesEnabled: p.coursesEnabled ?? {} }
+    } catch { return { showOnCalendar: true, coursesEnabled: {} } }
+  })
 
   const shownReminders = useRef(new Set())
 
@@ -161,8 +170,12 @@ export default function Home() {
   const [currentUser,  setCurrentUser]  = useState(null)
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
-  const isTablet  = windowWidth >= 640 && windowWidth < 1024
-  const hiddenEventCount = Object.values(eventPrefs).filter(pref => pref?.hidden).length
+  const isTablet  = windowWidth >= 640 && windowWidth < 1100
+  // Count events that are actively hidden — local OR google, not stale localStorage entries
+  const hiddenEventCount = useMemo(
+    () => [...events, ...googleEvents].filter(e => eventPrefs[e.id]?.hidden).length,
+    [events, googleEvents, eventPrefs],
+  )
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -361,6 +374,14 @@ export default function Home() {
   const deleteTodo = useCallback((id) => setTodos(p => p.filter(t => t.id !== id)), [])
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
 
+  /* ── Import / Export ── */
+  const handleImport = useCallback(({ events: importedEvents, todos: importedTodos, todoCategories: importedCats }) => {
+    if (Array.isArray(importedEvents) && importedEvents.length)         setEvents(importedEvents)
+    if (Array.isArray(importedTodos)  && importedTodos.length)          setTodos(importedTodos)
+    if (Array.isArray(importedCats)   && importedCats.length)           setTodoCategories(importedCats)
+    pushToast('Imported!', `${importedEvents.length} events and ${importedTodos.length} tasks loaded.`)
+  }, [pushToast])
+
   /* ── External drag-to-create ── */
   const handleEventReceive = useCallback((start, end) => {
     const dateStr = start ? start.toISOString() : new Date().toISOString()
@@ -494,7 +515,7 @@ export default function Home() {
     const prefs2 = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
     setCanvasCalEvents((calEvs ?? []).map(e => ({
       ...e,
-      color: e.color || '#E66000',
+      color: e.color || '#E8751A',
     })))
   }, [pushToast])
 
@@ -523,6 +544,29 @@ export default function Home() {
     }, 5 * 60_000)
     return () => clearInterval(id)
   }, [syncCanvas])
+
+  /* ── Canvas calendar visibility prefs ── */
+  const toggleCanvasOnCalendar = useCallback(() => {
+    setCanvasCalPrefs(prev => {
+      const next = { ...prev, showOnCalendar: !prev.showOnCalendar }
+      try {
+        const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+        localStorage.setItem('lv-canvas-prefs', JSON.stringify({ ...lsPref, showOnCalendar: next.showOnCalendar }))
+      } catch {}
+      return next
+    })
+  }, [])
+
+  const toggleCourseOnCalendar = useCallback((courseId, enabled) => {
+    setCanvasCalPrefs(prev => {
+      const next = { ...prev, coursesEnabled: { ...prev.coursesEnabled, [String(courseId)]: enabled } }
+      try {
+        const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+        localStorage.setItem('lv-canvas-prefs', JSON.stringify({ ...lsPref, coursesEnabled: next.coursesEnabled }))
+      } catch {}
+      return next
+    })
+  }, [])
 
   /* ── Canvas CRUD ── */
   const toggleCanvasAssignment = useCallback((id) => {
@@ -675,25 +719,55 @@ export default function Home() {
       .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
     [googleEvents, eventPrefs],
   )
-  /** Hidden GCal events shown semi-transparently when the toggle is on */
+  /** Hidden events (local + GCal) shown semi-transparently when the toggle is on */
   const hiddenGcalEvents = useMemo(
-    () => !showHiddenGcal ? [] : googleEvents
-      .filter(e => eventPrefs[e.id]?.hidden)
-      .map(e => ({
-        ...e,
-        color: eventPrefs[e.id]?.color || e.color,
-        classNames: ['lv-hidden-event'],
-        extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
-      })),
-    [googleEvents, eventPrefs, showHiddenGcal],
+    () => {
+      if (!showHiddenGcal) return []
+      const hiddenLocal = events
+        .filter(e => eventPrefs[e.id]?.hidden)
+        .map(e => ({
+          ...e,
+          classNames: ['lv-hidden-event'],
+          extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
+        }))
+      const hiddenGcal = googleEvents
+        .filter(e => eventPrefs[e.id]?.hidden)
+        .map(e => ({
+          ...e,
+          color: eventPrefs[e.id]?.color || e.color,
+          classNames: ['lv-hidden-event'],
+          extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
+        }))
+      return [...hiddenLocal, ...hiddenGcal]
+    },
+    [events, googleEvents, eventPrefs, showHiddenGcal],
   )
   // Canvas calendar events filtered by prefs
-  const visibleCanvasCalEvents = useMemo(() => {
-    const prefs = typeof window !== 'undefined'
-      ? JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
-      : {}
-    return canvasCalEvents.filter(e => prefs.coursesEnabled?.[e.extendedProps?.courseId] !== false)
-  }, [canvasCalEvents])
+  const visibleCanvasCalEvents = useMemo(() =>
+    canvasCalEvents.filter(e =>
+      canvasCalPrefs.showOnCalendar &&
+      canvasCalPrefs.coursesEnabled[String(e.extendedProps?.courseId)] !== false,
+    ),
+  [canvasCalEvents, canvasCalPrefs])
+
+  // Canvas assignments shown as all-day task markers (like todos) — not done, has due date
+  const canvasAssignmentTasks = useMemo(() =>
+    canvasCalPrefs.showOnCalendar
+      ? canvasAssignments
+          .filter(a =>
+            !a.done && !a.hidden && a.dueAt &&
+            canvasCalPrefs.coursesEnabled[String(a.courseId)] !== false,
+          )
+          .map(a => ({
+            id:    `cal-canvas-${a.id}`,
+            title: a.title,
+            start: a.dueAt.slice(0, 10),
+            allDay: true,
+            color:  '#E8751A',
+            extendedProps: { type: 'canvas-assignment', canvasId: a.id, courseName: a.courseName, htmlUrl: a.htmlUrl },
+          }))
+      : [],
+  [canvasAssignments, canvasCalPrefs])
 
   const allCalendarEvents = [
     ...visibleEvents,
@@ -701,6 +775,7 @@ export default function Home() {
     ...hiddenGcalEvents,
     ...canvasClassEvents,
     ...visibleCanvasCalEvents,
+    ...canvasAssignmentTasks,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
@@ -752,9 +827,13 @@ export default function Home() {
 
   if (!mounted) return null
 
+  const canvasConnected = canvasAssignments.length > 0
   const NAV_ITEMS = [
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={18}/> },
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={18}/> },
+    ...(canvasConnected
+      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={18}/> }]
+      : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={17} color="currentColor"/> },
   ]
 
@@ -762,42 +841,39 @@ export default function Home() {
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100vh', overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }}>
 
       {/* ── Sidebar (hidden on mobile — replaced by bottom tabs) ── */}
-      {!isMobile && <aside style={{ width: isTablet ? 52 : 220, background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: 'var(--shadow-lg)', position: 'relative', overflow: 'hidden', transition: 'width 0.25s cubic-bezier(0.16,1,0.3,1)' }}>
+      {!isMobile && <aside style={{ width: isTablet ? 168 : 220, background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: 'var(--shadow-lg)', position: 'relative', overflow: 'hidden', transition: 'width 0.25s cubic-bezier(0.16,1,0.3,1)' }}>
         {/* Decorative blobs */}
         <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'radial-gradient(circle, rgba(147,197,253,.12), transparent)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: 80, left: -30, width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle, rgba(96,165,250,.08), transparent)', pointerEvents: 'none' }} />
 
         {/* Logo */}
-        <div style={{ padding: isTablet ? '20px 0 14px' : '24px 20px 18px', position: 'relative', display: 'flex', justifyContent: isTablet ? 'center' : 'flex-start' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <CrowIcon size={isTablet ? 26 : 28} />
-            {!isTablet && (
-              <span style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                <span style={{ color: '#fff' }}>luminae</span><span style={{ color: '#93c5fd', marginLeft: 4 }}>Vigila</span>
-              </span>
-            )}
+        <div style={{ padding: '20px 16px 16px', position: 'relative', display: 'flex', justifyContent: 'flex-start' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CrowIcon size={isTablet ? 22 : 28} />
+            <span style={{ fontSize: isTablet ? '0.72rem' : '0.78rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              <span style={{ color: '#fff' }}>luminae</span><span style={{ color: '#93c5fd', marginLeft: 4 }}>Vigila</span>
+            </span>
           </div>
         </div>
 
         {/* Nav */}
-        <nav style={{ padding: isTablet ? '0 6px' : '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <nav style={{ padding: '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {NAV_ITEMS.map(item => (
             <button key={item.id} onClick={() => setActiveNav(item.id)}
-                    title={isTablet ? item.label : undefined}
                     style={{
-                      display: 'flex', alignItems: 'center', justifyContent: isTablet ? 'center' : 'flex-start',
-                      gap: 10, padding: isTablet ? '10px 0' : '9px 12px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+                      gap: 10, padding: '9px 12px',
                       borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                      fontSize: '0.82rem', fontWeight: 600, width: '100%', textAlign: 'left', transition: 'all .13s',
+                      fontSize: isTablet ? '0.78rem' : '0.82rem', fontWeight: 600, width: '100%', textAlign: 'left', transition: 'all .13s',
                       background: activeNav === item.id ? 'rgba(255,255,255,.12)' : 'transparent',
                       color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.6)',
                     }}
                     onMouseEnter={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
                     onMouseLeave={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'transparent' }}>
               {item.icon}
-              {!isTablet && <span style={{ flex: 1 }}>{item.label}</span>}
-              {!isTablet && item.soon && <span style={{ fontSize: '0.62rem', fontWeight: 700, background: 'rgba(147,197,253,.2)', color: '#93c5fd', padding: '2px 6px', borderRadius: 999 }}>soon</span>}
-              {!isTablet && activeNav === item.id && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.soon && <span style={{ fontSize: '0.62rem', fontWeight: 700, background: 'rgba(147,197,253,.2)', color: '#93c5fd', padding: '2px 6px', borderRadius: 999 }}>soon</span>}
+              {activeNav === item.id && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
             </button>
           ))}
         </nav>
@@ -849,34 +925,31 @@ export default function Home() {
           })()}
         </div>
 
-        {/* ── Google Calendar inline section (desktop only) ── */}
-        {!isTablet && (
-          <SidebarGoogleSection
-            onOpenSettings={() => setShowGoogleSettings(true)}
-            onSync={syncGoogleCalendar}
-            syncing={gcSyncing}
-          />
-        )}
+        {/* ── Google Calendar inline section ── */}
+        <SidebarGoogleSection
+          onOpenSettings={() => setShowGoogleSettings(true)}
+          onSync={syncGoogleCalendar}
+          syncing={gcSyncing}
+        />
 
-        {/* ── Canvas inline section (desktop only) ── */}
-        {!isTablet && (
-          <SidebarCanvasSection
-            onOpenSettings={() => setShowCanvasSettings(true)}
-            onSync={syncCanvas}
-            syncing={cvSyncing}
-          />
-        )}
+        {/* ── Canvas inline section ── */}
+        <SidebarCanvasSection
+          onOpenSettings={() => setShowCanvasSettings(true)}
+          onSync={syncCanvas}
+          syncing={cvSyncing}
+          canvasCalPrefs={canvasCalPrefs}
+          onToggleCanvasOnCalendar={toggleCanvasOnCalendar}
+          onToggleCourseOnCalendar={toggleCourseOnCalendar}
+        />
 
-        {/* ── Class Schedule inline section (desktop only, independent of Canvas) ── */}
-        {!isTablet && (
-          <SidebarScheduleSection
-            canvasClasses={canvasClasses}
-            onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
-            onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
-          />
-        )}
+        {/* ── Class Schedule inline section (independent of Canvas) ── */}
+        <SidebarScheduleSection
+          canvasClasses={canvasClasses}
+          onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+          onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+        />
 
-        {/* Drag card */}
+        {/* Drag card — desktop only, not enough space on tablet */}
         {!isTablet && (
           <div ref={dragCardRef} title="Drag onto the calendar to create an event"
                style={{
@@ -894,12 +967,12 @@ export default function Home() {
 
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {/* Signed-in user + logout */}
-          {currentUser && !isTablet && (
+          {/* Sign-in / user display */}
+          {currentUser ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, background: 'rgba(255,255,255,.05)' }}>
               <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div style={{ fontSize: '0.68rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
-                <div style={{ fontSize: '0.76rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
+                <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
+                <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
               </div>
               <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
                 <button type="submit" title="Sign out"
@@ -910,6 +983,20 @@ export default function Home() {
                 </button>
               </form>
             </div>
+          ) : (
+            <a href="/login"
+               style={{
+                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                 padding: '8px 12px', borderRadius: 10, textDecoration: 'none',
+                 border: '1px solid rgba(255,255,255,.12)', background: 'transparent',
+                 color: 'rgba(147,197,253,.6)', fontFamily: 'inherit',
+                 fontSize: '0.78rem', fontWeight: 600, transition: 'all .13s',
+               }}
+               onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.28)'; e.currentTarget.style.color = '#fff' }}
+               onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.12)'; e.currentTarget.style.color = 'rgba(147,197,253,.6)' }}
+            >
+              <GoogleLogo size={13} /> Sign in to sync
+            </a>
           )}
           <button onClick={() => setEventModal({ open: true, event: null, date: null })}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
@@ -929,15 +1016,6 @@ export default function Home() {
                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
             {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
           </button>
-          {/* Tablet: just a Google icon that opens the settings modal */}
-          {isTablet && (
-            <button onClick={() => setShowGoogleSettings(true)} title="Google Calendar"
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 0', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                    onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
-                    onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
-              <GoogleLogo size={14} />
-            </button>
-          )}
         </div>
       </aside>}
 
@@ -955,7 +1033,7 @@ export default function Home() {
                   {googleEvents.length > 0 && <span>{googleEvents.length}</span>}
                 </button>
               )}
-              {hiddenEventCount > 0 && (
+              {(hiddenEventCount > 0 || showHiddenGcal) && (
                 <button
                   onClick={showHiddenEvents}
                   title={showHiddenGcal ? 'Hide hidden events' : 'Show hidden events semi-transparently'}
@@ -1043,6 +1121,18 @@ export default function Home() {
                        onToggleCanvas={toggleCanvasAssignment}
                        onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                        onHideCanvas={hideCanvasAssignment} />
+          </main>
+        )}
+
+        {activeNav === 'courses' && (
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+            <CoursesPanel
+              canvasAssignments={canvasAssignments}
+              onToggleCanvas={toggleCanvasAssignment}
+              onOpenSettings={() => setShowCanvasSettings(true)}
+              onSync={syncCanvas}
+              syncing={cvSyncing}
+            />
           </main>
         )}
 
@@ -1144,6 +1234,15 @@ export default function Home() {
           onClose={() => { setCanvasTodoModal(false); setEditingCanvas(null) }}
         />
       )}
+
+      {/* ── Import / Export FAB ── */}
+      <ImportExportButton
+        events={events}
+        todos={todos}
+        todoCategories={todoCategories}
+        onImport={handleImport}
+        isMobile={isMobile}
+      />
 
       {/* ── Floating Corvus widget ── */}
       {activeNav !== 'corvus' && (

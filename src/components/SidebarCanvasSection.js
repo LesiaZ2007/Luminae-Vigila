@@ -5,33 +5,56 @@
  * Shows Canvas API assignment sync controls (course toggles, connect CTA).
  * Class schedule lives in the separate SidebarScheduleSection component.
  *
- * Props: { onOpenSettings, onSync, syncing }
+ * Props:
+ *   onOpenSettings          — open Canvas settings modal
+ *   onSync                  — trigger a Canvas API sync
+ *   syncing                 — bool
+ *   canvasCalPrefs          — { showOnCalendar: bool, coursesEnabled: { [courseId]: bool } }
+ *   onToggleCanvasOnCalendar — () => void — flip global show-on-calendar
+ *   onToggleCourseOnCalendar — (courseId, enabled) => void — flip one course
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronRight, Settings2, RefreshCw, BookOpen } from 'lucide-react'
+import { ChevronDown, ChevronRight, Settings2, RefreshCw, BookOpen, CalendarDays } from 'lucide-react'
 import { CanvasLogo } from '@/components/CanvasSettingsModal'
 
-export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }) {
+export default function SidebarCanvasSection({
+  onOpenSettings,
+  onSync,
+  syncing,
+  canvasCalPrefs,
+  onToggleCanvasOnCalendar,
+  onToggleCourseOnCalendar,
+}) {
+  const showOnCalendar = canvasCalPrefs?.showOnCalendar !== false
+
   const [sectionExpanded, setSectionExpanded] = useState(true)
   const [coursesExpanded, setCoursesExpanded] = useState(true)
 
   const [connected, setConnected] = useState(false)
   const [courses,   setCourses]   = useState([])
-  const [prefs,     setPrefs]     = useState(() => {
+  const [syncPrefs, setSyncPrefs] = useState(() => {
     try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}') }
     catch { return {} }
   })
 
-  // Persist prefs
+  // Persist sync prefs (for API sync filtering only)
   useEffect(() => {
-    localStorage.setItem('lv-canvas-prefs', JSON.stringify(prefs))
-  }, [prefs])
+    try {
+      const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      localStorage.setItem('lv-canvas-prefs', JSON.stringify({
+        ...lsPref,
+        coursesEnabled: syncPrefs.coursesEnabled ?? {},
+        connected:      syncPrefs.connected,
+      }))
+    } catch {}
+  }, [syncPrefs])
 
   const loadStatus = useCallback(async () => {
     try {
       const { connected: c } = await fetch('/api/canvas/credential').then(r => r.json())
       setConnected(!!c)
+      setSyncPrefs(p => ({ ...p, connected: !!c }))
       if (c) loadCourses()
       else   setCourses([])
     } catch {}
@@ -42,19 +65,21 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
       const { courses: list, error } = await fetch('/api/canvas/courses').then(r => r.json())
       if (error) return
       setCourses(list ?? [])
-      setPrefs(p => {
+      setSyncPrefs(p => {
         const updated = { ...p, coursesEnabled: { ...(p.coursesEnabled ?? {}) } }
         for (const c of list ?? []) {
-          if (updated.coursesEnabled[c.id] === undefined) updated.coursesEnabled[c.id] = true
+          if (updated.coursesEnabled[String(c.id)] === undefined) {
+            updated.coursesEnabled[String(c.id)] = true
+            onToggleCourseOnCalendar?.(c.id, true)
+          }
         }
         return updated
       })
     } catch {}
-  }, [])
+  }, [onToggleCourseOnCalendar])
 
   useEffect(() => { loadStatus() }, [loadStatus])
 
-  // Re-check when settings modal dispatches canvas-credential-changed
   useEffect(() => {
     function onUpdate() { loadStatus() }
     window.addEventListener('canvas-credential-changed', onUpdate)
@@ -62,14 +87,19 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
   }, [loadStatus])
 
   function toggleCourse(courseId, enabled) {
-    setPrefs(p => ({
+    setSyncPrefs(p => ({
       ...p,
-      coursesEnabled: { ...(p.coursesEnabled ?? {}), [courseId]: enabled },
+      coursesEnabled: { ...(p.coursesEnabled ?? {}), [String(courseId)]: enabled },
     }))
+    onToggleCourseOnCalendar?.(courseId, enabled)
     setTimeout(() => onSync?.(), 0)
   }
 
-  const isCourseEnabled = (id) => prefs.coursesEnabled?.[id] !== false
+  const isCourseEnabled = (id) => {
+    // Use page.js state if available, else fall back to syncPrefs
+    if (canvasCalPrefs?.coursesEnabled) return canvasCalPrefs.coursesEnabled[String(id)] !== false
+    return syncPrefs.coursesEnabled?.[String(id)] !== false
+  }
 
   return (
     <div style={{ margin: '0 10px 8px', flexShrink: 0 }}>
@@ -78,7 +108,7 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: sectionExpanded ? 6 : 0 }}>
         <button
           onClick={() => setSectionExpanded(v => !v)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: '5px 4px', borderRadius: 7, color: 'rgba(230,96,0,.65)', textAlign: 'left', fontFamily: 'inherit' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: '5px 4px', borderRadius: 7, color: 'rgba(232,117,26,.8)', textAlign: 'left', fontFamily: 'inherit' }}
         >
           {sectionExpanded ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
           <CanvasLogo size={12} />
@@ -87,13 +117,29 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
           </span>
         </button>
 
+        {/* Show-on-calendar toggle */}
+        {connected && (
+          <button
+            onClick={onToggleCanvasOnCalendar}
+            title={showOnCalendar ? 'Hide Canvas from calendar' : 'Show Canvas on calendar'}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: 6, display: 'flex', transition: 'color .13s',
+              color: showOnCalendar ? 'rgba(232,117,26,.7)' : 'rgba(147,197,253,.25)',
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = showOnCalendar ? 'rgba(232,117,26,.95)' : 'rgba(147,197,253,.55)'}
+            onMouseLeave={e => e.currentTarget.style.color = showOnCalendar ? 'rgba(232,117,26,.7)' : 'rgba(147,197,253,.25)'}
+          >
+            <CalendarDays size={11} />
+          </button>
+        )}
+
         {connected && (
           <button
             onClick={onSync}
             title="Sync Canvas"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: 6, color: 'rgba(230,96,0,.4)', display: 'flex', transition: 'color .13s' }}
-            onMouseEnter={e => e.currentTarget.style.color = 'rgba(230,96,0,.8)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'rgba(230,96,0,.4)'}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: 6, color: 'rgba(232,117,26,.5)', display: 'flex', transition: 'color .13s' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'rgba(232,117,26,.9)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(232,117,26,.5)'}
           >
             <RefreshCw size={11} style={{ animation: syncing ? 'gc-spin 1s linear infinite' : 'none' }} />
           </button>
@@ -102,9 +148,9 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
         <button
           onClick={onOpenSettings}
           title="Manage Canvas connection"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: 6, color: 'rgba(230,96,0,.4)', display: 'flex', transition: 'color .13s' }}
-          onMouseEnter={e => e.currentTarget.style.color = 'rgba(230,96,0,.8)'}
-          onMouseLeave={e => e.currentTarget.style.color = 'rgba(230,96,0,.4)'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: 6, color: 'rgba(232,117,26,.5)', display: 'flex', transition: 'color .13s' }}
+          onMouseEnter={e => e.currentTarget.style.color = 'rgba(232,117,26,.9)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(232,117,26,.5)'}
         >
           <Settings2 size={11} />
         </button>
@@ -119,7 +165,7 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
             {coursesExpanded ? <ChevronDown size={9}/> : <ChevronRight size={9}/>}
             <BookOpen size={9} />
             <span style={{ fontSize: '0.63rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Assignments
+              Courses
             </span>
           </button>
 
@@ -128,9 +174,9 @@ export default function SidebarCanvasSection({ onOpenSettings, onSync, syncing }
               {!connected ? (
                 <button
                   onClick={onOpenSettings}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '5px 8px', background: 'none', border: '1px dashed rgba(230,96,0,.25)', borderRadius: 8, cursor: 'pointer', color: 'rgba(230,96,0,.45)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600, transition: 'all .13s', marginTop: 2 }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(230,96,0,.5)'; e.currentTarget.style.color = 'rgba(230,96,0,.8)' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(230,96,0,.25)'; e.currentTarget.style.color = 'rgba(230,96,0,.45)' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '5px 8px', background: 'none', border: '1px dashed rgba(232,117,26,.3)', borderRadius: 8, cursor: 'pointer', color: 'rgba(232,117,26,.6)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600, transition: 'all .13s', marginTop: 2 }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(232,117,26,.6)'; e.currentTarget.style.color = 'rgba(232,117,26,.9)' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(232,117,26,.3)'; e.currentTarget.style.color = 'rgba(232,117,26,.6)' }}
                 >
                   <CanvasLogo size={11} /> Connect Canvas
                 </button>
