@@ -162,7 +162,9 @@ export default function Home() {
     } catch { return { showOnCalendar: true, coursesEnabled: {} } }
   })
 
-  const shownReminders = useRef(new Set())
+  const shownReminders  = useRef(new Set())
+  const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
+  const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
 
   const [clockTime,    setClockTime]    = useState(() => new Date())
   const [weather,      setWeather]      = useState(null)
@@ -186,6 +188,112 @@ export default function Home() {
       .then(d => { if (d?.user) setCurrentUser(d.user) })
       .catch(() => {})
   }, [])
+
+  // ── Initial cloud merge ────────────────────────────────────────────────────
+  // Runs once when the user first signs in (or on page load if already signed in).
+  // Pulls cloud data and merges it with local state — local wins on conflict.
+  // Then immediately pushes the merged result back so new local items are uploaded.
+  useEffect(() => {
+    if (!currentUser || hasMergedCloud.current) return
+    hasMergedCloud.current = true
+
+    fetch('/api/sync')
+      .then(r => r.ok ? r.json() : null)
+      .then(cloud => {
+        if (!cloud) return
+
+        // Helper: merge two arrays by id — local wins on duplicate
+        function mergeById(cloudArr, localArr) {
+          const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
+          const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
+          return Object.values({ ...cloudMap, ...localMap })
+        }
+
+        // Capture current local state, merge, and set
+        setEvents(local => {
+          const merged = mergeById(cloud.events, local)
+          return merged
+        })
+        setTodos(local => {
+          const merged = mergeById(cloud.todos, local)
+          return merged
+        })
+        setTodoCategories(local => {
+          const merged = mergeById(cloud.todoCategories, local)
+          return merged.length > 0 ? merged : local  // keep defaults if cloud is empty
+        })
+        setCanvasClasses(local => {
+          const merged = mergeById(cloud.classSchedule, local)
+          return merged
+        })
+        setEventPrefs(local => {
+          // eventPrefs is a plain object {eventId: {hidden, color}} — local wins
+          return { ...(cloud.eventPrefs ?? {}), ...local }
+        })
+
+        // Count how many local items weren't in the cloud (new uploads)
+        const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
+        const cloudTodoIds  = new Set((cloud.todos  ?? []).map(t => t.id))
+
+        // After state is updated, push the merged result back
+        // Use a short timeout so React has processed the state updates first
+        setTimeout(() => {
+          // Re-read from localStorage (already written by the effects below)
+          try {
+            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')     ?? '[]')
+            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')      ?? '[]')
+            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')  ?? '[]')
+            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes') ?? '[]')
+            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs') ?? '{}')
+
+            const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
+            const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
+
+            fetch('/api/sync', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                events:         mergedEvents,
+                todos:          mergedTodos,
+                todoCategories: mergedCats,
+                classSchedule:  mergedClasses,
+                eventPrefs:     mergedPrefs,
+              }),
+            }).then(() => {
+              if (newEvents + newTodos > 0) {
+                pushToast(
+                  'Synced to your account',
+                  `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
+                )
+              }
+            }).catch(() => {})
+          } catch {}
+        }, 500)
+      })
+      .catch(() => {})
+  }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Ongoing debounced cloud sync ────────────────────────────────────────────
+  // Pushes the full local state to the DB 2 seconds after any change.
+  // Only runs after the initial merge is complete (hasMergedCloud guard).
+  useEffect(() => {
+    if (!currentUser || !hasMergedCloud.current) return
+    clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = setTimeout(() => {
+      fetch('/api/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          events,
+          todos,
+          todoCategories,
+          classSchedule:  canvasClasses,
+          eventPrefs,
+        }),
+      }).catch(() => {})
+    }, 2000)
+    return () => clearTimeout(syncTimerRef.current)
+  }, [events, todos, todoCategories, canvasClasses, eventPrefs, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize FullCalendar Draggable on the drag card
   useEffect(() => {
