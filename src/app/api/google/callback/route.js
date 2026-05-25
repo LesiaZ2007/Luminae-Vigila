@@ -42,10 +42,10 @@ export async function GET(request) {
     const email    = data.email
 
     // Re-use the same ID if the account is already connected (avoid duplicates)
-    const existing = getAccounts().find(a => a.email === email)
+    const existing = (await getAccounts()).find(a => a.email === email)
     const id       = existing?.id ?? randomUUID()
 
-    upsertAccount({
+    await upsertAccount({
       id,
       email,
       accessToken:  tokens.access_token,

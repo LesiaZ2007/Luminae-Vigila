@@ -224,8 +224,8 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
               Tasks
             </div>
           )}
-          slotMinTime="06:00:00"
-          slotMaxTime="23:00:00"
+          slotMinTime="00:00:00"
+          slotMaxTime="24:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
           slotLabelFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}

@@ -14,7 +14,7 @@ export async function POST(request) {
 
   for (const req of requests) {
     const { accountId, calendarIds = [], calendarColors = {} } = req
-    const account = getAccount(accountId)
+    const account = await getAccount(accountId)
     if (!account) continue
 
     let auth
