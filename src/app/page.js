@@ -1210,7 +1210,7 @@ export default function Home() {
                            onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories}
-                           canvasAssignments={canvasAssignments}
+                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                            onToggleCanvas={toggleCanvasAssignment}
                            onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                            onHideCanvas={hideCanvasAssignment} />
@@ -1225,7 +1225,7 @@ export default function Home() {
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                        onCategoriesChange={setTodoCategories} fullPage
-                       canvasAssignments={canvasAssignments}
+                       canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                        onToggleCanvas={toggleCanvasAssignment}
                        onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                        onHideCanvas={hideCanvasAssignment} />
@@ -1291,7 +1291,7 @@ export default function Home() {
                     onClose={() => setEventModal({ open: false, event: null, date: null })} />
       )}
       {showTodoModal && (
-        <AddTodoModal events={events} todoCategories={todoCategories}
+        <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
                       onAdd={addTodo} onEdit={updateTodo}
                       editTodo={editingTodo}
                       initialDate={initialTodoDate}
