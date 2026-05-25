@@ -423,13 +423,9 @@ export default function Home() {
     }
   }, [events])
 
-  const deleteEvent = useCallback((id, groupId) => {
-    if (groupId) {
-      const choice = window.confirm('Delete all repeats of this event?\n\nOK = delete all  |  Cancel = delete only this one')
-      setEvents(prev => choice
-        ? prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id)
-        : prev.filter(e => e.id !== id)
-      )
+  const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
+    if (groupId && deleteAll) {
+      setEvents(prev => prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id))
     } else {
       setEvents(prev => prev.filter(e => e.id !== id))
     }
@@ -941,12 +937,12 @@ export default function Home() {
 
   const canvasConnected = canvasAssignments.length > 0
   const NAV_ITEMS = [
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={18}/> },
-    { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={18}/> },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
+    { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
     ...(canvasConnected
-      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={18}/> }]
+      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
-    { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={17} color="currentColor"/> },
+    { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
   ]
 
   return (
@@ -1214,7 +1210,7 @@ export default function Home() {
                            onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories}
-                           canvasAssignments={canvasAssignments}
+                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                            onToggleCanvas={toggleCanvasAssignment}
                            onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                            onHideCanvas={hideCanvasAssignment} />
@@ -1229,7 +1225,7 @@ export default function Home() {
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                        onCategoriesChange={setTodoCategories} fullPage
-                       canvasAssignments={canvasAssignments}
+                       canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                        onToggleCanvas={toggleCanvasAssignment}
                        onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                        onHideCanvas={hideCanvasAssignment} />
@@ -1274,9 +1270,9 @@ export default function Home() {
             <button key={item.id} onClick={() => setActiveNav(item.id)}
                     style={{
                       flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                      gap: 3, padding: '10px 0', border: 'none', background: 'transparent',
+                      gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
                       color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.5)',
-                      fontFamily: 'inherit', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
                       borderTop: activeNav === item.id ? '2px solid var(--blue)' : '2px solid transparent',
                       transition: 'all .15s',
                     }}>
@@ -1295,7 +1291,7 @@ export default function Home() {
                     onClose={() => setEventModal({ open: false, event: null, date: null })} />
       )}
       {showTodoModal && (
-        <AddTodoModal events={events} todoCategories={todoCategories}
+        <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
                       onAdd={addTodo} onEdit={updateTodo}
                       editTodo={editingTodo}
                       initialDate={initialTodoDate}
@@ -1356,11 +1352,29 @@ export default function Home() {
         isMobile={isMobile}
       />
 
-      {/* ── Floating Corvus widget ── */}
+      {/* ── Floating Corvus widget (desktop only) ── */}
+      {/* On mobile the bottom tab bar already has a Corvus item, so we       */}
+      {/* navigate to the full tab instead of showing a small popup.          */}
       {activeNav !== 'corvus' && (
-        corvusFloat ? (
+        isMobile ? (
+          /* Mobile: single tap-target that opens the full Corvus tab */
+          <button
+            onClick={() => setActiveNav('corvus')}
+            title="Open Corvus"
+            style={{
+              position: 'fixed', bottom: 76, right: 16,
+              width: 48, height: 48, borderRadius: '50%', border: 'none',
+              background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+              transition: 'transform .15s, box-shadow .15s',
+            }}
+          >
+            <CrowIcon size={20} />
+          </button>
+        ) : corvusFloat ? (
           <div style={{
-            position: 'fixed', bottom: isMobile ? 76 : 24, right: 20,
+            position: 'fixed', bottom: 24, right: 20,
             width: 360, height: 500, zIndex: 200,
             borderRadius: 18, overflow: 'hidden',
             border: '1px solid var(--border)',
@@ -1382,7 +1396,7 @@ export default function Home() {
             onClick={() => setCorvusFloat(true)}
             title="Open Corvus"
             style={{
-              position: 'fixed', bottom: isMobile ? 76 : 24, right: 20,
+              position: 'fixed', bottom: 24, right: 20,
               width: 50, height: 50, borderRadius: '50%', border: 'none',
               background: 'var(--blue)', color: '#fff', cursor: 'pointer',
               zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',

@@ -589,14 +589,21 @@ select option {
    default, narrow headers, readable event text.
 ══════════════════════════════════════════════ */
 @media (max-width: 639px) {
-  /* Toolbar: tighter spacing + smaller text so Month/Week/Day all fit */
-  .fc .fc-toolbar-title { font-size: 0.82rem !important; }
-  .fc .fc-toolbar { gap: 2px; flex-wrap: nowrap; }
-  .fc .fc-toolbar-chunk { display: flex; align-items: center; gap: 2px; }
+  /* Toolbar: tighter spacing + readable text so Month/Week/Day all fit */
+  .fc .fc-toolbar-title { font-size: 0.88rem !important; }
+  .fc .fc-toolbar { gap: 3px; flex-wrap: nowrap; }
+  .fc .fc-toolbar-chunk { display: flex; align-items: center; gap: 3px; }
   .fc .fc-button {
-    font-size: 0.64rem !important;
-    padding: 4px 6px !important;
+    font-size: 0.75rem !important;
+    padding: 7px 10px !important;
     letter-spacing: 0 !important;
+    min-height: 34px !important;
+  }
+  /* Prev / Next arrows get a little extra room */
+  .fc .fc-prev-button,
+  .fc .fc-next-button {
+    padding: 7px 11px !important;
+    font-size: 0.9rem !important;
   }
   /* Shorter column headers */
   .fc .fc-col-header-cell { padding: 5px 0 !important; }

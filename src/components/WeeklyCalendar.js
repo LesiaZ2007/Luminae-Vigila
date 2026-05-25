@@ -37,8 +37,21 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
       if (!other || other.day !== cur.day) continue
       const overlaps = cur.start < other.end && other.start < cur.end
       if (!overlaps) continue
-      if (cur.start > other.start) startsLater = true
-      if (cur.start < other.start) startsEarlier = true
+      if (cur.start > other.start) {
+        startsLater = true
+      } else if (cur.start < other.start) {
+        startsEarlier = true
+      } else {
+        // Same start time: shorter duration gets the 'later' (indented) role.
+        // Tie-break by event id so the assignment is stable across re-renders.
+        const curDur   = cur.end.getTime()   - cur.start.getTime()
+        const otherDur = other.end.getTime() - other.start.getTime()
+        if (curDur < otherDur || (curDur === otherDur && eventApi.id > ev.id)) {
+          startsLater = true
+        } else {
+          startsEarlier = true
+        }
+      }
     }
 
     if (startsLater) return 'later'
