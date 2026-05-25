@@ -464,6 +464,24 @@ select option {
   right: 0 !important;
 }
 
+/* Overlapping timed events: later-starting event sits at 85 % width offset
+   from the left so the earlier event peeks through on the left edge.
+   The earlier event stays full-width underneath.
+   Hovering the earlier event brings it above the later one. */
+.fc .lv-overlap-later-harness {
+  left: 15% !important;
+  right: 0   !important;
+  z-index: 2 !important;
+}
+.fc .lv-overlap-earlier-harness {
+  left: 0    !important;
+  right: 0   !important;
+  z-index: 1 !important;
+}
+.fc .lv-overlap-earlier-harness:hover {
+  z-index: 10 !important;
+}
+
 /* Hidden (semi-transparent) Google Calendar events */
 .fc .lv-hidden-event { opacity: 0.38 !important; filter: grayscale(0.2); }
 .fc .lv-hidden-event:hover { opacity: 0.6 !important; filter: none; }
@@ -546,4 +564,50 @@ select option {
 @keyframes gc-panel-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════════════
+   MOBILE RESPONSIVE CALENDAR (< 640 px)
+   Inspired by Google Calendar mobile: day view
+   default, narrow headers, readable event text.
+══════════════════════════════════════════════ */
+@media (max-width: 639px) {
+  /* Toolbar: tighter spacing + smaller text so Month/Week/Day all fit */
+  .fc .fc-toolbar-title { font-size: 0.82rem !important; }
+  .fc .fc-toolbar { gap: 2px; flex-wrap: nowrap; }
+  .fc .fc-toolbar-chunk { display: flex; align-items: center; gap: 2px; }
+  .fc .fc-button {
+    font-size: 0.64rem !important;
+    padding: 4px 6px !important;
+    letter-spacing: 0 !important;
+  }
+  /* Shorter column headers */
+  .fc .fc-col-header-cell { padding: 5px 0 !important; }
+  .fc .fc-col-header-cell-cushion {
+    font-size: 0.62rem !important;
+    letter-spacing: 0.02em !important;
+  }
+  /* Smaller time-axis labels free up horizontal space */
+  .fc .fc-timegrid-slot-label-cushion { font-size: 0.58rem !important; }
+  /* Give events a touch-friendlier minimum + tighter horizontal padding */
+  .fc .fc-event { padding: 2px 4px !important; }
+  /* Timegrid axis: narrower so events get more horizontal room */
+  .fc .fc-timegrid-axis { width: 38px !important; }
+  /* Make the day-view header cell a bit taller so the full date line fits */
+  .fc-timeGridDay-view .fc-col-header-cell { padding: 8px 0 !important; }
+  .fc-timeGridDay-view .fc-col-header-cell-cushion {
+    font-size: 0.8rem !important;
+    letter-spacing: 0.01em !important;
+  }
+}
+
+/* ══════════════════════════════════════════════
+   TABLET (640 – 1023 px) toolbar tweaks
+══════════════════════════════════════════════ */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .fc .fc-toolbar-title { font-size: 0.92rem !important; }
+  .fc .fc-button {
+    font-size: 0.72rem !important;
+    padding: 4px 9px !important;
+  }
 }
