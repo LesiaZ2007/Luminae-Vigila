@@ -483,12 +483,16 @@ export default function Home() {
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
 
   /* ── Import / Export ── */
-  const handleImport = useCallback(({ events: importedEvents, todos: importedTodos, todoCategories: importedCats }) => {
-    if (Array.isArray(importedEvents) && importedEvents.length)         setEvents(importedEvents)
-    if (Array.isArray(importedTodos)  && importedTodos.length)          setTodos(importedTodos)
-    if (Array.isArray(importedCats)   && importedCats.length)           setTodoCategories(importedCats)
-    pushToast('Imported!', `${importedEvents.length} events and ${importedTodos.length} tasks loaded.`)
-  }, [pushToast])
+  // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
+  // We just set state directly — the existing localStorage sync effects will persist them.
+  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats }) => {
+    setEvents(mergedEvents)
+    setTodos(mergedTodos)
+    setTodoCategories(mergedCats)
+    const addedEvents = mergedEvents.length - events.length
+    const addedTodos  = mergedTodos.length  - todos.length
+    pushToast('Import complete', `${addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events'}, ${addedTodos > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}` : 'no new tasks'}.`)
+  }, [events.length, todos.length, pushToast])
 
   /* ── External drag-to-create ── */
   const handleEventReceive = useCallback((start, end) => {
