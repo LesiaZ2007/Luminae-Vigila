@@ -167,7 +167,7 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
           {gcExpanded ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
           <GoogleLogo size={12} />
           <span style={{ fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            Google Cal
+            Google Calendar
           </span>
         </button>
 

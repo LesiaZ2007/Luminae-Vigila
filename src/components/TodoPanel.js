@@ -409,10 +409,10 @@ function CanvasAssignmentsSection({ assignments, events, filter, todayStr, onTog
         onClick={() => setExpanded(v => !v)}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" fill="#E66000"/>
+          <circle cx="12" cy="12" r="10" fill="#E8751A"/>
           <text x="12" y="16.5" textAnchor="middle" fill="white" fontSize="13" fontWeight="bold" fontFamily="serif">C</text>
         </svg>
-        <span style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#E66000' }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#E8751A' }}>
           Canvas Assignments
         </span>
         <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>
@@ -499,8 +499,8 @@ function CanvasAssignmentItem({ assignment: a, events, todayStr, menuOpen, onMen
         onClick={e => { e.stopPropagation(); onToggle?.(a.id) }}
         style={{
           marginTop: 2, width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
-          border: `2px solid ${a.done ? '#E66000' : 'rgba(230,96,0,.4)'}`,
-          background: a.done ? '#E66000' : 'transparent',
+          border: `2px solid ${a.done ? '#E8751A' : 'rgba(232,117,26,.45)'}`,
+          background: a.done ? '#E8751A' : 'transparent',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', transition: 'all .2s',
         }}
@@ -552,9 +552,9 @@ function CanvasAssignmentItem({ assignment: a, events, todayStr, menuOpen, onMen
             href={a.htmlUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
             title="Open in Canvas"
-            style={{ padding: 4, borderRadius: 6, color: 'rgba(230,96,0,.4)', display: 'flex', transition: 'color .13s', opacity: hovered ? 1 : 0 }}
-            onMouseEnter={e => e.currentTarget.style.color = 'rgba(230,96,0,.85)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'rgba(230,96,0,.4)'}
+            style={{ padding: 4, borderRadius: 6, color: 'rgba(232,117,26,.5)', display: 'flex', transition: 'color .13s', opacity: hovered ? 1 : 0 }}
+            onMouseEnter={e => e.currentTarget.style.color = 'rgba(232,117,26,.9)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(232,117,26,.5)'}
           >
             <ExternalLink size={11} />
           </a>

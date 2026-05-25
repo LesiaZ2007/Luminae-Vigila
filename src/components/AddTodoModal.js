@@ -114,11 +114,11 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
             if (!plain) return null
             return (
               <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: '0.78rem', color: 'var(--text-2)', lineHeight: 1.55, maxHeight: 120, overflowY: 'auto' }}>
-                <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgba(230,96,0,.7)', marginBottom: 4 }}>Assignment Details</div>
+                <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgba(232,117,26,.8)', marginBottom: 4 }}>Assignment Details</div>
                 {plain.length > 300 ? plain.slice(0, 300) + '…' : plain}
                 {editTodo.htmlUrl && (
                   <a href={editTodo.htmlUrl} target="_blank" rel="noopener noreferrer"
-                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, color: '#E66000', fontSize: '0.72rem', fontWeight: 600, textDecoration: 'none' }}>
+                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, color: '#E8751A', fontSize: '0.72rem', fontWeight: 600, textDecoration: 'none' }}>
                     Open in Canvas →
                   </a>
                 )}
@@ -169,7 +169,7 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
             <label className="field-label">
               Due Date{' '}
               {!isCanvas && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span>}
-              {isCanvas  && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'rgba(230,96,0,.6)' }}>· from Canvas</span>}
+              {isCanvas  && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'rgba(232,117,26,.7)' }}>· from Canvas</span>}
             </label>
             {isCanvas
               ? <input type="text" readOnly value={dueDate ? new Date(dueDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'No due date'} className="field" style={{ color: 'var(--text-2)', cursor: 'default' }} />

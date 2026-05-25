@@ -497,8 +497,25 @@ select option {
 }
 .fc .fc-day-today .fc-daygrid-day-number { color: var(--blue); font-weight: 700; }
 
-.fc .fc-timegrid-now-indicator-line  { border-color: #f87171; border-width: 2px; }
-.fc .fc-timegrid-now-indicator-arrow { border-color: #f87171; }
+/* ── Now indicator: clean dot + line, no triangle ── */
+.fc .fc-timegrid-now-indicator-arrow { display: none !important; }
+.fc .fc-timegrid-now-indicator-line {
+  border-color: #f87171;
+  border-width: 1.5px;
+  opacity: 0.9;
+  position: relative;
+}
+.fc .fc-timegrid-now-indicator-line::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f87171;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
 .fc .fc-timegrid-axis { background: var(--surface); }
 .fc .fc-daygrid-event { border-radius: 5px; font-size: 0.74rem; font-weight: 600; }
 
