@@ -1,8 +1,12 @@
 import { getCredential, setCredential, clearCredential } from '@/lib/canvasTokenStore'
+import { getSession }                                     from '@/lib/session'
 
 /** GET — returns connection status (never returns the token itself) */
 export async function GET() {
-  const cred = await getCredential()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const cred = await getCredential(session.userId)
   return Response.json({
     connected: !!cred,
     baseUrl:   cred?.baseUrl ?? null,
@@ -11,6 +15,9 @@ export async function GET() {
 
 /** POST — validate token + baseUrl against Canvas, then store */
 export async function POST(request) {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   let body
   try { body = await request.json() } catch {
     return Response.json({ error: 'Invalid request body' }, { status: 400 })
@@ -21,7 +28,7 @@ export async function POST(request) {
     return Response.json({ error: 'token and baseUrl are required' }, { status: 400 })
   }
 
-  // Normalise: strip trailing slashes, ensure https
+  // Normalise: strip trailing slashes, ensure no extra spaces
   baseUrl = baseUrl.trim().replace(/\/+$/, '')
   token   = token.trim()
 
@@ -47,7 +54,7 @@ export async function POST(request) {
     return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
   }
 
-  await setCredential({ token, baseUrl })
+  await setCredential(session.userId, { token, baseUrl })
 
   return Response.json({
     ok:          true,
@@ -57,6 +64,9 @@ export async function POST(request) {
 
 /** DELETE — disconnect Canvas */
 export async function DELETE() {
-  await clearCredential()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  await clearCredential(session.userId)
   return Response.json({ ok: true })
 }

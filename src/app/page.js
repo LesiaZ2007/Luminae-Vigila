@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -21,9 +21,10 @@ import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
 import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
-import SidebarCanvasSection from '@/components/SidebarCanvasSection'
-import CanvasSettingsModal  from '@/components/CanvasSettingsModal'
-import ClassScheduleModal   from '@/components/ClassScheduleModal'
+import SidebarCanvasSection   from '@/components/SidebarCanvasSection'
+import SidebarScheduleSection from '@/components/SidebarScheduleSection'
+import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
+import ClassScheduleModal     from '@/components/ClassScheduleModal'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -157,12 +158,21 @@ export default function Home() {
   const [clockTime,    setClockTime]    = useState(() => new Date())
   const [weather,      setWeather]      = useState(null)
   const [militaryTime, setMilitaryTime] = useState(false)
+  const [currentUser,  setCurrentUser]  = useState(null)
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
   const isTablet  = windowWidth >= 640 && windowWidth < 1024
   const hiddenEventCount = Object.values(eventPrefs).filter(pref => pref?.hidden).length
 
   useEffect(() => { setMounted(true) }, [])
+
+  // Fetch current user for display / logout
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.user) setCurrentUser(d.user) })
+      .catch(() => {})
+  }, [])
 
   // Initialize FullCalendar Draggable on the drag card
   useEffect(() => {
@@ -854,6 +864,12 @@ export default function Home() {
             onOpenSettings={() => setShowCanvasSettings(true)}
             onSync={syncCanvas}
             syncing={cvSyncing}
+          />
+        )}
+
+        {/* ── Class Schedule inline section (desktop only, independent of Canvas) ── */}
+        {!isTablet && (
+          <SidebarScheduleSection
             canvasClasses={canvasClasses}
             onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
             onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
@@ -878,6 +894,23 @@ export default function Home() {
 
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Signed-in user + logout */}
+          {currentUser && !isTablet && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, background: 'rgba(255,255,255,.05)' }}>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '0.68rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
+                <div style={{ fontSize: '0.76rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
+              </div>
+              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
+                <button type="submit" title="Sign out"
+                        style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#fca5a5'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
+                  <LogOut size={14} />
+                </button>
+              </form>
+            </div>
+          )}
           <button onClick={() => setEventModal({ open: true, event: null, date: null })}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
                   onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}

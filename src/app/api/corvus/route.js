@@ -1,3 +1,4 @@
+import { getSession } from '@/lib/session'
 import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -150,6 +151,9 @@ function fromGroqMessage(msg) {
 }
 
 export async function POST(request) {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { messages = [], events = [], todos = [], canvasAssignments = [] } = await request.json()
 
   const now     = new Date()

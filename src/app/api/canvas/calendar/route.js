@@ -1,14 +1,15 @@
 import { getCredential } from '@/lib/canvasTokenStore'
+import { getSession }    from '@/lib/session'
 
 /**
- * POST — fetch manually-posted calendar events (not assignments) for given courses.
- * Body: { courseIds: number[], startDate: string (YYYY-MM-DD), endDate: string (YYYY-MM-DD) }
- * Returns: { events: NormalizedCalendarEvent[] }
- *
- * Uses &type[]=event to exclude assignment-type events (those are handled separately).
+ * POST — fetch manually-posted calendar events for given courses.
+ * Body: { courseIds: number[], startDate: string, endDate: string }
  */
 export async function POST(request) {
-  const cred = await getCredential()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const cred = await getCredential(session.userId)
   if (!cred) return Response.json({ error: 'Not connected' }, { status: 401 })
 
   let body
@@ -21,7 +22,6 @@ export async function POST(request) {
 
   const { token, baseUrl } = cred
 
-  // Build context_codes array: course_12345 for each course
   const contextCodes = courseIds.map(id => `course_${id}`).join('&context_codes[]=')
   const url = `${baseUrl}/api/v1/calendar_events`
     + `?context_codes[]=${contextCodes}`
@@ -67,7 +67,6 @@ export async function POST(request) {
   const events = allItems.map(e => {
     const startAt = e.start_at ?? null
     const endAt   = e.end_at   ?? null
-    // Determine courseId from context_code (format: "course_12345")
     const courseIdMatch = (e.context_code ?? '').match(/^course_(\d+)$/)
     const courseId = courseIdMatch ? Number(courseIdMatch[1]) : null
 
@@ -77,7 +76,7 @@ export async function POST(request) {
       start: startAt,
       end:   endAt,
       allDay: !startAt?.includes('T'),
-      color:  null, // client applies course color from prefs
+      color:  null,
       extendedProps: {
         source:       'canvas-cal',
         courseId,
@@ -86,7 +85,7 @@ export async function POST(request) {
         locationName: e.location_name ?? null,
       },
     }
-  }).filter(e => e.start) // drop events with no start time
+  }).filter(e => e.start)
 
   return Response.json({ events })
 }

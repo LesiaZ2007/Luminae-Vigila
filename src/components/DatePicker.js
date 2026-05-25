@@ -1,36 +1,99 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 
 const DAYS   = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December']
 
+/** Parse a user-typed string into a YYYY-MM-DD string, or return null. */
+function parseTypedDate(str) {
+  const s = str.trim()
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(s + 'T12:00:00')
+    if (!isNaN(d)) return s
+  }
+  // M/D/YYYY or MM/DD/YYYY
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (m) {
+    const iso = `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`
+    const d = new Date(iso + 'T12:00:00')
+    if (!isNaN(d)) return iso
+  }
+  // M-D-YYYY
+  const m2 = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (m2) {
+    const iso = `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`
+    const d = new Date(iso + 'T12:00:00')
+    if (!isNaN(d)) return iso
+  }
+  return null
+}
+
 export default function DatePicker({ value, onChange, min, placeholder = 'Select date' }) {
   const todayStr = new Date().toISOString().slice(0, 10)
 
-  const [open, setOpen]   = useState(false)
-  const [closing, setClosing] = useState(false)
-  const [view,  setView]  = useState(() => {
+  const [open,     setOpen]     = useState(false)
+  const [closing,  setClosing]  = useState(false)
+  const [view,     setView]     = useState(() => {
     const d = value ? new Date(value + 'T12:00:00') : new Date()
     return { year: d.getFullYear(), month: d.getMonth() }
   })
-  const ref = useRef(null)
+  const [popupPos, setPopupPos] = useState({ top: 0, left: 0, width: 264 })
+  const [inputVal, setInputVal] = useState('')
+  const [inputErr, setInputErr] = useState(false)
 
-  // Sync view month when value changes externally
+  const ref      = useRef(null)   // trigger wrapper
+  const trigRef  = useRef(null)   // trigger button (for getBoundingClientRect)
+  const popupRef = useRef(null)   // portal div — needed for outside-click detection
+
+  // Recalculate popover position on open and on scroll/resize
+  useEffect(() => {
+    if (!open || !trigRef.current) return
+    function calcPos() {
+      const rect      = trigRef.current.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - rect.bottom
+      const popH      = 360  // approximate calendar + input height
+      const top       = spaceBelow >= popH ? rect.bottom + 6 : rect.top - popH - 6
+      setPopupPos({ top, left: rect.left, width: Math.max(264, rect.width) })
+    }
+    calcPos()
+    window.addEventListener('scroll', calcPos, true)
+    window.addEventListener('resize', calcPos)
+    return () => {
+      window.removeEventListener('scroll', calcPos, true)
+      window.removeEventListener('resize', calcPos)
+    }
+  }, [open])
+
+  // Sync text input + calendar view when popover opens or value changes externally
+  useEffect(() => {
+    if (open) {
+      setInputVal(value || '')
+      setInputErr(false)
+    }
+  }, [open])
+
   useEffect(() => {
     if (value) {
       const d = new Date(value + 'T12:00:00')
       setView({ year: d.getFullYear(), month: d.getMonth() })
+      if (open) setInputVal(value)
     }
   }, [value])
 
-  // Close on outside click or Escape
+  // Close on outside click (must check BOTH the trigger wrapper AND the portal div)
   useEffect(() => {
     if (!open) return
-    function onMouse(e) { if (ref.current && !ref.current.contains(e.target)) closePopover() }
-    function onKey(e)   { if (e.key === 'Escape') closePopover() }
+    function onMouse(e) {
+      const inTrigger = ref.current    && ref.current.contains(e.target)
+      const inPopup   = popupRef.current && popupRef.current.contains(e.target)
+      if (!inTrigger && !inPopup) closePopover()
+    }
+    function onKey(e) { if (e.key === 'Escape') closePopover() }
     document.addEventListener('mousedown', onMouse)
     document.addEventListener('keydown',   onKey)
     return () => {
@@ -54,11 +117,29 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
   function selectDay(day) {
     const str = `${view.year}-${String(view.month + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
     onChange(str)
+    setInputVal(str)
+    setInputErr(false)
     closePopover()
   }
 
+  function commitInput(raw) {
+    const str = raw.trim()
+    if (!str) { onChange(''); setInputErr(false); closePopover(); return }
+    const parsed = parseTypedDate(str)
+    if (parsed) {
+      if (min && parsed < min) { setInputErr(true); return }
+      onChange(parsed)
+      const d = new Date(parsed + 'T12:00:00')
+      setView({ year: d.getFullYear(), month: d.getMonth() })
+      setInputErr(false)
+      closePopover()
+    } else {
+      setInputErr(true)
+    }
+  }
+
   // Build cells: leading nulls then day numbers
-  const firstDow   = new Date(view.year, view.month, 1).getDay()
+  const firstDow    = new Date(view.year, view.month, 1).getDay()
   const daysInMonth = new Date(view.year, view.month + 1, 0).getDate()
   const cells = Array.from({ length: firstDow + daysInMonth }, (_, i) =>
     i < firstDow ? null : i - firstDow + 1
@@ -72,7 +153,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
     <div ref={ref} style={{ position: 'relative' }}>
 
       {/* Trigger button */}
-      <button type="button"
+      <button type="button" ref={trigRef}
               onClick={() => { if (open) closePopover(); else setOpen(true) }}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
@@ -82,7 +163,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
                 transition: 'border-color .15s, box-shadow .15s',
               }}
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--blue-ring)' }}
-              onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = '' }}>
+              onBlur={e  => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = '' }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Calendar size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
           {displayStr}
@@ -92,18 +173,56 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
         </svg>
       </button>
 
-      {/* Calendar popover */}
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 6px)', left: 0,
+      {/* Calendar popover — rendered in a portal so it escapes any overflow:hidden parent */}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={popupRef} style={{
+          position: 'fixed',
+          top:   popupPos.top,
+          left:  popupPos.left,
+          width: popupPos.width,
           background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 14, boxShadow: 'var(--shadow-modal)', zIndex: 200,
-          padding: '14px 12px', width: 264,
+          borderRadius: 14, boxShadow: 'var(--shadow-modal)', zIndex: 9999,
+          padding: '12px 12px 10px',
           animation: closing ? 'modal-out 0.16s ease forwards' : 'modal-in 0.2s cubic-bezier(0.22,1,0.36,1) both',
         }}>
 
+          {/* Type-in date input */}
+          <div style={{ marginBottom: 10 }}>
+            <input
+              type="text"
+              value={inputVal}
+              placeholder="MM/DD/YYYY or YYYY-MM-DD"
+              onChange={e => { setInputVal(e.target.value); setInputErr(false) }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitInput(inputVal) }
+              }}
+              onBlur={() => {
+                // only commit if the new focus target is outside the popup
+                // (use setTimeout so the blur fires before the next focus is known)
+                setTimeout(() => {
+                  if (popupRef.current && document.activeElement && popupRef.current.contains(document.activeElement)) return
+                  commitInput(inputVal)
+                }, 0)
+              }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--input-bg)',
+                border: `1.5px solid ${inputErr ? 'var(--red)' : 'var(--border)'}`,
+                borderRadius: 8, padding: '7px 10px',
+                fontFamily: 'inherit', fontSize: '0.8rem', color: 'var(--text)',
+                outline: 'none',
+              }}
+              onFocus={e  => { if (!inputErr) e.currentTarget.style.borderColor = 'var(--blue)' }}
+            />
+            {inputErr && (
+              <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: 'var(--red)' }}>
+                Invalid date — try MM/DD/YYYY
+              </p>
+            )}
+          </div>
+
           {/* Month navigation */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
             <button type="button" onClick={prevMonth}
                     style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                     onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
@@ -164,12 +283,13 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
           {/* "Today" shortcut */}
           <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8, textAlign: 'center' }}>
             <button type="button"
-                    onClick={() => { onChange(todayStr); closePopover() }}
+                    onClick={() => { onChange(todayStr); setInputVal(todayStr); setInputErr(false); closePopover() }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, color: 'var(--blue)' }}>
               Today
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

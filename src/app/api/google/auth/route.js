@@ -1,6 +1,10 @@
 import { makeOAuth2Client } from '@/lib/googleAuth'
+import { getSession }       from '@/lib/session'
 
-export async function GET() {
+export async function GET(request) {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return Response.json({ error: 'not_configured' }, { status: 503 })
   }

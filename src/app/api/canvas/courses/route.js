@@ -1,8 +1,12 @@
 import { getCredential } from '@/lib/canvasTokenStore'
+import { getSession }    from '@/lib/session'
 
 /** GET — fetch active student course enrollments */
 export async function GET() {
-  const cred = await getCredential()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const cred = await getCredential(session.userId)
   if (!cred) return Response.json({ error: 'Not connected' }, { status: 401 })
 
   const { token, baseUrl } = cred
