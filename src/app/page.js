@@ -21,6 +21,9 @@ import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
 import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
+import SidebarCanvasSection from '@/components/SidebarCanvasSection'
+import CanvasSettingsModal  from '@/components/CanvasSettingsModal'
+import ClassScheduleModal   from '@/components/ClassScheduleModal'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -138,6 +141,17 @@ export default function Home() {
   const [eventPrefs,         setEventPrefs]         = useState({})
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
+  // ── Canvas state ──
+  const [canvasAssignments,  setCanvasAssignments]  = useState([])
+  const [canvasClasses,      setCanvasClasses]      = useState([])
+  const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
+  const [showCanvasSettings, setShowCanvasSettings] = useState(false)
+  const [showClassModal,     setShowClassModal]     = useState(false)
+  const [editingClass,       setEditingClass]       = useState(null)
+  const [cvSyncing,          setCvSyncing]          = useState(false)
+  const [canvasTodoModal,    setCanvasTodoModal]    = useState(false)
+  const [editingCanvas,      setEditingCanvas]      = useState(null)
+
   const shownReminders = useRef(new Set())
 
   const [clockTime,    setClockTime]    = useState(() => new Date())
@@ -215,13 +229,24 @@ export default function Home() {
       if (t)  setTodos(JSON.parse(t))
       if (tc) setTodoCategories(JSON.parse(tc))
       if (ep) setEventPrefs(JSON.parse(ep))
+      // Canvas
+      const ca  = localStorage.getItem('lv-canvas-assignments')
+      const cc  = localStorage.getItem('lv-canvas-classes')
+      const cce = localStorage.getItem('lv-canvas-cal-events')
+      if (ca)  setCanvasAssignments(JSON.parse(ca))
+      if (cc)  setCanvasClasses(JSON.parse(cc))
+      if (cce) setCanvasCalEvents(JSON.parse(cce))
     } catch (_) {}
   }, [])
 
   useEffect(() => { localStorage.setItem('lv-events',    JSON.stringify(events))         }, [events])
   useEffect(() => { localStorage.setItem('lv-todos',     JSON.stringify(todos))          }, [todos])
   useEffect(() => { localStorage.setItem('lv-todo-cats', JSON.stringify(todoCategories)) }, [todoCategories])
-  useEffect(() => { localStorage.setItem('lv-event-prefs', JSON.stringify(eventPrefs))    }, [eventPrefs])
+  useEffect(() => { localStorage.setItem('lv-event-prefs', JSON.stringify(eventPrefs))   }, [eventPrefs])
+  // Canvas
+  useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
+  useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
+  useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
 
   const pushToast = useCallback((title, subtitle) => {
     const id = String(Date.now())
@@ -385,6 +410,172 @@ export default function Home() {
     return () => clearInterval(id)
   }, [syncGoogleCalendar])
 
+  /* ── Canvas sync ── */
+  const syncCanvasAssignments = useCallback(async () => {
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    if (!prefs.connected) return
+    const enabledCourses = Object.entries(prefs.coursesEnabled ?? {})
+      .filter(([, v]) => v !== false)
+      .map(([id]) => Number(id))
+    if (!enabledCourses.length) { setCanvasAssignments([]); return }
+
+    // Fetch course names from cached assignment data or re-fetch courses
+    let courseNames = {}
+    try {
+      const { courses: list } = await fetch('/api/canvas/courses').then(r => r.json())
+      for (const c of list ?? []) courseNames[c.id] = c.name
+    } catch { /* use empty names */ }
+
+    const courses = enabledCourses.map(id => ({ id, name: courseNames[id] ?? String(id) }))
+    const res = await fetch('/api/canvas/assignments', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ courses }),
+    })
+    if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
+    if (!res.ok) return
+    const { assignments: fresh } = await res.json()
+
+    setCanvasAssignments(prev => {
+      const prevMap = Object.fromEntries(prev.map(a => [a.id, a]))
+      return (fresh ?? []).map(a => ({
+        ...a,
+        done:          prevMap[a.id]?.done          ?? (a.submissionState === 'submitted' || a.submissionState === 'graded'),
+        doneDate:      prevMap[a.id]?.doneDate      ?? null,
+        hidden:        prevMap[a.id]?.hidden        ?? false,
+        linkedEventId: prevMap[a.id]?.linkedEventId ?? null,
+        priority:      prevMap[a.id]?.priority      ?? 'medium',
+        notes:         prevMap[a.id]?.notes         ?? null,
+        reminder:      prevMap[a.id]?.reminder      ?? null,
+      }))
+    })
+
+    // Update lastSyncAt
+    const updated = { ...prefs, lastSyncAt: new Date().toISOString() }
+    localStorage.setItem('lv-canvas-prefs', JSON.stringify(updated))
+  }, [pushToast])
+
+  const syncCanvasCalEvents = useCallback(async () => {
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    if (!prefs.connected) return
+    const enabledIds = Object.entries(prefs.coursesEnabled ?? {})
+      .filter(([, v]) => v !== false)
+      .map(([id]) => Number(id))
+    if (!enabledIds.length) { setCanvasCalEvents([]); return }
+
+    const now      = new Date()
+    const startDate = new Date(now); startDate.setDate(startDate.getDate() - 14)
+    const endDate   = new Date(now); endDate.setDate(endDate.getDate() + 60)
+
+    const res = await fetch('/api/canvas/calendar', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        courseIds: enabledIds,
+        startDate: startDate.toISOString().slice(0, 10),
+        endDate:   endDate.toISOString().slice(0, 10),
+      }),
+    })
+    if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
+    if (!res.ok) return
+    const { events: calEvs } = await res.json()
+
+    // Apply course colors from prefs
+    const prefs2 = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    setCanvasCalEvents((calEvs ?? []).map(e => ({
+      ...e,
+      color: e.color || '#E66000',
+    })))
+  }, [pushToast])
+
+  const syncCanvas = useCallback(async () => {
+    setCvSyncing(true)
+    try {
+      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents()])
+    } catch (err) {
+      console.error('Canvas sync failed:', err)
+    } finally {
+      setCvSyncing(false)
+    }
+  }, [syncCanvasAssignments, syncCanvasCalEvents])
+
+  // Initial sync on mount
+  useEffect(() => {
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    if (prefs.connected) syncCanvas()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic 5-min sync
+  useEffect(() => {
+    const id = setInterval(() => {
+      const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      if (prefs.connected) syncCanvas()
+    }, 5 * 60_000)
+    return () => clearInterval(id)
+  }, [syncCanvas])
+
+  /* ── Canvas CRUD ── */
+  const toggleCanvasAssignment = useCallback((id) => {
+    setCanvasAssignments(prev => prev.map(a =>
+      a.id === id
+        ? { ...a, done: !a.done, doneDate: !a.done ? new Date().toISOString().slice(0, 10) : null }
+        : a
+    ))
+  }, [])
+
+  const hideCanvasAssignment = useCallback((id) => {
+    setCanvasAssignments(prev => prev.map(a =>
+      a.id === id ? { ...a, hidden: !a.hidden } : a
+    ))
+  }, [])
+
+  const updateCanvasAssignment = useCallback((updated) => {
+    setCanvasAssignments(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a))
+  }, [])
+
+  /* ── Class schedule CRUD ── */
+  const saveCanvasClass = useCallback((entry) => {
+    setCanvasClasses(prev => {
+      const idx = prev.findIndex(c => c.id === entry.id)
+      return idx >= 0 ? prev.map(c => c.id === entry.id ? entry : c) : [...prev, entry]
+    })
+  }, [])
+
+  const deleteCanvasClass = useCallback((id) => {
+    setCanvasClasses(prev => prev.filter(c => c.id !== id))
+  }, [])
+
+  /* ── Expand class schedule entries into calendar events ── */
+  const canvasClassEvents = useMemo(() => {
+    return canvasClasses
+      .filter(cls => cls.enabled !== false && cls.days?.length && cls.semesterStart && cls.semesterEnd)
+      .flatMap(cls => {
+        const baseEvent = {
+          id:    cls.id,
+          title: cls.courseName + (cls.section ? ` (${cls.section})` : ''),
+          start: `${cls.semesterStart}T${cls.startTime}:00`,
+          end:   `${cls.semesterStart}T${cls.endTime}:00`,
+          color: cls.color || '#3a6fa8',
+          extendedProps: {
+            source:    'canvas-class',
+            classId:   cls.id,
+            professor: cls.professor,
+            location:  cls.location,
+            courseName: cls.courseName,
+          },
+          recurrence: {
+            type:  'custom',
+            days:  cls.days,
+            until: cls.semesterEnd,
+          },
+        }
+        return expandRecurring(baseEvent).map(ev => ({
+          ...ev,
+          id: `canvascls_${cls.id}_${ev.id.split('-r-')[1] ?? 'base'}`,
+        }))
+      })
+  }, [canvasClasses])
+
   /* ── Calendar handlers ── */
   const handleViewChange = useCallback((viewType) => {
     if (viewType === 'timeGridDay')  setTodoPanelWidth(w => Math.max(w, 420))
@@ -408,6 +599,36 @@ export default function Home() {
       setActiveNav('todos')
       return
     }
+    // Canvas class schedule events — show info toast
+    if (info.event.extendedProps?.source === 'canvas-class') {
+      const { professor, location, courseName } = info.event.extendedProps
+      const parts = [professor && `Prof. ${professor}`, location].filter(Boolean)
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        title: info.event.title,
+        subtitle: parts.join(' · ') || 'Class',
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 8000)
+      return
+    }
+
+    // Canvas calendar events (professor-posted) — show info toast
+    if (info.event.extendedProps?.source === 'canvas-cal') {
+      const { locationName, htmlUrl, description } = info.event.extendedProps
+      const plain = description ? description.replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''
+      const subtitle = [locationName && `📍 ${locationName}`, plain].filter(Boolean).join('\n') || 'Canvas event'
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        title: info.event.title,
+        subtitle: subtitle,
+        actions: htmlUrl ? [{ label: 'Open in Canvas', onClick: () => window.open(htmlUrl, '_blank') }] : [],
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
+      return
+    }
+
     // Google Calendar events are read-only – show a brief toast
     if (info.event.extendedProps?.source === 'google') {
       const desc = info.event.extendedProps.description
@@ -456,10 +677,20 @@ export default function Home() {
       })),
     [googleEvents, eventPrefs, showHiddenGcal],
   )
+  // Canvas calendar events filtered by prefs
+  const visibleCanvasCalEvents = useMemo(() => {
+    const prefs = typeof window !== 'undefined'
+      ? JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      : {}
+    return canvasCalEvents.filter(e => prefs.coursesEnabled?.[e.extendedProps?.courseId] !== false)
+  }, [canvasCalEvents])
+
   const allCalendarEvents = [
     ...visibleEvents,
     ...visibleGoogleEvents,
     ...hiddenGcalEvents,
+    ...canvasClassEvents,
+    ...visibleCanvasCalEvents,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
@@ -617,6 +848,18 @@ export default function Home() {
           />
         )}
 
+        {/* ── Canvas inline section (desktop only) ── */}
+        {!isTablet && (
+          <SidebarCanvasSection
+            onOpenSettings={() => setShowCanvasSettings(true)}
+            onSync={syncCanvas}
+            syncing={cvSyncing}
+            canvasClasses={canvasClasses}
+            onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+            onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+          />
+        )}
+
         {/* Drag card */}
         {!isTablet && (
           <div ref={dragCardRef} title="Drag onto the calendar to create an event"
@@ -744,10 +987,14 @@ export default function Home() {
                 background: 'var(--surface)', overflowY: 'auto', flexShrink: 0,
                 transition: 'width 0.35s cubic-bezier(0.16,1,0.3,1)',
               }}>
-                <TodoPanel todos={todos} events={events} todoCategories={todoCategories}
+                <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                            onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                           onCategoriesChange={setTodoCategories} />
+                           onCategoriesChange={setTodoCategories}
+                           canvasAssignments={canvasAssignments}
+                           onToggleCanvas={toggleCanvasAssignment}
+                           onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                           onHideCanvas={hideCanvasAssignment} />
               </aside>
             )}
           </>
@@ -755,10 +1002,14 @@ export default function Home() {
 
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
-            <TodoPanel todos={todos} events={events} todoCategories={todoCategories}
+            <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                       onCategoriesChange={setTodoCategories} fullPage />
+                       onCategoriesChange={setTodoCategories} fullPage
+                       canvasAssignments={canvasAssignments}
+                       onToggleCanvas={toggleCanvasAssignment}
+                       onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                       onHideCanvas={hideCanvasAssignment} />
           </main>
         )}
 
@@ -767,6 +1018,7 @@ export default function Home() {
             <Corvus
               events={events}
               todos={todos}
+              canvasAssignments={canvasAssignments}
               todoCategories={todoCategories}
               eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo}
@@ -828,6 +1080,38 @@ export default function Home() {
         />
       )}
 
+      {showCanvasSettings && (
+        <CanvasSettingsModal
+          onClose={() => {
+            setShowCanvasSettings(false)
+            window.dispatchEvent(new Event('canvas-credential-changed'))
+            syncCanvas()
+          }}
+          onSync={syncCanvas}
+        />
+      )}
+
+      {showClassModal && (
+        <ClassScheduleModal
+          editClass={editingClass}
+          onSave={saveCanvasClass}
+          onDelete={deleteCanvasClass}
+          onClose={() => { setShowClassModal(false); setEditingClass(null) }}
+        />
+      )}
+
+      {canvasTodoModal && editingCanvas && (
+        <AddTodoModal
+          events={[...events, ...canvasClassEvents]}
+          todoCategories={todoCategories}
+          editTodo={editingCanvas}
+          onEditCanvas={updateCanvasAssignment}
+          onAdd={() => {}}
+          onEdit={() => {}}
+          onClose={() => { setCanvasTodoModal(false); setEditingCanvas(null) }}
+        />
+      )}
+
       {/* ── Floating Corvus widget ── */}
       {activeNav !== 'corvus' && (
         corvusFloat ? (
@@ -841,6 +1125,7 @@ export default function Home() {
           }}>
             <Corvus
               events={events} todos={todos}
+              canvasAssignments={canvasAssignments}
               todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
               compact={true}
