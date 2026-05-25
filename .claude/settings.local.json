@@ -13,7 +13,9 @@
       "Bash(curl -s http://localhost:3000/api/google/accounts)",
       "Bash(curl -s http://localhost:3000/api/google/auth)",
       "Bash(curl -s http://localhost:3000/api/google/calendars?accountId=bogus)",
-      "Bash(start http://localhost:3000)"
+      "Bash(start http://localhost:3000)",
+      "PowerShell(taskkill /PID 60276 /F)",
+      "Bash(npx next *)"
     ]
   }
 }

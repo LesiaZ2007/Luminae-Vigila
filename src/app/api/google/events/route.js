@@ -1,8 +1,12 @@
 import { google }           from 'googleapis'
 import { getAccount }       from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
+import { getSession }       from '@/lib/session'
 
 export async function POST(request) {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { requests = [] } = await request.json()
 
   // Fetch events from -14 days to +60 days
@@ -14,7 +18,9 @@ export async function POST(request) {
 
   for (const req of requests) {
     const { accountId, calendarIds = [], calendarColors = {} } = req
-    const account = await getAccount(accountId)
+
+    // Scope account lookup to the current user — prevents cross-user access
+    const account = await getAccount(accountId, session.userId)
     if (!account) continue
 
     let auth
@@ -31,7 +37,7 @@ export async function POST(request) {
           calendarId:   calId,
           timeMin:      timeMin.toISOString(),
           timeMax:      timeMax.toISOString(),
-          singleEvents: true,   // expand recurring events into instances
+          singleEvents: true,
           orderBy:      'startTime',
           maxResults:   500,
         })
@@ -42,7 +48,6 @@ export async function POST(request) {
           const end   = ev.end?.dateTime   ?? ev.end?.date
           if (!start) continue
 
-          // Build a stable, URL-safe event id
           const safeId = `gc_${accountId.slice(0, 8)}_${calId.replace(/[^\w]/g, '_').slice(0, 20)}_${ev.id}`.slice(0, 128)
 
           allEvents.push({
@@ -63,7 +68,6 @@ export async function POST(request) {
           })
         }
       } catch (err) {
-        // Don't abort the whole request for one failing calendar
         console.error(`Error fetching calendar ${calId}:`, err.message)
       }
     }
