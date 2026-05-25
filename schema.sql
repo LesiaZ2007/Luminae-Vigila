@@ -11,20 +11,9 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Magic link tokens (15-min one-time login links) ────────────────────────
-CREATE TABLE IF NOT EXISTS magic_link_tokens (
-  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    UUID        REFERENCES users(id) ON DELETE CASCADE,
-  token      TEXT        UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  used       BOOLEAN     DEFAULT FALSE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Index for fast token lookup
-CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_token ON magic_link_tokens(token);
-
 -- ── Google OAuth accounts (one user can connect multiple Google accounts) ──
+-- The first Google account is created automatically on sign-in.
+-- Additional accounts can be connected from the Google Calendar settings.
 CREATE TABLE IF NOT EXISTS google_accounts (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
