@@ -10,7 +10,8 @@
       "Bash(git commit -m 'fix\\(mobile\\): bottom tabs, swipe guard, settings tab, safe-area *)",
       "Bash(gh pr *)",
       "Bash(gh auth *)",
-      "Bash(git commit -m 'fix\\(mobile\\): remove corvus FAB on mobile; deduplicate import/export *)"
+      "Bash(git commit -m 'fix\\(mobile\\): remove corvus FAB on mobile; deduplicate import/export *)",
+      "Bash(git commit -m 'fix\\(mobile\\): inline import/export in Settings tab, no floating FAB *)"
     ]
   }
 }

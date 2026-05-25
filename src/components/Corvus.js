@@ -25,6 +25,13 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
+const QUICK_ACTIONS = [
+  { id: 'urgent', label: 'Urgent deadlines', prompt: 'Review my upcoming events, tasks, and Canvas assignments and tell me which ones are urgent.' },
+  { id: 'week',   label: 'Summarize my week', prompt: 'Summarize my schedule and to-dos for this week, including Canvas deadlines.' },
+  { id: 'focus',  label: 'What next?', prompt: 'What should I focus on next based on my current schedule and tasks?' },
+  { id: 'plan',   label: 'Plan study time', prompt: 'Create a simple study plan for my upcoming deadlines and classes.' },
+]
+
 function DetailRow({ label, value, dot }) {
   return (
     <div>
@@ -356,8 +363,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
     setLoading(false)
   }
 
-  async function handleSend() {
-    const text = input.trim()
+  async function sendMessage(text) {
     if (!text || loading || pending) return
     setInput('')
     setLoading(true)
@@ -376,6 +382,14 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
       setItems(p => [...p, { type: 'assistant', text: msg }])
     }
     setLoading(false)
+  }
+
+  async function handleSend() {
+    await sendMessage(input.trim())
+  }
+
+  async function handleQuickAction(prompt) {
+    await sendMessage(prompt)
   }
 
   // Build the event object to pass to EventModal for editing the preview
@@ -447,6 +461,20 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
               </button>
             )}
           </div>
+        </div>
+
+        <div style={{ padding: compact ? '8px 14px' : '12px 20px', gap: 8, overflowX: 'auto', display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+          {QUICK_ACTIONS.map(action => (
+            <button key={action.id} onClick={() => handleQuickAction(action.prompt)} disabled={loading || !!pending}
+                    style={{
+                      flex: '0 0 auto', padding: '8px 12px', borderRadius: 999, border: '1px solid',
+                      borderColor: 'rgba(255,255,255,.12)', background: 'var(--surface2)',
+                      color: 'var(--text-2)', fontSize: '0.75rem', fontWeight: 700, cursor: loading || pending ? 'not-allowed' : 'pointer',
+                      opacity: loading || pending ? 0.45 : 1,
+                    }}>
+              {action.label}
+            </button>
+          ))}
         </div>
 
         {/* Messages */}
