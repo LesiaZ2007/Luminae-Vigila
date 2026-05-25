@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m 'feat: recurring event edit scope — this/all with series pre-populate *)",
+      "Bash(ls /mnt/c/Users/KBITK/OneDrive/Documents/GitHub/Luminae-Vigila/node_modules/next/dist/docs/ 2>&1 | head -20)",
+      "Read(//mnt/c/Users/KBITK/OneDrive/Documents/GitHub/Luminae-Vigila/node_modules/next/dist/**)",
+      "Bash(xargs grep -l \"viewport\")",
+      "Bash(find /mnt/c/Users/KBITK/OneDrive/Documents/GitHub/Luminae-Vigila/node_modules/next -name \"types.d.ts\" 2>/dev/null | head -5 && find /mnt/c/Users/KBITK/OneDrive/Documents/GitHub/Luminae-Vigila/node_modules/next -name \"index.d.ts\" 2>/dev/null | head -3)",
+      "Read(//mnt/c/Users/KBITK/OneDrive/Documents/GitHub/Luminae-Vigila/node_modules/**)",
+      "Bash(git commit -m 'fix\\(mobile\\): bottom tabs, swipe guard, settings tab, safe-area *)",
+      "Bash(gh pr *)",
+      "Bash(gh auth *)",
+      "Bash(git commit -m 'fix\\(mobile\\): remove corvus FAB on mobile; deduplicate import/export *)"
+    ]
+  }
+}
