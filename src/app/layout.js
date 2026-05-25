@@ -13,6 +13,13 @@ export const metadata = {
   description: "Your personal schedule, calendar, and task manager",
 };
 
+// Allow env(safe-area-inset-*) to work on iOS (notch / home-indicator)
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className={jakarta.variable} suppressHydrationWarning>

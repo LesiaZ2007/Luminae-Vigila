@@ -76,6 +76,9 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Responsive design** — desktop (full sidebar), tablet (168px mini-sidebar with labels), mobile (bottom tab navigation)
 - **Mobile view switcher** — M / W / D labels instead of Month / Week / Day; toolbar buttons and bottom nav icons are sized for touch targets
 - **Corvus on mobile** — tapping Corvus in the bottom tab bar or the floating button opens the full Corvus tab (not a small popup)
+- **Mobile Settings tab** — dedicated Settings tab in the mobile bottom nav exposes Google Calendar sync, Canvas connection, class schedule management, account sign-in/out, time/weather widget, theme toggle, and import/export — all features previously only accessible from the sidebar
+- **Swipe-safe navigation** — horizontal swipes to advance/retreat weeks no longer accidentally trigger a new-event modal; swipe detection guards FullCalendar's `dateClick` and `eventClick` callbacks
+- **100dvh layout** — outer shell uses dynamic viewport height so the bottom tab bar is always fully visible on real devices (avoids browser-chrome clipping); iOS safe-area insets applied to the bottom bar
 
 ---
 
