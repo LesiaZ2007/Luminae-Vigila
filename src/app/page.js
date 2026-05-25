@@ -138,10 +138,11 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
-  const [showSearchPopup, setShowSearchPopup] = useState(false)
-  const [searchQuery,   setSearchQuery]   = useState('')
-  const [searchScope,   setSearchScope]   = useState('all')
-  const [searchStatus,  setSearchStatus]  = useState('all')
+  const [showSearchPopup,   setShowSearchPopup]   = useState(false)
+  const [searchClosing,     setSearchClosing]     = useState(false)
+  const [searchQuery,       setSearchQuery]       = useState('')
+  const [searchScope,       setSearchScope]       = useState('all')
+  const [searchStatus,      setSearchStatus]      = useState('all')
   const [searchHighlightId, setSearchHighlightId] = useState(null)
 
   const [googleEvents,       setGoogleEvents]       = useState([])
@@ -158,17 +159,26 @@ export default function Home() {
   }, [])
 
   const closeSearchPopup = useCallback(() => {
-    setShowSearchPopup(false)
+    setSearchClosing(true)
+    setTimeout(() => { setShowSearchPopup(false); setSearchClosing(false) }, 180)
   }, [])
 
+  // Escape to close search
   useEffect(() => {
     if (!showSearchPopup) return
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') closeSearchPopup()
-    }
+    const onKeyDown = (e) => { if (e.key === 'Escape') closeSearchPopup() }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [showSearchPopup, closeSearchPopup])
+
+  // Ctrl+K / Cmd+K to open search from anywhere
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openSearchPopup() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [openSearchPopup])
 
   // ── Canvas state ──
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
@@ -933,6 +943,25 @@ export default function Home() {
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     const now = new Date()
+
+    // Human-friendly due-date label for tasks due within 2 weeks
+    function smartDueLabel(dateStr) {
+      if (!dateStr) return 'No due date'
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const due = new Date(dateStr + 'T00:00:00')
+      const diffDays = Math.round((due - today) / 86_400_000)
+      if (diffDays < 0) return `Due ${dateStr}`
+      if (diffDays === 0) return 'Due today'
+      if (diffDays === 1) return 'Due tomorrow'
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      const dayName = dayNames[due.getDay()]
+      const mm = String(due.getMonth() + 1).padStart(2, '0')
+      const dd = String(due.getDate()).padStart(2, '0')
+      const dateFmt = `${mm}/${dd}`
+      if (diffDays <= 6) return `Due this ${dayName} (${dateFmt})`
+      if (diffDays <= 13) return `Due next ${dayName} (${dateFmt})`
+      return `Due ${dateStr}`
+    }
     const matchesText = (value) => String(value || '').toLowerCase().includes(query)
 
     const shouldIncludeStatus = (item, type) => {
@@ -994,59 +1023,94 @@ export default function Home() {
     }
 
     if (!query) {
+      const weekFromNow = new Date(now.getTime() + 7 * 24 * 3600_000)
       if (searchScope === 'all' || searchScope === 'events') {
-        result.events = events.filter(eventFilter).map(event => ({
-          kind: 'event',
-          label: event.title || event.summary || 'Untitled event',
-          subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
-          source: 'Local events',
-          item: event,
-          tagLabel: categoryLabel(event.extendedProps?.category),
-          tagColor: categoryColor(event.extendedProps?.category),
-        }))
-        result.googleEvents = googleEvents.filter(googleFilter).map(event => ({
-          kind: 'google',
-          label: event.summary || 'Google event',
-          subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
-          source: 'Google Calendar',
-          item: event,
-          tagLabel: 'Google',
-          tagColor: '#4285f4',
-        }))
+        result.events = events
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 8)
+          .map(event => ({
+            kind: 'event',
+            label: event.title || event.summary || 'Untitled event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Event',
+            item: event,
+            tagLabel: categoryLabel(event.extendedProps?.category),
+            tagColor: categoryColor(event.extendedProps?.category),
+          }))
+        result.googleEvents = googleEvents
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 8)
+          .map(event => ({
+            kind: 'google',
+            label: event.summary || 'Google event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Google Calendar',
+            item: event,
+            tagLabel: 'Google',
+            tagColor: '#4285f4',
+          }))
       }
       if (searchScope === 'all' || searchScope === 'tasks') {
         result.todos = todos.filter(todoFilter).map(todo => ({
           kind: 'todo',
           label: todo.title,
-          subtitle: todo.dueDate ? `Due ${todo.dueDate}` : 'No due date',
+          subtitle: smartDueLabel(todo.dueDate),
           source: 'Task',
           item: todo,
           tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
           tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
         }))
       }
+      if (searchScope === 'all' || searchScope === 'canvas') {
+        const nowIso = now.toISOString()
+        result.canvasAssignments = canvasAssignments
+          .filter(a => !a.done && !a.hidden && a.dueAt && a.dueAt >= nowIso)
+          .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+          .slice(0, 5)
+          .map(a => ({
+            kind: 'canvas',
+            label: a.title,
+            subtitle: a.courseName || 'Canvas assignment',
+            source: 'Canvas',
+            item: a,
+            tagLabel: a.courseName || 'Canvas',
+            tagColor: '#E8751A',
+          }))
+      }
       return result
     }
 
     if (searchScope === 'all' || searchScope === 'events') {
-      result.events = events.filter(eventFilter).map(event => ({
-        kind: 'event',
-        label: event.title || event.summary || 'Untitled event',
-        subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
-        source: 'Local events',
-        item: event,
-        tagLabel: categoryLabel(event.extendedProps?.category),
-        tagColor: categoryColor(event.extendedProps?.category),
-      }))
-      result.googleEvents = googleEvents.filter(googleFilter).map(event => ({
-        kind: 'google',
-        label: event.summary || 'Google event',
-        subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
-        source: 'Google Calendar',
-        item: event,
-        tagLabel: 'Google',
-        tagColor: '#4285f4',
-      }))
+      result.events = events
+        .filter(eventFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'event',
+          label: event.title || event.summary || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Event',
+          item: event,
+          tagLabel: categoryLabel(event.extendedProps?.category),
+          tagColor: categoryColor(event.extendedProps?.category),
+        }))
+      result.googleEvents = googleEvents
+        .filter(googleFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'google',
+          label: event.summary || 'Google event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Google Calendar',
+          item: event,
+          tagLabel: 'Google',
+          tagColor: '#4285f4',
+        }))
     }
     if (searchScope === 'all' || searchScope === 'canvas') {
       result.canvasAssignments = canvasAssignments.filter(canvasFilter).map(assignment => ({
@@ -1056,14 +1120,14 @@ export default function Home() {
         source: 'Canvas',
         item: assignment,
         tagLabel: assignment.courseName || 'Canvas',
-        tagColor: assignment.color || '#8b5cf6',
+        tagColor: assignment.color || '#E8751A',
       }))
     }
     if (searchScope === 'all' || searchScope === 'tasks') {
       result.todos = todos.filter(todoFilter).map(todo => ({
         kind: 'todo',
         label: todo.title,
-        subtitle: todo.dueDate ? `Due ${todo.dueDate}` : 'No due date',
+        subtitle: smartDueLabel(todo.dueDate),
         source: 'Task',
         item: todo,
         tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
@@ -1169,10 +1233,10 @@ export default function Home() {
 
         {/* Nav */}
         <nav style={{ padding: '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV_ITEMS.map(item => {
-            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+          {NAV_ITEMS.filter(item => item.id !== 'search').map(item => {
+            const isActive = activeNav === item.id
             return (
-              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+              <button key={item.id} onClick={() => setActiveNav(item.id)}
                       style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
                       gap: 10, padding: '9px 12px',
@@ -1670,20 +1734,22 @@ export default function Home() {
           style={{
             position: 'fixed', inset: 0, zIndex: 2000,
             background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+            animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
           }}>
           <div onClick={e => e.stopPropagation()}
                style={{
                  width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
                  background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+                 animation: searchClosing ? 'lv-modal-out .18s ease forwards' : 'lv-modal-in .22s cubic-bezier(.22,1,.36,1)',
                }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
               <div>
                 <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-3)', marginTop: 4 }}>Jump to calendar events, tasks, Canvas assignments, or use upcoming defaults.</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 3 }}>Upcoming shown by default · Ctrl+K to open · Esc to close</div>
               </div>
               <button type="button" onClick={closeSearchPopup}
                       style={{ border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700, padding: '10px 14px' }}>
-                Close
+                ✕
               </button>
             </div>
             <div style={{ padding: '18px 20px' }}>
@@ -1702,6 +1768,27 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Search FAB (desktop only — mobile keeps search in bottom tab bar) ── */}
+      {!isMobile && (
+        <button
+          onClick={showSearchPopup ? closeSearchPopup : openSearchPopup}
+          title="Search (Ctrl+K)"
+          style={{
+            position: 'fixed', bottom: 24, right: 144,
+            width: 50, height: 50, borderRadius: '50%', border: '1px solid var(--border)',
+            background: showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)',
+            color:      showSearchPopup ? 'var(--blue)'    : 'var(--text-2)',
+            cursor: 'pointer', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-md)', transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.color = 'var(--blue)'; e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)'; e.currentTarget.style.color = showSearchPopup ? 'var(--blue)' : 'var(--text-2)'; e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)' }}
+        >
+          <Search size={20} />
+        </button>
       )}
 
       {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
