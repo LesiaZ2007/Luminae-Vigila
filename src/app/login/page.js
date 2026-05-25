@@ -1,19 +1,21 @@
 'use client'
 
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Suspense } from 'react'
 
 const ERROR_MESSAGES = {
   no_code:       'Google sign-in was cancelled. Please try again.',
   access_denied: 'Access was denied. Please try again and allow the requested permissions.',
+  db_unavailable:'Sign-in requires a database connection that isn\'t configured yet. You can still use the app locally.',
 }
 
 function LoginContent() {
   const params   = useSearchParams()
+  const router   = useRouter()
   const next     = params.get('next') ?? '/'
   const errorKey = params.get('error')
   const errorMsg = errorKey
-    ? (ERROR_MESSAGES[errorKey] ?? 'Something went wrong. Please try again.')
+    ? (ERROR_MESSAGES[errorKey] ?? 'Something went wrong — the server may not be fully configured yet. You can still use the app without signing in.')
     : null
 
   const loginUrl = `/api/auth/google?next=${encodeURIComponent(next)}`
@@ -53,10 +55,10 @@ function LoginContent() {
         </div>
 
         <h1 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#fff', margin: '0 0 10px' }}>
-          Welcome back
+          Sync across devices
         </h1>
         <p style={{ color: 'rgba(147,197,253,.65)', fontSize: '0.9rem', margin: '0 0 32px', lineHeight: 1.5 }}>
-          Sign in to access your schedule,<br/>calendar, and tasks.
+          Sign in to keep your schedule, calendar, and tasks in sync — or keep using the app locally without an account.
         </p>
 
         {errorMsg && (
@@ -100,9 +102,42 @@ function LoginContent() {
           Continue with Google
         </a>
 
-        <p style={{ color: 'rgba(147,197,253,.35)', fontSize: '0.75rem', margin: '24px 0 0', lineHeight: 1.5 }}>
-          Sign in to sync your data across devices.<br/>
-          Google Calendar &amp; Canvas are connected separately.
+        {/* Divider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,.08)' }} />
+          <span style={{ color: 'rgba(147,197,253,.3)', fontSize: '0.75rem' }}>or</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,.08)' }} />
+        </div>
+
+        {/* Skip / continue locally */}
+        <button
+          onClick={() => router.push(next)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%',
+            padding: '12px 20px',
+            borderRadius: 12,
+            background: 'rgba(255,255,255,.06)',
+            border: '1px solid rgba(255,255,255,.10)',
+            color: 'rgba(147,197,253,.8)',
+            fontFamily: 'inherit',
+            fontWeight: 600,
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            boxSizing: 'border-box',
+            transition: 'background .12s, color .12s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.10)'; e.currentTarget.style.color = '#fff' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,.06)'; e.currentTarget.style.color = 'rgba(147,197,253,.8)' }}
+        >
+          Continue without signing in
+        </button>
+
+        <p style={{ color: 'rgba(147,197,253,.3)', fontSize: '0.72rem', margin: '20px 0 0', lineHeight: 1.5 }}>
+          Without an account, your data lives in this browser only.<br/>
+          Google Calendar &amp; Canvas can still be connected.
         </p>
       </div>
     </div>
