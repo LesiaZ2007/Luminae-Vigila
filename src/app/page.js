@@ -423,13 +423,9 @@ export default function Home() {
     }
   }, [events])
 
-  const deleteEvent = useCallback((id, groupId) => {
-    if (groupId) {
-      const choice = window.confirm('Delete all repeats of this event?\n\nOK = delete all  |  Cancel = delete only this one')
-      setEvents(prev => choice
-        ? prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id)
-        : prev.filter(e => e.id !== id)
-      )
+  const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
+    if (groupId && deleteAll) {
+      setEvents(prev => prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id))
     } else {
       setEvents(prev => prev.filter(e => e.id !== id))
     }

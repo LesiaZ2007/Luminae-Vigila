@@ -25,7 +25,9 @@ function toHHMM(date) {
 function initState(event, initialDate, categories) {
   if (event) {
     const s    = event.start instanceof Date ? event.start : new Date(event.start || Date.now())
-    const eRaw = event.end   instanceof Date ? event.end   : new Date(s.getTime() + 3600_000)
+    const eRaw = event.end instanceof Date
+      ? event.end
+      : (event.end ? new Date(event.end) : new Date(s.getTime() + 3600_000))
     const aDay = event.allDay || false
     // FullCalendar stores allDay end as exclusive next-day; show inclusive
     const eDisplay = aDay ? new Date(eRaw.getTime() - 86400_000) : eRaw
@@ -82,8 +84,9 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
   const [repeatUntil, setRepeatUntil] = useState(init.repeatUntil)
   const [notes,        setNotes]        = useState(init.notes)
   const [customReminderAt, setCustomReminderAt] = useState('')
-  const [error,        setError]        = useState('')
-  const [closing,      setClosing]      = useState(false)
+  const [error,         setError]         = useState('')
+  const [closing,       setClosing]       = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const cat = categories.find(c => c.id === category) || categories[0]
 
@@ -143,8 +146,12 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
   }
 
   function handleDelete() {
-    if (!window.confirm(`Delete "${title}"?`)) return
-    onDelete(event.id, event.recurrenceGroupId)
+    setConfirmDelete(true)
+  }
+
+  function commitDelete(deleteAll) {
+    const groupId = event.extendedProps?.recurrenceGroupId
+    onDelete(event.id, groupId, deleteAll)
     handleClose()
   }
 
@@ -340,13 +347,56 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
 
           {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
 
+          {/* Delete confirmation panel */}
+          {confirmDelete && (
+            <div style={{
+              borderRadius: 12, border: '1px solid var(--red, #ef4444)',
+              background: 'rgba(239,68,68,0.07)', padding: '14px 16px',
+              display: 'flex', flexDirection: 'column', gap: 10,
+            }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)' }}>
+                {event?.extendedProps?.recurrenceGroupId
+                  ? 'Delete recurring event'
+                  : `Delete "${title}"?`}
+              </p>
+              {event?.extendedProps?.recurrenceGroupId && (
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-2)' }}>
+                  This is part of a repeating series. Which events should be deleted?
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {event?.extendedProps?.recurrenceGroupId ? (<>
+                  <button type="button" onClick={() => commitDelete(false)}
+                          style={{ flex: 1, minWidth: 120, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    This event only
+                  </button>
+                  <button type="button" onClick={() => commitDelete(true)}
+                          style={{ flex: 1, minWidth: 120, padding: '8px 12px', borderRadius: 8, border: 'none', background: '#ef4444', color: '#fff', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    All in series
+                  </button>
+                </>) : (
+                  <button type="button" onClick={() => commitDelete(false)}
+                          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: 'none', background: '#ef4444', color: '#fff', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    Delete
+                  </button>
+                )}
+                <button type="button" onClick={() => setConfirmDelete(false)}
+                        style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
-          <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
-            <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
-            <button type="submit" className="btn-primary" style={{ flex: 1, background: cat.color }}>
-              {isEdit ? 'Save Changes' : 'Add Event'}
-            </button>
-          </div>
+          {!confirmDelete && (
+            <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
+              <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
+              <button type="submit" className="btn-primary" style={{ flex: 1, background: cat.color }}>
+                {isEdit ? 'Save Changes' : 'Add Event'}
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>
