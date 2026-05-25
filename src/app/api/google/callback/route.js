@@ -1,7 +1,7 @@
-import { google }                      from 'googleapis'
-import { randomUUID }                   from 'crypto'
-import { makeOAuth2Client }             from '@/lib/googleAuth'
-import { upsertAccount, getAccounts }   from '@/lib/googleTokenStore'
+import { google }                                   from 'googleapis'
+import { makeOAuth2Client }                         from '@/lib/googleAuth'
+import { upsertAccount, getAccounts }               from '@/lib/googleTokenStore'
+import { getSession }                               from '@/lib/session'
 
 /** Return an HTML page that postMessages to the opener and closes itself. */
 function popupHtml(script) {
@@ -31,22 +31,27 @@ export async function GET(request) {
     )
   }
 
+  // Require a valid session so we know which user to associate this account with
+  const session = await getSession()
+  if (!session) {
+    return popupHtml(
+      `window.opener?.postMessage({type:'gc_error',error:'Not signed in — please sign in first.'},'*');window.close();`,
+    )
+  }
+
   try {
     const oauth2 = makeOAuth2Client()
     const { tokens } = await oauth2.getToken(code)
     oauth2.setCredentials(tokens)
 
-    // Fetch the user's email
+    // Fetch the Google account email
     const infoApi  = google.oauth2({ version: 'v2', auth: oauth2 })
     const { data } = await infoApi.userinfo.get()
     const email    = data.email
 
-    // Re-use the same ID if the account is already connected (avoid duplicates)
-    const existing = (await getAccounts()).find(a => a.email === email)
-    const id       = existing?.id ?? randomUUID()
-
-    await upsertAccount({
-      id,
+    // Upsert into the DB scoped to this user
+    const existing = (await getAccounts(session.userId)).find(a => a.email === email)
+    const id = await upsertAccount(session.userId, {
       email,
       accessToken:  tokens.access_token,
       refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,

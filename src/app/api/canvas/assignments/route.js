@@ -1,8 +1,8 @@
 import { getCredential } from '@/lib/canvasTokenStore'
+import { getSession }    from '@/lib/session'
 
 /**
  * Follow Canvas pagination via Link response headers.
- * Canvas defaults to 10 results per page, so this is important.
  */
 async function canvasFetchAll(url, token) {
   const items = []
@@ -24,10 +24,12 @@ async function canvasFetchAll(url, token) {
 /**
  * POST — fetch assignments for a list of courses.
  * Body: { courses: [{ id: number, name: string }] }
- * Returns: { assignments: NormalizedAssignment[] }
  */
 export async function POST(request) {
-  const cred = await getCredential()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const cred = await getCredential(session.userId)
   if (!cred) return Response.json({ error: 'Not connected' }, { status: 401 })
 
   let body
@@ -49,9 +51,7 @@ export async function POST(request) {
       const raw = await canvasFetchAll(url, token)
 
       for (const a of raw) {
-        // Skip ungraded / not_graded filler assignments
         if (Array.isArray(a.submission_types) && a.submission_types.length === 1 && a.submission_types[0] === 'not_graded') continue
-        // Skip assignments locked in the past (already past lock date)
         if (a.lock_at && new Date(a.lock_at) < new Date()) continue
 
         const sub = a.submission ?? null
@@ -74,7 +74,6 @@ export async function POST(request) {
         })
       }
     } catch (err) {
-      // Don't abort the whole request for one failing course
       console.error(`Canvas assignments error for course ${course.id}:`, err.message)
     }
   }

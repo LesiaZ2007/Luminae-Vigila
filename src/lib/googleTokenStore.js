@@ -1,64 +1,97 @@
 /**
  * Server-side token storage for Google OAuth accounts.
- * Uses Next.js httpOnly cookies for persistence across serverless invocations.
- * Falls back to an in-memory Map when cookie context is unavailable
- * (e.g., token-refresh events emitted asynchronously by googleapis).
+ * Tokens are stored in Neon PostgreSQL, scoped to a user ID.
+ * Each user can have multiple connected Google accounts.
  */
-import { cookies } from 'next/headers'
+import sql from './db'
 
-const COOKIE = 'lv_gc'
-const OPTS = {
-  httpOnly: true,
-  secure:   process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
-  maxAge:   60 * 60 * 24 * 30, // 30 days
-  path:     '/',
+/**
+ * Return all Google accounts for the given user.
+ * @param {string} userId
+ * @returns {Promise<Array<{id,email,accessToken,refreshToken,expiresAt}>>}
+ */
+export async function getAccounts(userId) {
+  const rows = await sql`
+    SELECT id, google_email AS email, access_token, refresh_token, expires_at
+    FROM   google_accounts
+    WHERE  user_id = ${userId}
+    ORDER BY created_at
+  `
+  return rows.map(r => ({
+    id:           r.id,
+    userId,
+    email:        r.email,
+    accessToken:  r.access_token,
+    refreshToken: r.refresh_token,
+    expiresAt:    r.expires_at ? Number(r.expires_at) : null,
+  }))
 }
 
-/** In-memory fallback — keeps tokens alive within the same Lambda instance */
-const mem = new Map()
-
-async function load() {
-  try {
-    const jar = await cookies()
-    const raw = jar.get(COOKIE)?.value
-    if (raw) {
-      const list = JSON.parse(raw)
-      for (const a of list) mem.set(a.id, a)
-      return list
-    }
-  } catch { /* no request context available */ }
-  return [...mem.values()]
+/**
+ * Return a single Google account by its UUID, scoped to userId.
+ * Returns null if not found or if it belongs to a different user.
+ * @param {string} id
+ * @param {string} userId
+ */
+export async function getAccount(id, userId) {
+  const rows = await sql`
+    SELECT id, google_email AS email, access_token, refresh_token, expires_at
+    FROM   google_accounts
+    WHERE  id = ${id} AND user_id = ${userId}
+  `
+  if (!rows.length) return null
+  const r = rows[0]
+  return {
+    id:           r.id,
+    userId,
+    email:        r.email,
+    accessToken:  r.access_token,
+    refreshToken: r.refresh_token,
+    expiresAt:    r.expires_at ? Number(r.expires_at) : null,
+  }
 }
 
-async function save(list) {
-  for (const a of list) mem.set(a.id, a)
-  try {
-    const jar = await cookies()
-    jar.set(COOKIE, JSON.stringify(list), OPTS)
-  } catch { /* no request context — in-memory is already updated */ }
+/**
+ * Insert or update a Google account for the given user.
+ * Uses google_email as the unique key within a user's accounts.
+ * @param {string} userId
+ * @param {{ id?: string, email: string, accessToken: string, refreshToken?: string, expiresAt?: number }} account
+ * @returns {Promise<string>} the account UUID
+ */
+export async function upsertAccount(userId, account) {
+  const { email, accessToken, refreshToken, expiresAt } = account
+
+  // If the caller provided an ID, use it on INSERT (preserves stable IDs for localStorage prefs).
+  // On conflict (same user + google email) just update the tokens.
+  const rows = await sql`
+    INSERT INTO google_accounts (id, user_id, google_email, access_token, refresh_token, expires_at, updated_at)
+    VALUES (
+      COALESCE(
+        (SELECT id FROM google_accounts WHERE user_id = ${userId} AND google_email = ${email}),
+        gen_random_uuid()
+      ),
+      ${userId}, ${email}, ${accessToken},
+      ${refreshToken ?? null},
+      ${expiresAt ?? null},
+      NOW()
+    )
+    ON CONFLICT (user_id, google_email) DO UPDATE
+      SET access_token  = EXCLUDED.access_token,
+          refresh_token = COALESCE(EXCLUDED.refresh_token, google_accounts.refresh_token),
+          expires_at    = EXCLUDED.expires_at,
+          updated_at    = NOW()
+    RETURNING id
+  `
+  return rows[0].id
 }
 
-export async function getAccounts() {
-  return load()
-}
-
-export async function getAccount(id) {
-  const list = await load()
-  return list.find(a => a.id === id) ?? null
-}
-
-export async function upsertAccount(account) {
-  mem.set(account.id, account)       // immediate in-memory update
-  const list = await load()
-  const idx  = list.findIndex(a => a.id === account.id)
-  if (idx >= 0) list[idx] = account
-  else          list.push(account)
-  await save(list)
-}
-
-export async function removeAccount(id) {
-  mem.delete(id)
-  const list = await load()
-  await save(list.filter(a => a.id !== id))
+/**
+ * Remove a Google account by UUID, scoped to the user.
+ * @param {string} id
+ * @param {string} userId
+ */
+export async function removeAccount(id, userId) {
+  await sql`
+    DELETE FROM google_accounts WHERE id = ${id} AND user_id = ${userId}
+  `
 }
