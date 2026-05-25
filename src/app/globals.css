@@ -69,7 +69,8 @@ html, body { height: 100%; overflow: hidden; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-sans, 'Plus Jakarta Sans', sans-serif);
+  font-family: var(--font-sans, 'Plus Jakarta Sans', sans-serif),
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
 }
@@ -462,6 +463,10 @@ select option {
   left: 0 !important;
   right: 0 !important;
 }
+
+/* Hidden (semi-transparent) Google Calendar events */
+.fc .lv-hidden-event { opacity: 0.38 !important; filter: grayscale(0.2); }
+.fc .lv-hidden-event:hover { opacity: 0.6 !important; filter: none; }
 
 .fc .fc-day-today .fc-col-header-cell-cushion { color: var(--blue); }
 .fc .fc-day-today.fc-col-header-cell { background: var(--blue-bg); }

@@ -31,13 +31,13 @@ export function clientForAccount(account) {
     refresh_token: account.refreshToken,
     expiry_date:   account.expiresAt,
   })
-  // Persist refreshed tokens automatically
+  // Persist refreshed tokens automatically (fire-and-forget — upsertAccount is async)
   oauth2.on('tokens', (tokens) => {
     const updated = { ...account }
     if (tokens.access_token)  updated.accessToken  = tokens.access_token
     if (tokens.expiry_date)   updated.expiresAt    = tokens.expiry_date
     if (tokens.refresh_token) updated.refreshToken = tokens.refresh_token
-    upsertAccount(updated)
+    upsertAccount(updated).catch(() => { /* will auto-refresh on next request */ })
   })
   return oauth2
 }

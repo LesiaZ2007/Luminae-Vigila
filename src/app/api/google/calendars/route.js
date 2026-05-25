@@ -6,7 +6,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url)
   const accountId = searchParams.get('accountId')
 
-  const account = getAccount(accountId)
+  const account = await getAccount(accountId)
   if (!account) return Response.json({ error: 'Account not found' }, { status: 404 })
 
   try {

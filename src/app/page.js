@@ -136,6 +136,7 @@ export default function Home() {
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
+  const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
   const shownReminders = useRef(new Set())
 
@@ -284,6 +285,10 @@ export default function Home() {
     setToasts(prev => prev.filter(t => t.eventId !== id))
   }, [])
 
+  const unhideEvent = useCallback((id) => {
+    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), hidden: false } }))
+  }, [])
+
   const setGoogleEventColor = useCallback((id, color) => {
     setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
     setToasts(prev => prev.map(toast => toast.eventId === id
@@ -295,12 +300,9 @@ export default function Home() {
     ))
   }, [])
 
+  /** Toggle semi-transparent display of hidden GCal events */
   const showHiddenEvents = useCallback(() => {
-    setEventPrefs(prev => Object.fromEntries(
-      Object.entries(prev)
-        .map(([id, pref]) => [id, { ...pref, hidden: false }])
-        .filter(([, pref]) => pref.color || pref.hidden),
-    ))
+    setShowHiddenGcal(v => !v)
   }, [])
 
   /* ── Todo CRUD ── */
@@ -420,14 +422,16 @@ export default function Home() {
         subtitle: subtitle.slice(0, 180),
         actions: [
           { label: 'Color', type: 'color', value: currentColor, onChange: color => setGoogleEventColor(info.event.id, color), dismiss: false },
-          { label: 'Hide event', variant: 'danger', onClick: () => hideEvent(info.event.id) },
+          eventPrefs[info.event.id]?.hidden
+            ? { label: 'Unhide event', onClick: () => unhideEvent(info.event.id) }
+            : { label: 'Hide event', variant: 'danger', onClick: () => hideEvent(info.event.id) },
         ],
       }])
       setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 12000)
       return
     }
     setEventModal({ open: true, event: info.event, date: null })
-  }, [todos, eventPrefs, hideEvent, setGoogleEventColor])
+  }, [todos, eventPrefs, hideEvent, unhideEvent, setGoogleEventColor])
 
   /* ── Merge todos + Google events → calendar events ── */
   const visibleEvents = useMemo(
@@ -440,9 +444,22 @@ export default function Home() {
       .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
     [googleEvents, eventPrefs],
   )
+  /** Hidden GCal events shown semi-transparently when the toggle is on */
+  const hiddenGcalEvents = useMemo(
+    () => !showHiddenGcal ? [] : googleEvents
+      .filter(e => eventPrefs[e.id]?.hidden)
+      .map(e => ({
+        ...e,
+        color: eventPrefs[e.id]?.color || e.color,
+        classNames: ['lv-hidden-event'],
+        extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
+      })),
+    [googleEvents, eventPrefs, showHiddenGcal],
+  )
   const allCalendarEvents = [
     ...visibleEvents,
     ...visibleGoogleEvents,
+    ...hiddenGcalEvents,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
@@ -665,14 +682,14 @@ export default function Home() {
               {hiddenEventCount > 0 && (
                 <button
                   onClick={showHiddenEvents}
-                  title="Show hidden events"
+                  title={showHiddenGcal ? 'Hide hidden events' : 'Show hidden events semi-transparently'}
                   style={{
                     position: 'absolute',
                     bottom: 18,
                     left: 18,
                     zIndex: 10,
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
+                    background: showHiddenGcal ? 'var(--blue-bg)' : 'var(--surface)',
+                    border: `1px solid ${showHiddenGcal ? 'var(--blue)' : 'var(--border)'}`,
                     borderRadius: 8,
                     padding: '6px 10px',
                     cursor: 'pointer',
@@ -681,8 +698,9 @@ export default function Home() {
                     fontSize: '0.72rem',
                     fontWeight: 700,
                     fontFamily: 'inherit',
+                    transition: 'background .15s, border-color .15s',
                   }}>
-                  Show hidden ({hiddenEventCount})
+                  {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
               <WeeklyCalendar events={allCalendarEvents} todos={todos}

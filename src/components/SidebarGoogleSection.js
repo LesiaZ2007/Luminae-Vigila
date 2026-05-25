@@ -277,32 +277,75 @@ function AccountItem({ acc, cals, expanded, onToggleExpand, accountEnabled, onTo
   )
 }
 
-/* ── Compact toggle for sidebar ── */
+/* ── Color dot that opens a popover picker ── */
 function ColorDot({ value, onChange, disabled = false }) {
-  const idx = Math.max(0, COLOR_PRESETS.findIndex(c => c.toLowerCase() === value?.toLowerCase()))
-  const nextColor = COLOR_PRESETS[(idx + 1) % COLOR_PRESETS.length]
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChange(nextColor)}
-      title="Change calendar color"
-      style={{
-        width: 14,
-        height: 14,
-        borderRadius: '50%',
-        background: value,
-        border: '2px solid rgba(255,255,255,.32)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.35 : 1,
-        padding: 0,
-        flexShrink: 0,
-        transition: 'transform .1s, border-color .1s',
-      }}
-      onMouseEnter={e => { if (!disabled) { e.currentTarget.style.transform = 'scale(1.18)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.75)' } }}
-      onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.32)' }}
-    />
+    <div ref={wrapRef} style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(v => !v)}
+        title="Change calendar color"
+        style={{
+          width: 14, height: 14, borderRadius: '50%',
+          background: value,
+          border: '2px solid rgba(255,255,255,.32)',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.35 : 1,
+          padding: 0,
+          transition: 'transform .1s, border-color .1s',
+        }}
+        onMouseEnter={e => { if (!disabled) { e.currentTarget.style.transform = 'scale(1.18)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.75)' } }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,.32)' }}
+      />
+      {open && (
+        <div style={{
+          position: 'absolute',
+          bottom: 'calc(100% + 8px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          padding: 8,
+          boxShadow: 'var(--shadow-modal)',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 5,
+          zIndex: 200,
+          width: 106,
+        }}>
+          {COLOR_PRESETS.map(color => (
+            <button
+              key={color}
+              type="button"
+              onClick={() => { onChange(color); setOpen(false) }}
+              title={color}
+              style={{
+                width: 18, height: 18, borderRadius: '50%',
+                background: color,
+                border: value?.toLowerCase() === color.toLowerCase()
+                  ? '2.5px solid var(--text)' : '2px solid transparent',
+                cursor: 'pointer', padding: 0,
+                transition: 'transform .1s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
