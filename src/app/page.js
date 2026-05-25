@@ -1,96 +1,153 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import {
-  CheckSquare,
-  Sun,
-  Moon,
-  Plus,
-  ChevronRight,
-  CalendarDays,
-  ListTodo,
-} from 'lucide-react'
-import { useWindowWidth } from '@/lib/hooks'
-import { expandRecurring, expandRecurringTodo } from '@/lib/recurrenceUtils'
-import {
-  EVENT_CATEGORIES,
-  DEFAULT_TODO_CATEGORIES,
-} from '@/lib/constants'
-import TodoPanel from '@/components/TodoPanel'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo } from 'lucide-react'
+
+function useWindowWidth() {
+  const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
+  useEffect(() => {
+    function onResize() { setW(window.innerWidth) }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return w
+}
+import TodoPanel  from '@/components/TodoPanel'
 import EventModal from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
-import GoogleCalendarSettings, {
-  GoogleLogo,
-} from '@/components/GoogleCalendarSettings'
+import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
 
-const WeeklyCalendar = dynamic(
-  () => import('@/components/WeeklyCalendar'),
-  { ssr: false }
-)
+const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
-// Export for backward compatibility
-export { EVENT_CATEGORIES }
+export const EVENT_CATEGORIES = [
+  { id: 'class',    label: 'Class',       color: '#3a6fa8' },
+  { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
+  { id: 'personal', label: 'Personal',    color: '#10b981' },
+  { id: 'health',   label: 'Health',      color: '#f59e0b' },
+  { id: 'social',   label: 'Social',      color: '#8b5cf6' },
+  { id: 'work',     label: 'Work',        color: '#06b6d4' },
+]
+
+const DEFAULT_TODO_CATS = [
+  { id: 'academic', label: 'Academic', color: '#3a6fa8' },
+  { id: 'personal', label: 'Personal', color: '#10b981' },
+  { id: 'work',     label: 'Work',     color: '#f59e0b' },
+  { id: 'health',   label: 'Health',   color: '#ef4444' },
+]
+
+/* ── Recurring event expansion ── */
+function expandRecurring(base) {
+  const { recurrence } = base
+  const newId = base.id || String(Date.now())
+  if (!recurrence) return [{ ...base, id: newId }]
+
+  const startDt  = new Date(base.start)
+  const endDt    = new Date(base.end)
+  const duration = endDt - startDt
+  const until    = new Date(recurrence.until + 'T23:59:59')
+  const results  = []
+  let cur = new Date(startDt)
+
+  while (cur <= until) {
+    const dow = cur.getDay()
+    const weekDiff = Math.round((cur - startDt) / (7 * 24 * 60 * 60 * 1000))
+    const include =
+      recurrence.type === 'daily' ||
+      (recurrence.type === 'weekly'   && dow === startDt.getDay()) ||
+      (recurrence.type === 'biweekly' && dow === startDt.getDay() && weekDiff % 2 === 0) ||
+      (recurrence.type === 'monthly'  && cur.getDate() === startDt.getDate()) ||
+      (recurrence.type === 'custom'   && recurrence.days.includes(dow))
+
+    if (include) {
+      const id = `${newId}-r-${cur.toISOString().slice(0,10)}`
+      results.push({
+        ...base,
+        id,
+        recurrenceGroupId: newId,
+        start: new Date(cur).toISOString(),
+        end:   new Date(cur.getTime() + duration).toISOString(),
+        recurrence: undefined,
+      })
+    }
+    cur.setDate(cur.getDate() + 1)
+  }
+  return results
+}
+
+// Expand a recurring todo into individual instances (up to 8 weeks ahead)
+function expandRecurringTodo(t) {
+  if (!t.dueDate) return []
+  if (!t.recurrence) return [t]
+
+  const { recurrence } = t
+  const startDt       = new Date(t.dueDate + 'T12:00:00')
+  const until         = recurrence.until
+    ? new Date(recurrence.until + 'T23:59:59')
+    : new Date(startDt.getTime() + 8 * 7 * 24 * 3600_000)
+  const completedDates = t.completedDates || []
+
+  const results = []
+  let cur = new Date(startDt)
+
+  while (cur <= until && results.length < 60) {
+    const dow     = cur.getDay()
+    const dateStr = cur.toISOString().slice(0, 10)
+    const include =
+      recurrence.type === 'daily' ||
+      (recurrence.type === 'weekly' && dow === startDt.getDay()) ||
+      (recurrence.type === 'custom' && recurrence.days?.includes(dow))
+
+    if (include && !completedDates.includes(dateStr)) {
+      results.push({ ...t, dueDate: dateStr, recurrenceGroupId: t.id, id: `${t.id}-r-${dateStr}` })
+    }
+    cur.setDate(cur.getDate() + 1)
+  }
+  return results
+}
 
 export default function Home() {
   const { theme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  // Layout state
+  const [mounted,       setMounted]       = useState(false)
   const [todoPanelWidth, setTodoPanelWidth] = useState(280)
-  const resizingRef = useRef(false)
-  const startXRef = useRef(0)
-  const startWRef = useRef(280)
+  const resizingRef    = useRef(false)
+  const startXRef      = useRef(0)
+  const startWRef      = useRef(280)
+  const dragCardRef    = useRef(null)
+  const draggableRef   = useRef(null)
 
-  // Calendar state
-  const dragCardRef = useRef(null)
-  const draggableRef = useRef(null)
-  const [events, setEvents] = useState([])
-  const [eventModal, setEventModal] = useState({
-    open: false,
-    event: null,
-    date: null,
-  })
-  const [eventPrefs, setEventPrefs] = useState({})
-  const [googleEvents, setGoogleEvents] = useState([])
-  const [showGoogleSettings, setShowGoogleSettings] = useState(false)
-  const [gcSyncing, setGcSyncing] = useState(false)
+  const [events,         setEvents]         = useState([])
+  const [todos,          setTodos]           = useState([])
+  const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
+  const [toasts,         setToasts]         = useState([])
 
-  // Todo state
-  const [todos, setTodos] = useState([])
-  const [todoCategories, setTodoCategories] = useState(
-    DEFAULT_TODO_CATEGORIES
-  )
-  const [showTodoModal, setShowTodoModal] = useState(false)
-  const [editingTodo, setEditingTodo] = useState(null)
+  const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
+  const [showTodoModal,   setShowTodoModal]   = useState(false)
+  const [editingTodo,     setEditingTodo]     = useState(null)
   const [initialTodoDate, setInitialTodoDate] = useState(null)
+  const [activeNav,     setActiveNav]     = useState('calendar')
+  const [corvusFloat,   setCorvusFloat]   = useState(false)
 
-  // UI state
-  const [activeNav, setActiveNav] = useState('calendar')
-  const [corvusFloat, setCorvusFloat] = useState(false)
-  const [toasts, setToasts] = useState([])
-  const [clockTime, setClockTime] = useState(() => new Date())
-  const [weather, setWeather] = useState(null)
-  const [militaryTime, setMilitaryTime] = useState(false)
+  const [googleEvents,       setGoogleEvents]       = useState([])
+  const [showGoogleSettings, setShowGoogleSettings] = useState(false)
+  const [gcSyncing,          setGcSyncing]          = useState(false)
+  const [eventPrefs,         setEventPrefs]         = useState({})
 
-  // Reminders
   const shownReminders = useRef(new Set())
 
-  // Responsive layout
+  const [clockTime,    setClockTime]    = useState(() => new Date())
+  const [weather,      setWeather]      = useState(null)
+  const [militaryTime, setMilitaryTime] = useState(false)
   const windowWidth = useWindowWidth()
-  const isMobile = windowWidth < 640
-  const isTablet = windowWidth >= 640 && windowWidth < 1024
-  const hiddenEventCount = Object.values(eventPrefs).filter(
-    (pref) => pref?.hidden
-  ).length
+  const isMobile  = windowWidth < 640
+  const isTablet  = windowWidth >= 640 && windowWidth < 1024
+  const hiddenEventCount = Object.values(eventPrefs).filter(pref => pref?.hidden).length
 
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  useEffect(() => { setMounted(true) }, [])
 
   // Initialize FullCalendar Draggable on the drag card
   useEffect(() => {

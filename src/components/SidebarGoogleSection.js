@@ -10,7 +10,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronRight, Settings2, RefreshCw } from 'lucide-react'
 import { GoogleLogo } from '@/components/GoogleCalendarSettings'
-import DataExportImport from '@/components/DataExportImport'
 
 const COLOR_PRESETS = [
   '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
@@ -228,11 +227,6 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
               ))}
             </div>
           )}
-          
-          {/* Import / Export local data */}
-          <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px dashed rgba(147,197,253,.06)' }}>
-            <DataExportImport onImportSuccess={(msg) => { if (msg) alert(msg); onSync?.(); loadAccounts(); }} />
-          </div>
         </div>
       )}
     </div>
