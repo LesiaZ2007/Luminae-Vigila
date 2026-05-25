@@ -7,7 +7,7 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile }) {
+export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile, highlightEventId }) {
   const calendarRef = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
@@ -69,6 +69,13 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     const role = overlapRole(info.event, info.view.calendar.getEvents())
     if (role === 'later') harness.classList.add('lv-overlap-later-harness')
     if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+
+    if (highlightEventId && info.event.id === highlightEventId) {
+      info.el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.35)'
+      info.el.style.border = '1px solid rgba(59,130,246,0.9)'
+      info.el.style.zIndex = '3'
+      info.el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })
+    }
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
   }

@@ -27,7 +27,7 @@ import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
 //   null              — idle
 //   'done'            — finished (auto-closes)
 //   { error: string } — parse error
-//   { reviewing: true, parsed, newEvents, newTodos, newCats,
+//   { reviewing: true, source: 'json' | 'ics', parsed, newEvents, newTodos, newCats,
 //     conflictEvents, conflictTodos, conflictCats }
 //                     — showing merge summary, waiting for user choice
 
@@ -39,8 +39,96 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
   function reset() { setStatus(null); setConflictStrategy('skip') }
 
-  /* ── Export ── */
-  function handleExport() {
+  function serializeIcs(eventsToExport) {
+    const escapeValue = (value) => String(value || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/\n/g, '\\n')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+
+    const formatDate = (iso) => {
+      const d = new Date(iso)
+      const pad = (num) => String(num).padStart(2, '0')
+      return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
+    }
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//luminae-vigila//EN',
+    ]
+
+    for (const event of eventsToExport) {
+      lines.push('BEGIN:VEVENT')
+      lines.push(`UID:${escapeValue(event.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)}`)
+      if (event.start) lines.push(`DTSTART:${formatDate(event.start)}`)
+      if (event.end) lines.push(`DTEND:${formatDate(event.end)}`)
+      if (event.title) lines.push(`SUMMARY:${escapeValue(event.title)}`)
+      if (event.description) lines.push(`DESCRIPTION:${escapeValue(event.description)}`)
+      if (event.location) lines.push(`LOCATION:${escapeValue(event.location)}`)
+      lines.push('END:VEVENT')
+    }
+
+    lines.push('END:VCALENDAR')
+    return lines.join('\r\n')
+  }
+
+  function parseIcs(text) {
+    const unfold = text.replace(/\r?\n[ \t]/g, '')
+    const entries = unfold.split(/\r?\n(?=BEGIN:)/g)
+    const eventsFromIcs = []
+
+    for (const entry of entries) {
+      if (!entry.includes('BEGIN:VEVENT')) continue
+      const event = {}
+      const lines = entry.split(/\r?\n/)
+      for (const rawLine of lines) {
+        const [key, ...rest] = rawLine.split(':')
+        if (!key || rest.length === 0) continue
+        const value = rest.join(':')
+        if (key.startsWith('UID')) event.id = value.trim()
+        if (key.startsWith('DTSTART')) event.start = value.trim()
+        if (key.startsWith('DTEND')) event.end = value.trim()
+        if (key.startsWith('SUMMARY')) event.title = value.trim()
+        if (key.startsWith('DESCRIPTION')) event.description = value.trim().replace(/\\n/g, '\n')
+        if (key.startsWith('LOCATION')) event.location = value.trim()
+      }
+      if (event.start) {
+        const parseDate = (icstime) => {
+          const normalized = icstime.replace(/Z$/, '')
+          const year = normalized.slice(0, 4)
+          const month = normalized.slice(4, 6)
+          const day = normalized.slice(6, 8)
+          const hour = normalized.slice(9, 11) || '00'
+          const minute = normalized.slice(11, 13) || '00'
+          const second = normalized.slice(13, 15) || '00'
+          return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).toISOString()
+        }
+        event.start = parseDate(event.start)
+        if (event.end) event.end = parseDate(event.end)
+        event.title = event.title || 'Untitled event'
+        event.id = event.id || `ics-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        eventsFromIcs.push(event)
+      }
+    }
+    return eventsFromIcs
+  }
+
+  function initiateExport(format = 'json') {
+    if (format === 'ics') {
+      const icsData = serializeIcs(events)
+      const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `luminae-vigila-${new Date().toISOString().slice(0, 10)}.ics`
+      a.click()
+      URL.revokeObjectURL(url)
+      setStatus('done')
+      setTimeout(() => { reset(); setOpen(false) }, 1800)
+      return
+    }
+
     const data = {
       version:    1,
       exportedAt: new Date().toISOString(),
@@ -67,13 +155,26 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
     const reader = new FileReader()
     reader.onload = (ev) => {
       try {
-        const parsed = JSON.parse(ev.target.result)
-        if (!parsed.events && !parsed.todos)
-          throw new Error('This file doesn\'t look like a luminaeVigila export.')
+        const text = ev.target.result
+        const isIcs = file.name.toLowerCase().endsWith('.ics') || file.type === 'text/calendar'
+        let importedEvents = []
+        let importedTodos = []
+        let importedCats = []
+        let parsed = null
 
-        const importedEvents = Array.isArray(parsed.events)         ? parsed.events         : []
-        const importedTodos  = Array.isArray(parsed.todos)          ? parsed.todos          : []
-        const importedCats   = Array.isArray(parsed.todoCategories)  ? parsed.todoCategories : []
+        if (isIcs) {
+          importedEvents = parseIcs(text)
+          if (!importedEvents.length) throw new Error('No calendar events were found in this ICS file.')
+          parsed = { source: 'ics', events: importedEvents }
+        } else {
+          parsed = JSON.parse(text)
+          if (!parsed.events && !parsed.todos)
+            throw new Error('This file doesn\'t look like a luminaeVigila export.')
+
+          importedEvents = Array.isArray(parsed.events)         ? parsed.events         : []
+          importedTodos  = Array.isArray(parsed.todos)          ? parsed.todos          : []
+          importedCats   = Array.isArray(parsed.todoCategories)  ? parsed.todoCategories : []
+        }
 
         const localEventIds = new Set(events.map(x => x.id))
         const localTodoIds  = new Set(todos.map(x => x.id))
@@ -89,13 +190,13 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
         const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length > 0
 
         if (!hasConflicts && newEvents.length + newTodos.length + newCats.length === 0) {
-          // Nothing to import at all
           setStatus({ error: 'Nothing new to import — all items already exist locally.' })
           return
         }
 
         setStatus({
           reviewing: true,
+          source: isIcs ? 'ics' : 'json',
           parsed,
           newEvents, conflictEvents,
           newTodos,  conflictTodos,
@@ -145,14 +246,15 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
   /* ── Render ── */
   const isReviewing = status?.reviewing
+  const safeArray = (arr) => Array.isArray(arr) ? arr : []
   const hasConflicts = isReviewing &&
-    (status.conflictEvents.length + status.conflictTodos.length + status.conflictCats.length > 0)
+    (safeArray(status.conflictEvents).length + safeArray(status.conflictTodos).length + safeArray(status.conflictCats).length > 0)
 
   /* Inline mode: render controls directly in the layout, no floating button */
   if (inline) {
     return (
       <>
-        <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileChange} />
+        <input ref={fileRef} type="file" accept=".json,.ics" style={{ display: 'none' }} onChange={handleFileChange} />
 
         {status === 'done' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--green, #10b981)', fontSize: '0.78rem', fontWeight: 600, padding: '4px 0' }}>
@@ -224,13 +326,17 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
         {!status && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button onClick={handleExport}
+            <button onClick={() => initiateExport('json')}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
-              <Download size={14} /> Export data
+              <Download size={14} /> Export JSON backup
+            </button>
+            <button onClick={() => initiateExport('ics')}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+              <Download size={14} /> Export ICS
             </button>
             <button onClick={() => fileRef.current?.click()}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
-              <Upload size={14} /> Import data
+              <Upload size={14} /> Import JSON / ICS
             </button>
           </div>
         )}
@@ -240,7 +346,7 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
   return (
     <>
-      <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileChange} />
+      <input ref={fileRef} type="file" accept=".json,.ics" style={{ display: 'none' }} onChange={handleFileChange} />
 
       {/* Popup */}
       {open && (
@@ -294,14 +400,17 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           {!status && (
             <>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', margin: '0 0 12px', lineHeight: 1.45 }}>
-                Exports local events &amp; tasks (not Google Calendar or Canvas data).
+                Export local data as JSON backup or calendar events as ICS. Import supports both JSON and ICS files.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <button onClick={handleExport} style={btnStyle('var(--green)', 'var(--surface2)')}>
-                  <Download size={13} /> Export as JSON
+                <button onClick={() => initiateExport('json')} style={btnStyle('var(--green)', 'var(--surface2)')}>
+                  <Download size={13} /> Export JSON backup
+                </button>
+                <button onClick={() => initiateExport('ics')} style={btnStyle('var(--green)', 'var(--surface2)')}>
+                  <Download size={13} /> Export ICS
                 </button>
                 <button onClick={() => fileRef.current?.click()} style={btnStyle('var(--blue)', 'var(--blue-bg)')}>
-                  <Upload size={13} /> Import from JSON
+                  <Upload size={13} /> Import JSON / ICS
                 </button>
               </div>
             </>

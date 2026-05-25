@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -27,6 +27,7 @@ import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
 import ClassScheduleModal     from '@/components/ClassScheduleModal'
 import CoursesPanel           from '@/components/CoursesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
+import SearchPanel            from '@/components/SearchPanel'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -137,12 +138,37 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
+  const [showSearchPopup, setShowSearchPopup] = useState(false)
+  const [searchQuery,   setSearchQuery]   = useState('')
+  const [searchScope,   setSearchScope]   = useState('all')
+  const [searchStatus,  setSearchStatus]  = useState('all')
+  const [searchHighlightId, setSearchHighlightId] = useState(null)
 
   const [googleEvents,       setGoogleEvents]       = useState([])
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
+
+  const openSearchPopup = useCallback(() => {
+    setSearchQuery('')
+    setSearchScope('all')
+    setSearchStatus('upcoming')
+    setShowSearchPopup(true)
+  }, [])
+
+  const closeSearchPopup = useCallback(() => {
+    setShowSearchPopup(false)
+  }, [])
+
+  useEffect(() => {
+    if (!showSearchPopup) return
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') closeSearchPopup()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSearchPopup, closeSearchPopup])
 
   // ── Canvas state ──
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
@@ -904,6 +930,180 @@ export default function Home() {
     }),
   ]
 
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const now = new Date()
+    const matchesText = (value) => String(value || '').toLowerCase().includes(query)
+
+    const shouldIncludeStatus = (item, type) => {
+      if (searchStatus === 'all') return true
+      if (type === 'todo') {
+        if (searchStatus === 'done') return item.completed === true
+        if (searchStatus === 'upcoming') return item.dueDate && new Date(item.dueDate + 'T23:59:59') >= now
+        return true
+      }
+      if (type === 'canvas') {
+        if (searchStatus === 'done') return item.done || item.submissionState === 'graded' || item.submissionState === 'submitted'
+        if (searchStatus === 'upcoming') return !item.done && (!item.dueAt || new Date(item.dueAt) >= now)
+        return true
+      }
+      if (type === 'event' || type === 'google') {
+        if (searchStatus === 'done') return false
+        if (searchStatus === 'upcoming') return item.start && new Date(item.start) >= now
+        return true
+      }
+      return true
+    }
+
+    const result = {
+      events: [],
+      googleEvents: [],
+      canvasAssignments: [],
+      todos: [],
+    }
+
+    const categoryColor = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.color || 'var(--blue)'
+    const categoryLabel = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.label || categoryId || 'Event'
+
+    const eventFilter = (e) => {
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.notes || e.description || ''
+      const category = e.extendedProps?.category || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category)) && shouldIncludeStatus(e, 'event')
+    }
+
+    const googleFilter = (e) => {
+      const title = e.summary || ''
+      const notes = e.description || e.extendedProps?.description || ''
+      return (matchesText(title) || matchesText(notes)) && shouldIncludeStatus(e, 'google')
+    }
+
+    const canvasFilter = (a) => {
+      const title = a.title || ''
+      const course = a.courseName || ''
+      const status = a.submissionState || ''
+      return (matchesText(title) || matchesText(course) || matchesText(status) || matchesText(a.htmlUrl)) && shouldIncludeStatus(a, 'canvas')
+    }
+
+    const todoFilter = (t) => {
+      const title = t.title || ''
+      const notes = t.notes || ''
+      const category = todoCategories.find(c => c.id === t.category)?.label || t.category || ''
+      const linked = events.find(e => e.id === t.linkedEventId)?.title || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category) || matchesText(linked)) && shouldIncludeStatus(t, 'todo')
+    }
+
+    if (!query) {
+      if (searchScope === 'all' || searchScope === 'events') {
+        result.events = events.filter(eventFilter).map(event => ({
+          kind: 'event',
+          label: event.title || event.summary || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
+          source: 'Local events',
+          item: event,
+          tagLabel: categoryLabel(event.extendedProps?.category),
+          tagColor: categoryColor(event.extendedProps?.category),
+        }))
+        result.googleEvents = googleEvents.filter(googleFilter).map(event => ({
+          kind: 'google',
+          label: event.summary || 'Google event',
+          subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
+          source: 'Google Calendar',
+          item: event,
+          tagLabel: 'Google',
+          tagColor: '#4285f4',
+        }))
+      }
+      if (searchScope === 'all' || searchScope === 'tasks') {
+        result.todos = todos.filter(todoFilter).map(todo => ({
+          kind: 'todo',
+          label: todo.title,
+          subtitle: todo.dueDate ? `Due ${todo.dueDate}` : 'No due date',
+          source: 'Task',
+          item: todo,
+          tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+          tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+        }))
+      }
+      return result
+    }
+
+    if (searchScope === 'all' || searchScope === 'events') {
+      result.events = events.filter(eventFilter).map(event => ({
+        kind: 'event',
+        label: event.title || event.summary || 'Untitled event',
+        subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
+        source: 'Local events',
+        item: event,
+        tagLabel: categoryLabel(event.extendedProps?.category),
+        tagColor: categoryColor(event.extendedProps?.category),
+      }))
+      result.googleEvents = googleEvents.filter(googleFilter).map(event => ({
+        kind: 'google',
+        label: event.summary || 'Google event',
+        subtitle: event.start ? new Date(event.start).toLocaleString() : 'No date',
+        source: 'Google Calendar',
+        item: event,
+        tagLabel: 'Google',
+        tagColor: '#4285f4',
+      }))
+    }
+    if (searchScope === 'all' || searchScope === 'canvas') {
+      result.canvasAssignments = canvasAssignments.filter(canvasFilter).map(assignment => ({
+        kind: 'canvas',
+        label: assignment.title,
+        subtitle: assignment.courseName || 'Canvas assignment',
+        source: 'Canvas',
+        item: assignment,
+        tagLabel: assignment.courseName || 'Canvas',
+        tagColor: assignment.color || '#8b5cf6',
+      }))
+    }
+    if (searchScope === 'all' || searchScope === 'tasks') {
+      result.todos = todos.filter(todoFilter).map(todo => ({
+        kind: 'todo',
+        label: todo.title,
+        subtitle: todo.dueDate ? `Due ${todo.dueDate}` : 'No due date',
+        source: 'Task',
+        item: todo,
+        tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+        tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+      }))
+    }
+    return result
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories])
+
+  const openSearchResult = useCallback((result) => {
+    closeSearchPopup()
+    if (result.kind === 'event' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      setEventModal({ open: true, event: result.item, date: null })
+      return
+    }
+    if (result.kind === 'google' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      const desc = result.item.description || result.item.extendedProps?.description
+      const location = result.item.location || result.item.extendedProps?.location
+      const subtitle = [desc, location && `Location: ${location}`].filter(Boolean).join('\n') || 'Google Calendar event'
+      const id = String(Date.now())
+      setToasts(p => [...p, { id, title: result.item.summary || 'Google event', subtitle, actions: [], eventId: result.item.id }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 9000)
+      return
+    }
+    if (result.kind === 'canvas') {
+      setActiveNav('courses')
+      return
+    }
+    if (result.kind === 'todo' && result.item) {
+      setActiveNav('todos')
+      setEditingTodo(result.item)
+      setShowTodoModal(true)
+      return
+    }
+  }, [closeSearchPopup, setToasts])
+
   const nextEventToday = useMemo(() => {
     if (!mounted) return null
     const todayStr = clockTime.toISOString().slice(0, 10)
@@ -939,6 +1139,7 @@ export default function Home() {
   const NAV_ITEMS = [
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
+    { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
     ...(canvasConnected
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
@@ -968,24 +1169,27 @@ export default function Home() {
 
         {/* Nav */}
         <nav style={{ padding: '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV_ITEMS.map(item => (
-            <button key={item.id} onClick={() => setActiveNav(item.id)}
-                    style={{
+          {NAV_ITEMS.map(item => {
+            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+                      style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
                       gap: 10, padding: '9px 12px',
                       borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                       fontSize: isTablet ? '0.78rem' : '0.82rem', fontWeight: 600, width: '100%', textAlign: 'left', transition: 'all .13s',
-                      background: activeNav === item.id ? 'rgba(255,255,255,.12)' : 'transparent',
-                      color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.6)',
+                      background: isActive ? 'rgba(255,255,255,.12)' : 'transparent',
+                      color: isActive ? '#fff' : 'rgba(147,197,253,.6)',
                     }}
-                    onMouseEnter={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
-                    onMouseLeave={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'transparent' }}>
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}>
               {item.icon}
               <span style={{ flex: 1 }}>{item.label}</span>
               {item.soon && <span style={{ fontSize: '0.62rem', fontWeight: 700, background: 'rgba(147,197,253,.2)', color: '#93c5fd', padding: '2px 6px', borderRadius: 999 }}>soon</span>}
-              {activeNav === item.id && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
+              {isActive && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
             </button>
-          ))}
+            )
+          })}
         </nav>
 
         {/* Live info panel */}
@@ -1170,7 +1374,8 @@ export default function Home() {
               <WeeklyCalendar events={allCalendarEvents} todos={todos}
                               onDateClick={handleDateClick} onEventClick={handleEventClick}
                               onViewChange={handleViewChange} onEventReceive={handleEventReceive}
-                              isMobile={isMobile} />
+                              isMobile={isMobile}
+                              highlightEventId={searchHighlightId} />
             </main>
 
             {/* Resize handle — desktop only */}
@@ -1220,6 +1425,7 @@ export default function Home() {
             )}
           </>
         )}
+
 
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
@@ -1378,20 +1584,23 @@ export default function Home() {
           // Respect iOS home-indicator and Android navigation bar
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
-          {NAV_ITEMS.map(item => (
-            <button key={item.id} onClick={() => setActiveNav(item.id)}
-                    style={{
-                      flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                      gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
-                      color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.5)',
-                      fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
-                      borderTop: activeNav === item.id ? '2px solid var(--blue)' : '2px solid transparent',
-                      transition: 'all .15s',
-                    }}>
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {NAV_ITEMS.map(item => {
+            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+                      style={{
+                        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
+                        color: isActive ? '#fff' : 'rgba(147,197,253,.5)',
+                        fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
+                        borderTop: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+                        transition: 'all .15s',
+                      }}>
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </nav>
       )}
 
@@ -1453,6 +1662,46 @@ export default function Home() {
           onEdit={() => {}}
           onClose={() => { setCanvasTodoModal(false); setEditingCanvas(null) }}
         />
+      )}
+
+      {showSearchPopup && (
+        <div
+          onClick={closeSearchPopup}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 2000,
+            background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}>
+          <div onClick={e => e.stopPropagation()}
+               style={{
+                 width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
+                 background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+               }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+              <div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-3)', marginTop: 4 }}>Jump to calendar events, tasks, Canvas assignments, or use upcoming defaults.</div>
+              </div>
+              <button type="button" onClick={closeSearchPopup}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700, padding: '10px 14px' }}>
+                Close
+              </button>
+            </div>
+            <div style={{ padding: '18px 20px' }}>
+              <SearchPanel
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                scope={searchScope}
+                onScopeChange={setSearchScope}
+                status={searchStatus}
+                onStatusChange={setSearchStatus}
+                results={searchResults}
+                onSelect={openSearchResult}
+                onToggleTodo={toggleTodo}
+                isMobile={isMobile}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
