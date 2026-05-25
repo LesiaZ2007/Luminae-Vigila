@@ -937,12 +937,12 @@ export default function Home() {
 
   const canvasConnected = canvasAssignments.length > 0
   const NAV_ITEMS = [
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={18}/> },
-    { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={18}/> },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
+    { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
     ...(canvasConnected
-      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={18}/> }]
+      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
-    { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={17} color="currentColor"/> },
+    { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
   ]
 
   return (
@@ -1270,9 +1270,9 @@ export default function Home() {
             <button key={item.id} onClick={() => setActiveNav(item.id)}
                     style={{
                       flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                      gap: 3, padding: '10px 0', border: 'none', background: 'transparent',
+                      gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
                       color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.5)',
-                      fontFamily: 'inherit', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
                       borderTop: activeNav === item.id ? '2px solid var(--blue)' : '2px solid transparent',
                       transition: 'all .15s',
                     }}>
