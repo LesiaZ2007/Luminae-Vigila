@@ -78,11 +78,12 @@ Works fully offline without an account. Sign in to sync across devices.
 |---|---|
 | **Framework** | [Next.js 16](https://nextjs.org) — App Router |
 | **Calendar** | [FullCalendar 6](https://fullcalendar.io) |
-| **AI** | [Groq](https://groq.com) — `llama-3.3-70b-versatile` |
+| **AI** | [Groq SDK](https://groq.com) — `llama-3.3-70b-versatile` |
 | **Auth** | Google OAuth 2.0 · JWT sessions via [jose](https://github.com/panva/jose) |
-| **Database** | [Neon](https://neon.tech) serverless PostgreSQL |
-| **Google APIs** | Google Calendar API · Google OAuth2 API |
+| **Database** | [Neon](https://neon.tech) serverless PostgreSQL via `@neondatabase/serverless` |
+| **Google APIs** | `googleapis` — Calendar API + OAuth2 API |
 | **Canvas** | Canvas LMS REST API (token-based, no OAuth) |
+| **Icons** | [Lucide React](https://lucide.dev) |
 | **Theming** | [next-themes](https://github.com/pacocoursey/next-themes) |
 | **Deployment** | [Vercel](https://vercel.com) |
 
@@ -181,56 +182,56 @@ No server-side setup needed. Users connect Canvas directly in the app:
 
 ```
 schema.sql            # PostgreSQL schema: users, google_accounts, canvas_credentials
-proxy.js              # Next.js 16 route protection (currently open)
+proxy.js              # Next.js 16 route protection (currently open — no pages require auth)
 
 src/
 ├── app/
 │   ├── api/
 │   │   ├── auth/
-│   │   │   ├── google/       # Starts Google sign-in (identity only, no calendar)
-│   │   │   ├── logout/       # Clears session cookie
-│   │   │   └── me/           # Returns current user from session
+│   │   │   ├── google/       # Initiates Google sign-in OAuth flow (identity only, no calendar)
+│   │   │   ├── logout/       # Deletes session cookie → redirects to /login
+│   │   │   └── me/           # Returns current signed-in user from session (or null)
 │   │   ├── google/
-│   │   │   ├── auth/         # Starts Google Calendar connect (calendar scope)
-│   │   │   ├── callback/     # Handles both sign-in + calendar-connect callbacks
-│   │   │   └── events/       # Fetches events from connected Google accounts
+│   │   │   ├── auth/         # Initiates Google Calendar connect flow (calendar scope)
+│   │   │   ├── callback/     # Single callback handles both sign-in and calendar-connect
+│   │   │   └── events/       # Fetches events from all connected Google Calendar accounts
 │   │   ├── canvas/
-│   │   │   ├── credential/   # Get / set / clear Canvas token + base URL
-│   │   │   ├── courses/      # Fetch active enrolled courses
-│   │   │   ├── assignments/  # Fetch assignments for a list of courses
-│   │   │   └── calendar/     # Fetch manual calendar events from Canvas
-│   │   └── corvus/           # Groq AI chat endpoint
-│   ├── login/                # Sign-in page (Google OAuth button)
+│   │   │   ├── credential/   # GET / POST / DELETE Canvas token + institution URL
+│   │   │   ├── courses/      # Fetch active student course enrollments
+│   │   │   ├── assignments/  # Fetch assignments for given courses (with submission data)
+│   │   │   └── calendar/     # Fetch manual Canvas calendar events
+│   │   └── corvus/           # Groq AI chat endpoint (context-aware)
+│   ├── login/                # Sign-in page — Google OAuth button, optional
 │   ├── globals.css
 │   ├── layout.js
-│   └── page.js               # Main app shell and state
+│   └── page.js               # Main app shell, state, and layout
 │
 ├── components/
-│   ├── Corvus.js                  # AI assistant UI
-│   ├── WeeklyCalendar.js          # FullCalendar wrapper
-│   ├── TodoPanel.js               # To-do list (sidebar + full-page)
-│   ├── CoursesPanel.js            # Canvas courses + assignments tab
-│   ├── ImportExportButton.js      # JSON import/export FAB
-│   ├── EventModal.js              # Add/edit event modal
+│   ├── Corvus.js                  # AI assistant (floating panel + full tab)
+│   ├── WeeklyCalendar.js          # FullCalendar wrapper (all views, drag-to-create)
+│   ├── TodoPanel.js               # To-do list panel (sidebar strip + full-page)
+│   ├── CoursesPanel.js            # Canvas courses + assignments tab (auto-shown when connected)
+│   ├── ImportExportButton.js      # JSON import/export FAB (local data only)
+│   ├── EventModal.js              # Add/edit calendar event modal
 │   ├── AddTodoModal.js            # Add/edit task modal
-│   ├── GoogleCalendarSettings.js  # Google Calendar settings modal
-│   ├── SidebarGoogleSection.js    # Sidebar Google Calendar section
+│   ├── GoogleCalendarSettings.js  # Full Google Calendar settings modal
+│   ├── SidebarGoogleSection.js    # Compact sidebar — Google Calendar accounts + toggles
 │   ├── CanvasSettingsModal.js     # Canvas connect/disconnect modal
-│   ├── SidebarCanvasSection.js    # Sidebar Canvas section + course toggles
-│   ├── SidebarScheduleSection.js  # Sidebar class schedule section
-│   ├── ClassScheduleModal.js      # Add/edit class meeting modal
+│   ├── SidebarCanvasSection.js    # Compact sidebar — Canvas courses + calendar toggles
+│   ├── SidebarScheduleSection.js  # Compact sidebar — manual class schedule
+│   ├── ClassScheduleModal.js      # Add/edit class meeting (days, time, room, semester)
 │   ├── DatePicker.js              # Custom date picker
-│   ├── TimePicker.js              # Time picker (text input + analog clock popup)
+│   ├── TimePicker.js              # Time picker — inline text input + analog clock popup
 │   ├── CategoryManager.js         # Manage to-do categories
 │   ├── Select.js                  # Custom dropdown
 │   └── Toast.js                   # Toast notifications
 │
 └── lib/
-    ├── db.js               # Neon PostgreSQL client
-    ├── session.js          # JWT session — create / get / delete
-    ├── auth.js             # findOrCreateUser()
-    ├── googleAuth.js       # OAuth2 client + token refresh handler
-    ├── googleTokenStore.js # Per-user Google token storage (Neon)
+    ├── db.js               # Neon PostgreSQL client (lazy-init, safe at build time)
+    ├── session.js          # JWT session via jose — create / read / delete
+    ├── auth.js             # findOrCreateUser(email)
+    ├── googleAuth.js       # OAuth2 client factory + automatic token refresh
+    ├── googleTokenStore.js # Per-user Google account token storage (Neon)
     └── canvasTokenStore.js # Per-user Canvas credential storage (Neon)
 ```
 
