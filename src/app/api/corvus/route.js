@@ -1,3 +1,4 @@
+import { getSession } from '@/lib/session'
 import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -150,7 +151,10 @@ function fromGroqMessage(msg) {
 }
 
 export async function POST(request) {
-  const { messages = [], events = [], todos = [] } = await request.json()
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { messages = [], events = [], todos = [], canvasAssignments = [] } = await request.json()
 
   const now     = new Date()
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -169,6 +173,20 @@ export async function POST(request) {
       ).join('\n')
     : 'None'
 
+  // Canvas assignments — only non-hidden, non-done, due within next 30 days (avoid flooding context)
+  const thirtyDaysOut = new Date(now); thirtyDaysOut.setDate(thirtyDaysOut.getDate() + 30)
+  const canvasCtx = canvasAssignments.length
+    ? canvasAssignments
+        .filter(a => !a.done && !a.hidden && (!a.dueAt || new Date(a.dueAt) <= thirtyDaysOut))
+        .sort((a, b) => (a.dueAt ?? 'z').localeCompare(b.dueAt ?? 'z'))
+        .map(a => {
+          const due = a.dueAt ? a.dueAt.slice(0, 10) : 'no due date'
+          const status = a.submissionState === 'submitted' ? 'submitted' : a.submissionState === 'graded' ? 'graded' : 'unsubmitted'
+          return `[${a.id}] [${a.courseName}] "${a.title}" — due ${due} — ${status}`
+        })
+        .join('\n')
+    : 'None'
+
   const systemPrompt = `You are Corvus, a sharp and friendly AI assistant built into luminaeVigila — a calendar and task app for students. You help users manage their schedule and to-do list through natural conversation.
 
 Today is ${dateStr} at ${timeStr}.
@@ -178,6 +196,9 @@ ${eventsCtx}
 
 PENDING TASKS:
 ${todosCtx}
+
+CANVAS ASSIGNMENTS (synced from Canvas LMS — read-only, due within 30 days):
+${canvasCtx}
 
 PERSONALITY:
 - Warm, direct, and a little witty. You're like a smart study buddy, not a corporate chatbot.

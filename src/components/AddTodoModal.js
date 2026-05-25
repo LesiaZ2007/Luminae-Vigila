@@ -18,8 +18,9 @@ const PRIORITY = [
   { id: 'high',   label: 'High',   color: '#ef4444' },
 ]
 
-export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, onClose, editTodo, initialDate }) {
-  const isEdit = !!editTodo
+export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate }) {
+  const isEdit   = !!editTodo
+  const isCanvas = !!(editTodo?.canvasId)
 
   const [title,         setTitle]         = useState(editTodo?.title || '')
   const [category,      setCategory]      = useState(editTodo?.category || todoCategories[0]?.id || '')
@@ -62,13 +63,16 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
       notes:         notes.trim() || null,
       reminder:      Number(reminderMs) > 0 ? { ms: Number(reminderMs), label: opt?.label || '' } : null,
       linkedEventId: showDoBefore ? linkedEventId : null,
-      recurrence:    repeats ? {
+      recurrence:    (!isCanvas && repeats) ? {
         type:  repeatType,
         days:  repeatType === 'custom' ? repeatDays : [],
         until: repeatUntil || null,
       } : null,
     }
-    if (isEdit) {
+    if (isCanvas) {
+      // Canvas assignments: call onEditCanvas with local-override fields only
+      onEditCanvas?.({ ...editTodo, ...payload })
+    } else if (isEdit) {
       onEdit({ ...editTodo, ...payload })
     } else {
       onAdd(payload)
@@ -96,7 +100,7 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
            onClick={e => e.stopPropagation()}>
 
         <div className="modal-header">
-          <h2>{isEdit ? 'Edit Task' : 'New Task'}</h2>
+          <h2>{isCanvas ? 'Canvas Assignment' : isEdit ? 'Edit Task' : 'New Task'}</h2>
           <button onClick={handleClose} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
             <X size={16} />
           </button>
@@ -104,15 +108,34 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
 
         <form onSubmit={handleSubmit} className="modal-body">
 
+          {/* Canvas assignment description (read-only) */}
+          {isCanvas && editTodo?.description && (() => {
+            const plain = editTodo.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+            if (!plain) return null
+            return (
+              <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: '0.78rem', color: 'var(--text-2)', lineHeight: 1.55, maxHeight: 120, overflowY: 'auto' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'rgba(232,117,26,.8)', marginBottom: 4 }}>Assignment Details</div>
+                {plain.length > 300 ? plain.slice(0, 300) + '…' : plain}
+                {editTodo.htmlUrl && (
+                  <a href={editTodo.htmlUrl} target="_blank" rel="noopener noreferrer"
+                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 6, color: '#E8751A', fontSize: '0.72rem', fontWeight: 600, textDecoration: 'none' }}>
+                    Open in Canvas →
+                  </a>
+                )}
+              </div>
+            )
+          })()}
+
           {/* Title */}
           <div>
-            <label className="field-label">Task</label>
+            <label className="field-label">{isCanvas ? 'Assignment' : 'Task'}</label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)}
-                   placeholder="e.g. Read chapter 4" autoFocus className="field" />
+                   placeholder="e.g. Read chapter 4" autoFocus={!isCanvas} readOnly={isCanvas} className="field"
+                   style={isCanvas ? { color: 'var(--text-2)', cursor: 'default' } : {}} />
           </div>
 
-          {/* Category */}
-          {todoCategories.length > 0 && (
+          {/* Category — hidden for canvas assignments */}
+          {!isCanvas && todoCategories.length > 0 && (
             <div>
               <label className="field-label">Category</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -141,14 +164,21 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
             </div>
           </div>
 
-          {/* Due date */}
+          {/* Due date — read-only for canvas (comes from Canvas API) */}
           <div>
-            <label className="field-label">Due Date <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
-            <DatePicker value={dueDate} onChange={setDueDate} />
+            <label className="field-label">
+              Due Date{' '}
+              {!isCanvas && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span>}
+              {isCanvas  && <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'rgba(232,117,26,.7)' }}>· from Canvas</span>}
+            </label>
+            {isCanvas
+              ? <input type="text" readOnly value={dueDate ? new Date(dueDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'No due date'} className="field" style={{ color: 'var(--text-2)', cursor: 'default' }} />
+              : <DatePicker value={dueDate} onChange={setDueDate} />
+            }
           </div>
 
-          {/* Repeat */}
-          <div>
+          {/* Repeat — hidden for canvas assignments */}
+          {!isCanvas && <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: repeats ? 12 : 0 }}>
               <button type="button" className="toggle" data-on={String(repeats)} onClick={() => setRepeats(v => !v)}>
                 <div className="toggle-thumb" />
@@ -194,7 +224,7 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
                 </div>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Reminder */}
           <div>
@@ -245,7 +275,7 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
 
           <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
             <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
-            <button type="submit" className="btn-primary" style={{ flex: 1 }}>{isEdit ? 'Save Changes' : 'Add Task'}</button>
+            <button type="submit" className="btn-primary" style={{ flex: 1 }}>{isCanvas ? 'Save' : isEdit ? 'Save Changes' : 'Add Task'}</button>
           </div>
         </form>
       </div>

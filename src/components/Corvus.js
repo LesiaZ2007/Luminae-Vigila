@@ -174,7 +174,7 @@ function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel,
 }
 
 // ── Main component ────────────────────────────────────────────────────────
-export default function Corvus({ events, todos, todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, compact = false, onExpand, onClose }) {
+export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, compact = false, onExpand, onClose }) {
   const [history, setHistory]           = useState([])
   const [items,   setItems]             = useState([
     { type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." },
@@ -216,6 +216,7 @@ export default function Corvus({ events, todos, todoCategories, eventCategories,
           .sort((a, b) => new Date(a.start) - new Date(b.start))
           .slice(0, 20),
         todos: todos.filter(t => !t.completed).slice(0, 20),
+        canvasAssignments: canvasAssignments.filter(a => !a.done && !a.hidden).slice(0, 30),
       }),
     })
     if (!res.ok) throw new Error(await res.text())

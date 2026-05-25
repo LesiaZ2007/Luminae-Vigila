@@ -1,12 +1,16 @@
 import { google }           from 'googleapis'
 import { getAccount }       from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
+import { getSession }       from '@/lib/session'
 
 export async function GET(request) {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { searchParams } = new URL(request.url)
   const accountId = searchParams.get('accountId')
 
-  const account = await getAccount(accountId)
+  const account = await getAccount(accountId, session.userId)
   if (!account) return Response.json({ error: 'Account not found' }, { status: 404 })
 
   try {

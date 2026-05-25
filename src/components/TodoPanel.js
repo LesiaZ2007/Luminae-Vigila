@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Settings2, Bell, Link2, RefreshCw } from 'lucide-react'
+import { Plus, Settings2, Bell, Link2, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
 
 const FILTERS = [
@@ -11,7 +11,15 @@ const FILTERS = [
   { id: 'done',     label: 'Done'     },
 ]
 
-export default function TodoPanel({ todos, events, todoCategories, onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage }) {
+export default function TodoPanel({
+  todos, events, todoCategories,
+  onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage,
+  // Canvas props (all optional)
+  canvasAssignments = [],
+  onToggleCanvas,
+  onEditCanvas,
+  onHideCanvas,
+}) {
   const [filter,           setFilter]           = useState('upcoming')
   const [activeCategories, setActiveCategories] = useState([]) // empty = all
   const [showCatMgr,       setShowCatMgr]       = useState(false)
@@ -47,6 +55,7 @@ export default function TodoPanel({ todos, events, todoCategories, onToggle, onD
   })
 
   const pendingCount = todos.filter(t => !t.completed).length
+                     + canvasAssignments.filter(a => !a.done && !a.hidden).length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: fullPage ? 640 : undefined, width: '100%', margin: fullPage ? '0 auto' : undefined }}>
@@ -117,25 +126,42 @@ export default function TodoPanel({ todos, events, todoCategories, onToggle, onD
 
       {/* List — grouped by date bucket */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 16px' }}>
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && canvasAssignments.filter(a => !a.hidden).length === 0 ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
               {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
             </p>
           </div>
         ) : (
-          filter === 'done' ? (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {filtered.map(todo => (
-                <TodoItem key={todo.id} todo={todo} events={events}
-                          todoCategories={todoCategories} todayStr={todayStr}
-                          onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
-              ))}
-            </ul>
-          ) : (
-            <GroupedList todos={filtered} events={events} todoCategories={todoCategories}
-                         todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
-          )
+          <>
+            {filtered.length > 0 && (
+              filter === 'done' ? (
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {filtered.map(todo => (
+                    <TodoItem key={todo.id} todo={todo} events={events}
+                              todoCategories={todoCategories} todayStr={todayStr}
+                              onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+                  ))}
+                </ul>
+              ) : (
+                <GroupedList todos={filtered} events={events} todoCategories={todoCategories}
+                             todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+              )
+            )}
+
+            {/* ── Canvas Assignments section ── */}
+            {canvasAssignments.length > 0 && (
+              <CanvasAssignmentsSection
+                assignments={canvasAssignments}
+                events={events}
+                filter={filter}
+                todayStr={todayStr}
+                onToggle={onToggleCanvas}
+                onEdit={onEditCanvas}
+                onHide={onHideCanvas}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -325,6 +351,244 @@ function Confetti({ priority, x = 200, y = 300 }) {
         }} />
       ))}
     </div>
+  )
+}
+
+/* ─────────────────── Canvas Assignments Section ─────────────────── */
+
+function stripHtml(html) {
+  if (!html) return ''
+  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function fmtDateShort(isoStr) {
+  if (!isoStr) return ''
+  return new Date(isoStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function CanvasAssignmentsSection({ assignments, events, filter, todayStr, onToggle, onEdit, onHide }) {
+  const [expanded,      setExpanded]      = useState(true)
+  const [showHidden,    setShowHidden]    = useState(false)
+  const [openMenuId,    setOpenMenuId]    = useState(null)
+
+  // Apply filter
+  const visible = assignments.filter(a => {
+    if (a.hidden && !showHidden) return false
+    const dueDateStr = a.dueAt ? a.dueAt.slice(0, 10) : null
+    if (filter === 'done')     return a.done
+    if (filter === 'today')    return !a.done && dueDateStr === todayStr
+    if (filter === 'upcoming') return !a.done
+    return true  // 'all'
+  })
+
+  const hiddenCount = assignments.filter(a => a.hidden).length
+
+  if (visible.length === 0 && hiddenCount === 0) return null
+
+  // Group by courseName
+  const courseMap = {}
+  for (const a of visible) {
+    if (!courseMap[a.courseName]) courseMap[a.courseName] = []
+    courseMap[a.courseName].push(a)
+  }
+  // Sort within each course by dueAt (nulls last)
+  for (const arr of Object.values(courseMap)) {
+    arr.sort((a, b) => {
+      if (!a.dueAt && !b.dueAt) return 0
+      if (!a.dueAt) return 1
+      if (!b.dueAt) return -1
+      return a.dueAt.localeCompare(b.dueAt)
+    })
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {/* Section header */}
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 8px 6px', cursor: 'pointer' }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" fill="#E8751A"/>
+          <text x="12" y="16.5" textAnchor="middle" fill="white" fontSize="13" fontWeight="bold" fontFamily="serif">C</text>
+        </svg>
+        <span style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#E8751A' }}>
+          Canvas Assignments
+        </span>
+        <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>
+          · {visible.filter(a => !a.hidden).length}
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600 }}>
+          {expanded ? '▲ hide' : '▼ show'}
+        </span>
+      </div>
+
+      {expanded && (
+        <div>
+          {Object.entries(courseMap).map(([courseName, items]) => (
+            <div key={courseName} style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-3)', padding: '2px 8px 4px', marginTop: 4 }}>
+                {courseName}
+              </div>
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {items.map(a => (
+                  <CanvasAssignmentItem
+                    key={a.id}
+                    assignment={a}
+                    events={events}
+                    todayStr={todayStr}
+                    menuOpen={openMenuId === a.id}
+                    onMenuToggle={() => setOpenMenuId(p => p === a.id ? null : a.id)}
+                    onMenuClose={() => setOpenMenuId(null)}
+                    onToggle={onToggle}
+                    onEdit={onEdit}
+                    onHide={onHide}
+                  />
+                ))}
+              </ul>
+            </div>
+          ))}
+
+          {/* Show/hide hidden footer */}
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setShowHidden(v => !v)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600, borderRadius: 7, transition: 'color .13s' }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--text-2)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+            >
+              {showHidden ? <EyeOff size={11}/> : <Eye size={11}/>}
+              {showHidden ? `Hide hidden (${hiddenCount})` : `Show hidden (${hiddenCount})`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CanvasAssignmentItem({ assignment: a, events, todayStr, menuOpen, onMenuToggle, onMenuClose, onToggle, onEdit, onHide }) {
+  const [hovered, setHovered] = useState(false)
+  const dueDateStr = a.dueAt ? a.dueAt.slice(0, 10) : null
+  const isOverdue  = dueDateStr && dueDateStr < todayStr && !a.done
+  const isToday    = dueDateStr === todayStr
+  const linkedEv   = a.linkedEventId ? events?.find(e => e.id === a.linkedEventId) : null
+  const descPlain  = stripHtml(a.description).slice(0, 100)
+
+  // Grade badge
+  const showGrade  = a.submissionState === 'graded' && a.score != null && a.pointsPossible
+  const gradeLabel = showGrade ? `${a.score}/${a.pointsPossible}` : null
+
+  return (
+    <li
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); }}
+      onClick={() => onEdit?.(a)}
+      style={{
+        display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 8px', borderRadius: 12,
+        transition: 'background .15s, box-shadow .15s, transform .15s',
+        background: hovered ? 'var(--surface2)' : 'transparent',
+        boxShadow: hovered ? 'var(--shadow-md)' : 'none',
+        transform: hovered ? 'translateY(-1px)' : 'none',
+        cursor: 'pointer',
+        opacity: a.hidden ? 0.5 : 1,
+      }}
+    >
+      {/* Checkbox */}
+      <button
+        onClick={e => { e.stopPropagation(); onToggle?.(a.id) }}
+        style={{
+          marginTop: 2, width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+          border: `2px solid ${a.done ? '#E8751A' : 'rgba(232,117,26,.45)'}`,
+          background: a.done ? '#E8751A' : 'transparent',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', transition: 'all .2s',
+        }}
+      >
+        {a.done && (
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+            <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )}
+      </button>
+
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: '0.875rem', fontWeight: 500, lineHeight: 1.35, color: a.done ? 'var(--text-3)' : 'var(--text)', textDecoration: a.done ? 'line-through' : 'none', margin: 0 }}>
+          {a.title}
+        </p>
+        {descPlain && !a.done && (
+          <p style={{ fontSize: '0.68rem', color: 'var(--text-3)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {descPlain}
+          </p>
+        )}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
+          {dueDateStr && (
+            <span style={{ fontSize: '0.68rem', fontWeight: 600, color: isOverdue ? '#ef4444' : isToday ? '#f59e0b' : 'var(--text-3)' }}>
+              {isOverdue ? '⚠ Overdue · ' : isToday ? '◉ Today · ' : ''}{fmtDateShort(dueDateStr)}
+            </span>
+          )}
+          {showGrade && (
+            <span style={{ fontSize: '0.67rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'rgba(16,185,129,.12)', color: '#10b981' }}>
+              {gradeLabel}
+            </span>
+          )}
+          {a.submissionState === 'submitted' && !a.done && (
+            <span style={{ fontSize: '0.67rem', fontWeight: 600, color: 'rgba(99,179,237,.7)' }}>Submitted</span>
+          )}
+          {linkedEv && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.68rem', fontWeight: 600, color: '#8b5cf6' }}>
+              <Link2 size={9} /> {linkedEv.title}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Right actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 2, flexShrink: 0 }}>
+        {/* Canvas external link */}
+        {a.htmlUrl && (
+          <a
+            href={a.htmlUrl} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title="Open in Canvas"
+            style={{ padding: 4, borderRadius: 6, color: 'rgba(232,117,26,.5)', display: 'flex', transition: 'color .13s', opacity: hovered ? 1 : 0 }}
+            onMouseEnter={e => e.currentTarget.style.color = 'rgba(232,117,26,.9)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(232,117,26,.5)'}
+          >
+            <ExternalLink size={11} />
+          </a>
+        )}
+
+        {/* ··· menu */}
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={e => { e.stopPropagation(); onMenuToggle() }}
+            style={{ padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-3)', opacity: hovered || menuOpen ? 1 : 0, transition: 'opacity .13s, color .13s', display: 'flex' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+          >
+            <MoreHorizontal size={13} />
+          </button>
+          {menuOpen && (
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: 'var(--shadow-modal)', zIndex: 100, minWidth: 130, overflow: 'hidden' }}
+            >
+              <button
+                onClick={() => { onHide?.(a.id); onMenuClose() }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: 'var(--text-2)', textAlign: 'left', transition: 'background .12s' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                {a.hidden ? <Eye size={12}/> : <EyeOff size={12}/>}
+                {a.hidden ? 'Unhide' : 'Hide assignment'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </li>
   )
 }
 
