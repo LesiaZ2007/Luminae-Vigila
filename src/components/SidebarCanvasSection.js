@@ -28,8 +28,19 @@ export default function SidebarCanvasSection({
 }) {
   const showOnCalendar = canvasCalPrefs?.showOnCalendar !== false
 
-  const [sectionExpanded, setSectionExpanded] = useState(true)
-  const [coursesExpanded, setCoursesExpanded] = useState(true)
+  const [sectionExpanded, setSectionExpanded] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('lv-sidebar-canvas-expanded') ?? 'true') } catch { return true }
+  })
+  const [coursesExpanded, setCoursesExpanded] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('lv-sidebar-canvas-courses-expanded') ?? 'false') } catch { return false }
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem('lv-sidebar-canvas-expanded', JSON.stringify(sectionExpanded)) } catch {}
+  }, [sectionExpanded])
+  useEffect(() => {
+    try { localStorage.setItem('lv-sidebar-canvas-courses-expanded', JSON.stringify(coursesExpanded)) } catch {}
+  }, [coursesExpanded])
 
   const [connected, setConnected] = useState(false)
   const [courses,   setCourses]   = useState([])

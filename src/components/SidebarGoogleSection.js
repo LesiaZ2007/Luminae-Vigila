@@ -85,8 +85,7 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
             return { ...p, [acc.id]: { ...accPref, calendars: calMap } }
           })
 
-          // Auto-expand first account
-          setExpanded(prev => Object.keys(prev).length === 0 ? { [acc.id]: true } : prev)
+          // Calendar lists start collapsed — user can expand per account
         })
         .catch(() => setCalendars(prev => ({ ...prev, [acc.id]: [] })))
     }

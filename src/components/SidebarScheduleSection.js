@@ -7,7 +7,7 @@
  * Props: { canvasClasses, onAddClass, onEditClass }
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ChevronDown, ChevronRight, CalendarDays, Plus } from 'lucide-react'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -57,7 +57,13 @@ function ClassChip({ cls, onEdit }) {
 }
 
 export default function SidebarScheduleSection({ canvasClasses = [], onAddClass, onEditClass }) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('lv-sidebar-schedule-expanded') ?? 'false') } catch { return false }
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem('lv-sidebar-schedule-expanded', JSON.stringify(expanded)) } catch {}
+  }, [expanded])
 
   const activeClasses = canvasClasses.filter(c => c.enabled !== false).length
 
