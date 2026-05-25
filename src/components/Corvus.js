@@ -1,28 +1,40 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Zap, ZapOff, Calendar, CheckSquare, ChevronRight, Maximize2, X, Pencil, RefreshCw } from 'lucide-react'
-import EventModal   from '@/components/EventModal'
+import {
+  Send,
+  Zap,
+  ZapOff,
+  Calendar,
+  CheckSquare,
+  ChevronRight,
+  Maximize2,
+  X,
+  Pencil,
+  RefreshCw,
+} from 'lucide-react'
+import { CORVUS_SESSION_KEY, CORVUS_SESSION_TTL } from '@/lib/constants'
+import { formatDate, formatTime } from '@/lib/dateUtils'
+import EventModal from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
-
-const SESSION_KEY = 'corvus-session'
-const SESSION_TTL = 10 * 60 * 1000   // 10 min
 
 function CrowIcon({ size = 18, color = 'currentColor' }) {
   return (
-    <svg width={size} height={size} viewBox="0 -64 640 640" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-      <path fill={color} d="M544 32h-16.36C513.04 12.68 490.09 0 464 0c-44.18 0-80 35.82-80 80v20.98L12.09 393.57A30.216 30.216 0 0 0 0 417.74c0 22.46 23.64 37.07 43.73 27.03L165.27 384h96.49l44.41 120.1c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38L312.94 384H352c1.91 0 3.76-.23 5.66-.29l44.51 120.38c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38l-41.24-111.53C485.74 352.8 544 279.26 544 192v-80l96-16c0-35.35-42.98-64-96-64zm-80 72c-13.25 0-24-10.75-24-24 0-13.26 10.75-24 24-24s24 10.74 24 24c0 13.25-10.75 24-24 24z"/>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 -64 640 640"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        fill={color}
+        d="M544 32h-16.36C513.04 12.68 490.09 0 464 0c-44.18 0-80 35.82-80 80v20.98L12.09 393.57A30.216 30.216 0 0 0 0 417.74c0 22.46 23.64 37.07 43.73 27.03L165.27 384h96.49l44.41 120.1c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38L312.94 384H352c1.91 0 3.76-.23 5.66-.29l44.51 120.38c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38l-41.24-111.53C485.74 352.8 544 279.26 544 192v-80l96-16c0-35.35-42.98-64-96-64zm-80 72c-13.25 0-24-10.75-24-24 0-13.26 10.75-24 24-24s24 10.74 24 24c0 13.25-10.75 24-24 24z"
+      />
     </svg>
   )
 }
-
-function formatDate(iso) {
-  if (!iso) return ''
-  return new Date(iso + (iso.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-}
-function formatTime(iso) {
-  if (!iso || !iso.includes('T')) return ''
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  )
 }
 
 function DetailRow({ label, value, dot }) {
@@ -189,17 +201,34 @@ export default function Corvus({ events, todos, todoCategories, eventCategories,
   // ── Persist session for 10 min ──
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
-      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.items?.length) {
+      const saved = JSON.parse(
+        localStorage.getItem(CORVUS_SESSION_KEY) || '{}'
+      )
+      if (
+        saved.t &&
+        Date.now() - saved.t < CORVUS_SESSION_TTL &&
+        saved.items?.length
+      ) {
         if (saved.history?.length) setHistory(saved.history)
-        setItems(saved.items.map(it => it.state === 'pending' ? { ...it, state: 'cancelled' } : it))
+        setItems(
+          saved.items.map((it) =>
+            it.state === 'pending' ? { ...it, state: 'cancelled' } : it
+          )
+        )
       }
     } catch (_) {}
   }, [])
 
   useEffect(() => {
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ history: history.slice(-20), items: items.slice(-60), t: Date.now() }))
+      localStorage.setItem(
+        CORVUS_SESSION_KEY,
+        JSON.stringify({
+          history: history.slice(-20),
+          items: items.slice(-60),
+          t: Date.now(),
+        })
+      )
     } catch (_) {}
   }, [history, items])
 

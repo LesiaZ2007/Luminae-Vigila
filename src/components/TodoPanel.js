@@ -2,27 +2,36 @@
 
 import { useState, useEffect } from 'react'
 import { Plus, Settings2, Bell, Link2, RefreshCw } from 'lucide-react'
+import { TODO_FILTERS } from '@/lib/constants'
 import CategoryManager from '@/components/CategoryManager'
 
-const FILTERS = [
-  { id: 'upcoming', label: 'Upcoming' },
-  { id: 'today',    label: 'Today'    },
-  { id: 'all',      label: 'All'      },
-  { id: 'done',     label: 'Done'     },
-]
-
-export default function TodoPanel({ todos, events, todoCategories, onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage }) {
-  const [filter,           setFilter]           = useState('upcoming')
+export default function TodoPanel({
+  todos,
+  events,
+  todoCategories,
+  onToggle,
+  onDelete,
+  onAddClick,
+  onEditClick,
+  onCategoriesChange,
+  fullPage,
+}) {
+  const [filter, setFilter] = useState('upcoming')
   const [activeCategories, setActiveCategories] = useState([]) // empty = all
-  const [showCatMgr,       setShowCatMgr]       = useState(false)
-  const [confetti,         setConfetti]         = useState(null) // { key, priority }
+  const [showCatMgr, setShowCatMgr] = useState(false)
+  const [confetti, setConfetti] = useState(null) // { key, priority }
 
   function handleToggle(id, e) {
-    const todo = todos.find(t => t.id === id)
+    const todo = todos.find((t) => t.id === id)
     if (todo && !todo.completed && e) {
       const rect = e.currentTarget.getBoundingClientRect()
-      const key  = Date.now()
-      setConfetti({ key, priority: todo.priority, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      const key = Date.now()
+      setConfetti({
+        key,
+        priority: todo.priority,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      })
       setTimeout(() => setConfetti(null), 2000)
     }
     onToggle(id)
@@ -30,23 +39,28 @@ export default function TodoPanel({ todos, events, todoCategories, onToggle, onD
 
   const todayStr = new Date().toISOString().slice(0, 10)
 
-  const filtered = todos.filter(t => {
-    if (filter === 'done')     return t.completed
-    if (filter === 'today')    return !t.completed && t.dueDate === todayStr
-    if (filter === 'upcoming') return !t.completed
-    return true
-  }).filter(t =>
-    activeCategories.length === 0 || activeCategories.includes(t.category)
-  ).sort((a, b) => {
-    const ad = effectiveDate(a, events)
-    const bd = effectiveDate(b, events)
-    if (!ad && !bd) return 0
-    if (!ad) return 1
-    if (!bd) return -1
-    return ad.localeCompare(bd)
-  })
+  const filtered = todos
+    .filter((t) => {
+      if (filter === 'done') return t.completed
+      if (filter === 'today')
+        return !t.completed && t.dueDate === todayStr
+      if (filter === 'upcoming') return !t.completed
+      return true
+    })
+    .filter(
+      (t) =>
+        activeCategories.length === 0 || activeCategories.includes(t.category)
+    )
+    .sort((a, b) => {
+      const ad = effectiveDate(a, events)
+      const bd = effectiveDate(b, events)
+      if (!ad && !bd) return 0
+      if (!ad) return 1
+      if (!bd) return -1
+      return ad.localeCompare(bd)
+    })
 
-  const pendingCount = todos.filter(t => !t.completed).length
+  const pendingCount = todos.filter((t) => !t.completed).length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: fullPage ? 640 : undefined, width: '100%', margin: fullPage ? '0 auto' : undefined }}>
@@ -76,15 +90,34 @@ export default function TodoPanel({ todos, events, todoCategories, onToggle, onD
       </div>
 
       {/* Status filters */}
-      <div style={{ display: 'flex', padding: '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
-        {FILTERS.map(f => (
-          <button key={f.id} onClick={() => setFilter(f.id)}
-                  style={{
-                    flex: 1, padding: '6px 4px', borderRadius: 8, border: 'none',
-                    fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .13s',
-                    background: filter === f.id ? 'var(--blue-bg)' : 'transparent',
-                    color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
-                  }}>
+      <div
+        style={{
+          display: 'flex',
+          padding: '6px 8px',
+          borderBottom: '1px solid var(--border)',
+          gap: 2,
+          flexShrink: 0,
+        }}
+      >
+        {TODO_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setFilter(f.id)}
+            style={{
+              flex: 1,
+              padding: '6px 4px',
+              borderRadius: 8,
+              border: 'none',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              transition: 'all .13s',
+              background:
+                filter === f.id ? 'var(--blue-bg)' : 'transparent',
+              color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
+            }}
+          >
             {f.label}
           </button>
         ))}
