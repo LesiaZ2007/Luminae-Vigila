@@ -16,7 +16,8 @@
  *   todoCategories — array of todo category objects
  *   onImport       — (data: { events, todos, todoCategories }) => void
  *                    receives the fully-merged final arrays (not just the imported data)
- *   isMobile       — bool (for bottom offset)
+ *   inline         — bool: render export/import controls inline (no FAB, no popup)
+ *                    used in the mobile Settings tab so no floating circle appears
  */
 
 import { useState, useRef } from 'react'
@@ -30,7 +31,7 @@ import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
 //     conflictEvents, conflictTodos, conflictCats }
 //                     — showing merge summary, waiting for user choice
 
-export default function ImportExportButton({ events, todos, todoCategories, onImport, isMobile }) {
+export default function ImportExportButton({ events, todos, todoCategories, onImport, isMobile, inline }) {
   const [open,             setOpen]             = useState(false)
   const [status,           setStatus]           = useState(null)
   const [conflictStrategy, setConflictStrategy] = useState('skip') // 'skip' | 'replace' | 'keepBoth'
@@ -146,6 +147,96 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
   const isReviewing = status?.reviewing
   const hasConflicts = isReviewing &&
     (status.conflictEvents.length + status.conflictTodos.length + status.conflictCats.length > 0)
+
+  /* Inline mode: render controls directly in the layout, no floating button */
+  if (inline) {
+    return (
+      <>
+        <input ref={fileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileChange} />
+
+        {status === 'done' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--green, #10b981)', fontSize: '0.78rem', fontWeight: 600, padding: '4px 0' }}>
+            <CheckCircle2 size={14} /> Done!
+          </div>
+        )}
+
+        {status?.error && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--red)', lineHeight: 1.45, padding: '4px 0' }}>
+            ⚠ {status.error}
+            <button onClick={reset} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.72rem' }}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        {isReviewing && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {(status.newEvents.length > 0 || status.conflictEvents.length > 0) && (
+                <SummaryRow label="Events" newCount={status.newEvents.length} conflictCount={status.conflictEvents.length} />
+              )}
+              {(status.newTodos.length > 0 || status.conflictTodos.length > 0) && (
+                <SummaryRow label="Tasks" newCount={status.newTodos.length} conflictCount={status.conflictTodos.length} />
+              )}
+              {(status.newCats.length > 0 || status.conflictCats.length > 0) && (
+                <SummaryRow label="Categories" newCount={status.newCats.length} conflictCount={status.conflictCats.length} />
+              )}
+            </div>
+            {hasConflicts && (
+              <div>
+                <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(147,197,253,.5)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                  For duplicates
+                </div>
+                {[
+                  { value: 'skip',     label: 'Keep mine',    desc: 'Ignore imported duplicates' },
+                  { value: 'replace',  label: 'Replace mine', desc: 'Overwrite with imported version' },
+                  { value: 'keepBoth', label: 'Keep both',    desc: 'Add imported as a new copy' },
+                ].map(opt => (
+                  <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer', marginBottom: 5 }}>
+                    <input type="radio" name="conflictStrategy" value={opt.value}
+                           checked={conflictStrategy === opt.value}
+                           onChange={() => setConflictStrategy(opt.value)}
+                           style={{ marginTop: 2, accentColor: 'var(--blue)', flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: '0.76rem', fontWeight: 600, color: conflictStrategy === opt.value ? '#fff' : 'rgba(255,255,255,.6)', lineHeight: 1.2 }}>
+                        {opt.label}
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'rgba(147,197,253,.5)', lineHeight: 1.3 }}>
+                        {opt.desc}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={reset}
+                      style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={handleConfirmImport}
+                      style={{ flex: 1.5, padding: '8px 10px', borderRadius: 8, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>
+                Import
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!status && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <button onClick={handleExport}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+              <Download size={14} /> Export data
+            </button>
+            <button onClick={() => fileRef.current?.click()}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+              <Upload size={14} /> Import data
+            </button>
+          </div>
+        )}
+      </>
+    )
+  }
 
   return (
     <>

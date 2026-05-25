@@ -1373,6 +1373,7 @@ export default function Home() {
               <ImportExportButton
                 events={events} todos={todos} todoCategories={todoCategories}
                 onImport={handleImport}
+                inline
               />
               <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
