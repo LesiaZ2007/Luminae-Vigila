@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Link2, RefreshCw } from 'lucide-react'
+import { X, Link2, BookOpen, RefreshCw } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 
@@ -18,7 +18,7 @@ const PRIORITY = [
   { id: 'high',   label: 'High',   color: '#ef4444' },
 ]
 
-export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate }) {
+export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate }) {
   const isEdit   = !!editTodo
   const isCanvas = !!(editTodo?.canvasId)
 
@@ -30,6 +30,8 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
   const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.ms || 0)
   const [linkedEventId, setLinkedEventId] = useState(editTodo?.linkedEventId || '')
   const [showDoBefore,  setShowDoBefore]  = useState(!!editTodo?.linkedEventId)
+  const [linkedClassId, setLinkedClassId] = useState(editTodo?.linkedClassId  || '')
+  const [showClassLink, setShowClassLink] = useState(!!editTodo?.linkedClassId)
   const [repeats,       setRepeats]       = useState(!!editTodo?.recurrence)
   const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
   const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
@@ -63,6 +65,7 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
       notes:         notes.trim() || null,
       reminder:      Number(reminderMs) > 0 ? { ms: Number(reminderMs), label: opt?.label || '' } : null,
       linkedEventId: showDoBefore ? linkedEventId : null,
+      linkedClassId: showClassLink ? linkedClassId : null,
       recurrence:    (!isCanvas && repeats) ? {
         type:  repeatType,
         days:  repeatType === 'custom' ? repeatDays : [],
@@ -263,6 +266,43 @@ export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, on
               </div>
             )}
           </div>
+
+          {/* Link to class (only shown when class schedule has entries) */}
+          {canvasClasses.length > 0 && (
+            <div>
+              <button type="button"
+                      onClick={() => { setShowClassLink(v => !v); if (showClassLink) setLinkedClassId('') }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.875rem', fontWeight: 600, color: showClassLink ? 'var(--blue)' : 'var(--text-3)', transition: 'color .15s', padding: 0 }}>
+                <BookOpen size={14} />
+                {showClassLink ? 'Linked to class' : 'Link to a class'}
+              </button>
+              {showClassLink && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {canvasClasses.filter(c => c.enabled !== false).map(cls => (
+                      <button key={cls.id} type="button"
+                              onClick={() => setLinkedClassId(cls.id)}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 6,
+                                padding: '6px 12px', borderRadius: 999,
+                                fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                                fontFamily: 'inherit', transition: 'all .13s',
+                                border: linkedClassId === cls.id ? `1.5px solid ${cls.color}` : '1.5px solid transparent',
+                                background: linkedClassId === cls.id ? cls.color + '22' : 'var(--surface2)',
+                                color: linkedClassId === cls.id ? cls.color : 'var(--text-2)',
+                              }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: cls.color, flexShrink: 0 }} />
+                        {cls.courseName}
+                      </button>
+                    ))}
+                  </div>
+                  {showClassLink && !linkedClassId && (
+                    <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-3)' }}>Select a class above.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Notes */}
           <div>

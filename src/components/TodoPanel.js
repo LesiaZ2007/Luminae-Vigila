@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Settings2, Bell, Link2, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye } from 'lucide-react'
+import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
 
 const FILTERS = [
@@ -16,6 +16,7 @@ export default function TodoPanel({
   onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage,
   // Canvas props (all optional)
   canvasAssignments = [],
+  canvasClasses     = [],
   onToggleCanvas,
   onEditCanvas,
   onHideCanvas,
@@ -138,13 +139,13 @@ export default function TodoPanel({
               filter === 'done' ? (
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {filtered.map(todo => (
-                    <TodoItem key={todo.id} todo={todo} events={events}
+                    <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                               todoCategories={todoCategories} todayStr={todayStr}
                               onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
                   ))}
                 </ul>
               ) : (
-                <GroupedList todos={filtered} events={events} todoCategories={todoCategories}
+                <GroupedList todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
                              todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
               )
             )}
@@ -173,11 +174,12 @@ export default function TodoPanel({
   )
 }
 
-function TodoItem({ todo, events, todoCategories, todayStr, onToggle, onDelete, onEdit }) {
+function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, onToggle, onDelete, onEdit }) {
   const [hovered,   setHovered]   = useState(false)
   const [justDone,  setJustDone]  = useState(false)
-  const cat      = todoCategories.find(c => c.id === todo.category)
-  const linkedEv = todo.linkedEventId ? events.find(e => e.id === todo.linkedEventId) : null
+  const cat        = todoCategories.find(c => c.id === todo.category)
+  const linkedEv   = todo.linkedEventId ? events.find(e => e.id === todo.linkedEventId) : null
+  const linkedClass = todo.linkedClassId ? canvasClasses.find(c => c.id === todo.linkedClassId) : null
   const effDate  = effectiveDate(todo, events)
   const isOverdue = effDate && effDate < todayStr && !todo.completed
   const isToday   = effDate === todayStr
@@ -225,6 +227,11 @@ function TodoItem({ todo, events, todoCategories, todayStr, onToggle, onDelete, 
               <Link2 size={9} /> {linkedEv.title}
             </span>
           )}
+          {linkedClass && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.68rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: linkedClass.color + '22', color: linkedClass.color }}>
+              <BookOpen size={9} /> {linkedClass.courseName}
+            </span>
+          )}
           {todo.reminder && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.68rem', color: 'var(--text-3)' }}>
               <Bell size={9} /> {todo.reminder.label}
@@ -249,7 +256,7 @@ function TodoItem({ todo, events, todoCategories, todayStr, onToggle, onDelete, 
   )
 }
 
-function GroupedList({ todos, events, todoCategories, todayStr, onToggle, onDelete, onEdit }) {
+function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit }) {
   const [showFuture, setShowFuture] = useState(false)
 
   const weekStr = (() => {
@@ -293,7 +300,7 @@ function GroupedList({ todos, events, todoCategories, todayStr, onToggle, onDele
             {isVisible && (
               <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {bucket.items.map(todo => (
-                  <TodoItem key={todo.id} todo={todo} events={events}
+                  <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                             todoCategories={todoCategories} todayStr={todayStr}
                             onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />
                 ))}

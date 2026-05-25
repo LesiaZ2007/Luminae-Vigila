@@ -10,6 +10,7 @@ import { useState, useEffect } from 'react'
 import { X, Trash2 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
+import Select     from '@/components/Select'
 
 const DAY_LABELS  = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -33,9 +34,23 @@ export default function ClassScheduleModal({ editClass, onSave, onDelete, onClos
   const [semesterStart,  setSemesterStart]  = useState(editClass?.semesterStart   || '')
   const [semesterEnd,    setSemesterEnd]    = useState(editClass?.semesterEnd     || '')
   const [color,          setColor]          = useState(editClass?.color           || '#3a6fa8')
+  const [canvasCourseId, setCanvasCourseId] = useState(editClass?.canvasCourseId  ?? null)
+  const [canvasCourses,  setCanvasCourses]  = useState([])   // [{id, name, courseCode}]
   const [error,          setError]          = useState('')
   const [closing,        setClosing]        = useState(false)
   const [showColorPick,  setShowColorPick]  = useState(false)
+
+  // Fetch available Canvas courses (only if Canvas is connected)
+  useEffect(() => {
+    try {
+      const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      if (!prefs.connected) return
+    } catch { return }
+    fetch('/api/canvas/courses')
+      .then(r => r.ok ? r.json() : { courses: [] })
+      .then(({ courses }) => setCanvasCourses(courses ?? []))
+      .catch(() => {})
+  }, [])
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
@@ -60,18 +75,19 @@ export default function ClassScheduleModal({ editClass, onSave, onDelete, onClos
     if (semesterEnd <= semesterStart) { setError('Semester end must be after start.'); return }
 
     const entry = {
-      id:           editClass?.id || `cls_${Date.now()}`,
-      courseName:   courseName.trim(),
-      section:      section.trim()   || null,
-      professor:    professor.trim() || null,
-      location:     location.trim()  || null,
+      id:             editClass?.id || `cls_${Date.now()}`,
+      courseName:     courseName.trim(),
+      section:        section.trim()   || null,
+      professor:      professor.trim() || null,
+      location:       location.trim()  || null,
       days,
       startTime,
       endTime,
       semesterStart,
       semesterEnd,
       color,
-      enabled:      editClass?.enabled !== undefined ? editClass.enabled : true,
+      enabled:        editClass?.enabled !== undefined ? editClass.enabled : true,
+      canvasCourseId: canvasCourseId || null,
     }
     onSave(entry)
     handleClose()
@@ -142,6 +158,30 @@ export default function ClassScheduleModal({ editClass, onSave, onDelete, onClos
             <label className="field-label">Location <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-3)' }}>(optional)</span></label>
             <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Room 204, Tech Hall" className="field" />
           </div>
+
+          {/* Canvas Course link (only shown when Canvas is connected) */}
+          {canvasCourses.length > 0 && (
+            <div>
+              <label className="field-label">
+                Canvas Course{' '}
+                <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-3)' }}>(optional)</span>
+              </label>
+              <Select
+                value={canvasCourseId ?? ''}
+                placeholder="— No Canvas link —"
+                onChange={v => setCanvasCourseId(v ? Number(v) : null)}
+                options={canvasCourses.map(c => ({
+                  value: c.id,
+                  label: c.courseCode ? `${c.courseCode} – ${c.name}` : c.name,
+                }))}
+              />
+              {canvasCourseId && (
+                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-3)' }}>
+                  Assignments for this course will show up linked to this class.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Days of week */}
           <div>
