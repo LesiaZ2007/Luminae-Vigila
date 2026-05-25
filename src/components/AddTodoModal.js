@@ -1,0 +1,254 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { X, Link2, RefreshCw } from 'lucide-react'
+import Select     from '@/components/Select'
+import DatePicker from '@/components/DatePicker'
+
+const REMINDER_OPTIONS = [
+  { label: 'No reminder',  ms: 0 },
+  { label: '1 day before', ms: 24 * 60 * 60_000 },
+  { label: '2 days before',ms: 2 * 24 * 60 * 60_000 },
+  { label: '1 week before',ms: 7 * 24 * 60 * 60_000 },
+]
+
+const PRIORITY = [
+  { id: 'low',    label: 'Low',    color: '#94a3b8' },
+  { id: 'medium', label: 'Medium', color: '#f59e0b' },
+  { id: 'high',   label: 'High',   color: '#ef4444' },
+]
+
+export default function AddTodoModal({ events, todoCategories, onAdd, onEdit, onClose, editTodo, initialDate }) {
+  const isEdit = !!editTodo
+
+  const [title,         setTitle]         = useState(editTodo?.title || '')
+  const [category,      setCategory]      = useState(editTodo?.category || todoCategories[0]?.id || '')
+  const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
+  const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
+  const [notes,         setNotes]         = useState(editTodo?.notes || '')
+  const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.ms || 0)
+  const [linkedEventId, setLinkedEventId] = useState(editTodo?.linkedEventId || '')
+  const [showDoBefore,  setShowDoBefore]  = useState(!!editTodo?.linkedEventId)
+  const [repeats,       setRepeats]       = useState(!!editTodo?.recurrence)
+  const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
+  const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
+  const [repeatUntil,   setRepeatUntil]   = useState(editTodo?.recurrence?.until || '')
+  const [error,         setError]         = useState('')
+  const [closing,       setClosing]       = useState(false)
+
+  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') handleClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  const upcomingEvents = events
+    .filter(e => !e.allDay && new Date(e.start) >= new Date())
+    .sort((a, b) => new Date(a.start) - new Date(b.start))
+    .slice(0, 25)
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (!title.trim()) { setError('Please enter a task title.'); return }
+    if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return }
+    const opt = REMINDER_OPTIONS.find(r => r.ms === Number(reminderMs))
+    const payload = {
+      title:         title.trim(),
+      category,
+      dueDate:       dueDate || null,
+      priority,
+      notes:         notes.trim() || null,
+      reminder:      Number(reminderMs) > 0 ? { ms: Number(reminderMs), label: opt?.label || '' } : null,
+      linkedEventId: showDoBefore ? linkedEventId : null,
+      recurrence:    repeats ? {
+        type:  repeatType,
+        days:  repeatType === 'custom' ? repeatDays : [],
+        until: repeatUntil || null,
+      } : null,
+    }
+    if (isEdit) {
+      onEdit({ ...editTodo, ...payload })
+    } else {
+      onAdd(payload)
+    }
+    handleClose()
+  }
+
+  function chipStyle(active, color) {
+    return {
+      display: 'inline-flex', alignItems: 'center', gap: '6px',
+      padding: '6px 14px', borderRadius: '999px',
+      fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+      fontFamily: 'inherit', transition: 'all 0.13s',
+      border: active ? `1.5px solid ${color}` : '1.5px solid transparent',
+      background: active ? color + '22' : 'var(--surface2)',
+      color: active ? color : 'var(--text-2)',
+    }
+  }
+
+  return (
+    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
+         style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
+         onClick={handleClose}>
+      <div className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
+           onClick={e => e.stopPropagation()}>
+
+        <div className="modal-header">
+          <h2>{isEdit ? 'Edit Task' : 'New Task'}</h2>
+          <button onClick={handleClose} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="modal-body">
+
+          {/* Title */}
+          <div>
+            <label className="field-label">Task</label>
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)}
+                   placeholder="e.g. Read chapter 4" autoFocus className="field" />
+          </div>
+
+          {/* Category */}
+          {todoCategories.length > 0 && (
+            <div>
+              <label className="field-label">Category</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {todoCategories.map(cat => (
+                  <button key={cat.id} type="button" onClick={() => setCategory(cat.id)}
+                          style={chipStyle(category === cat.id, cat.color)}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: cat.color }} />
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Priority */}
+          <div>
+            <label className="field-label">Priority</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {PRIORITY.map(p => (
+                <button key={p.id} type="button" onClick={() => setPriority(p.id)}
+                        style={{ ...chipStyle(priority === p.id, p.color), flex: 1, justifyContent: 'center' }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: p.color }} />
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Due date */}
+          <div>
+            <label className="field-label">Due Date <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+            <DatePicker value={dueDate} onChange={setDueDate} />
+          </div>
+
+          {/* Repeat */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: repeats ? 12 : 0 }}>
+              <button type="button" className="toggle" data-on={String(repeats)} onClick={() => setRepeats(v => !v)}>
+                <div className="toggle-thumb" />
+              </button>
+              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <RefreshCw size={13} style={{ color: repeats ? 'var(--blue)' : 'var(--text-3)' }} /> Repeats
+              </span>
+            </div>
+            {repeats && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 2 }}>
+                {/* Type buttons */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {[{ id: 'daily', label: 'Daily' }, { id: 'weekly', label: 'Weekly' }, { id: 'custom', label: 'Custom' }].map(({ id, label }) => (
+                    <button key={id} type="button" onClick={() => setRepeatType(id)} style={{
+                      flex: 1, padding: '7px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600,
+                      background: repeatType === id ? 'var(--blue)' : 'var(--surface2)',
+                      color:      repeatType === id ? '#fff'        : 'var(--text-2)',
+                      transition: 'all .13s',
+                    }}>{label}</button>
+                  ))}
+                </div>
+                {/* Day picker for custom */}
+                {repeatType === 'custom' && (
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    {['S','M','T','W','T','F','S'].map((d, i) => (
+                      <button key={i} type="button"
+                        onClick={() => setRepeatDays(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i])}
+                        style={{
+                          flex: 1, aspectRatio: '1', borderRadius: '50%', border: 'none', cursor: 'pointer',
+                          fontFamily: 'inherit', fontSize: '0.73rem', fontWeight: 700,
+                          background: repeatDays.includes(i) ? 'var(--blue)' : 'var(--surface2)',
+                          color:      repeatDays.includes(i) ? '#fff'        : 'var(--text-2)',
+                          transition: 'all .13s',
+                        }}>{d}</button>
+                    ))}
+                  </div>
+                )}
+                {/* Until */}
+                <div>
+                  <label className="field-label">Repeat until <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+                  <DatePicker value={repeatUntil} onChange={setRepeatUntil} min={dueDate || ''} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Reminder */}
+          <div>
+            <label className="field-label">Reminder</label>
+            <Select value={reminderMs} onChange={v => setReminderMs(Number(v))}
+                    options={REMINDER_OPTIONS.map(r => ({ value: r.ms, label: r.label }))} />
+          </div>
+
+          {/* Do before */}
+          <div>
+            <button type="button" onClick={() => { setShowDoBefore(v => !v); setLinkedEventId('') }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.875rem', fontWeight: 600, color: showDoBefore ? 'var(--blue)' : 'var(--text-3)', transition: 'color .15s', padding: 0 }}>
+              <Link2 size={14} />
+              {showDoBefore ? 'Linked to event' : 'Due before an event'}
+            </button>
+            {showDoBefore && (
+              <div style={{ marginTop: 8 }}>
+                {upcomingEvents.length === 0
+                  ? <p style={{ fontSize: '0.78rem', color: 'var(--text-3)' }}>No upcoming events yet — add events to the calendar first.</p>
+                  : <Select
+                      value={linkedEventId}
+                      placeholder="— Select an event —"
+                      onChange={id => {
+                        setLinkedEventId(id)
+                        if (id) {
+                          const ev = upcomingEvents.find(x => x.id === id)
+                          if (ev) setDueDate(new Date(ev.start).toISOString().slice(0, 10))
+                        }
+                      }}
+                      options={upcomingEvents.map(ev => ({
+                        value: ev.id,
+                        label: `${ev.title} · ${new Date(ev.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+                      }))}
+                    />
+                }
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="field-label">Notes <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+                      placeholder="Any extra details..." rows={2} className="field" />
+          </div>
+
+          {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
+
+          <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
+            <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
+            <button type="submit" className="btn-primary" style={{ flex: 1 }}>{isEdit ? 'Save Changes' : 'Add Task'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
