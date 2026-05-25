@@ -1,9 +1,22 @@
-import { google }                                   from 'googleapis'
-import { makeOAuth2Client }                         from '@/lib/googleAuth'
-import { upsertAccount, getAccounts }               from '@/lib/googleTokenStore'
-import { getSession }                               from '@/lib/session'
+/**
+ * GET /api/google/callback
+ * Single callback for both flows, distinguished by the `state` parameter:
+ *
+ *   action: 'login'   → first-time / returning sign-in
+ *                        find/create user, store tokens, create JWT session,
+ *                        redirect to `state.next` (defaults to /)
+ *
+ *   action: 'connect' → adding an extra Google account from within the app
+ *                        requires an existing session, stores tokens,
+ *                        postMessages to the opener popup and closes
+ */
+import { google }            from 'googleapis'
+import { makeOAuth2Client }  from '@/lib/googleAuth'
+import { upsertAccount, getAccounts } from '@/lib/googleTokenStore'
+import { findOrCreateUser }  from '@/lib/auth'
+import { createSession, getSession } from '@/lib/session'
 
-/** Return an HTML page that postMessages to the opener and closes itself. */
+/** Tiny HTML page that postMessages to the opener then closes itself. */
 function popupHtml(script) {
   return new Response(
     `<!DOCTYPE html><html><head><title>Google Sign-in</title>
@@ -16,26 +29,34 @@ function popupHtml(script) {
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url)
-  const code  = searchParams.get('code')
-  const error = searchParams.get('error')
+  const code      = searchParams.get('code')
+  const error     = searchParams.get('error')
+  const stateRaw  = searchParams.get('state') ?? ''
 
+  // Decode state
+  let state = { action: 'connect' }
+  try {
+    state = JSON.parse(Buffer.from(stateRaw, 'base64url').toString())
+  } catch { /* fall back to connect */ }
+
+  const isLogin = state.action === 'login'
+
+  // ── Error from Google ────────────────────────────────────────────────────
   if (error) {
+    if (isLogin) {
+      return Response.redirect(new URL(`/login?error=${encodeURIComponent(error)}`, request.url))
+    }
     return popupHtml(
       `window.opener?.postMessage({type:'gc_error',error:${JSON.stringify(error)}},'*');window.close();`,
     )
   }
 
   if (!code) {
+    if (isLogin) {
+      return Response.redirect(new URL('/login?error=no_code', request.url))
+    }
     return popupHtml(
       `window.opener?.postMessage({type:'gc_error',error:'No authorization code received'},'*');window.close();`,
-    )
-  }
-
-  // Require a valid session so we know which user to associate this account with
-  const session = await getSession()
-  if (!session) {
-    return popupHtml(
-      `window.opener?.postMessage({type:'gc_error',error:'Not signed in — please sign in first.'},'*');window.close();`,
     )
   }
 
@@ -49,20 +70,43 @@ export async function GET(request) {
     const { data } = await infoApi.userinfo.get()
     const email    = data.email
 
-    // Upsert into the DB scoped to this user
-    const existing = (await getAccounts(session.userId)).find(a => a.email === email)
-    const id = await upsertAccount(session.userId, {
-      email,
-      accessToken:  tokens.access_token,
-      refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
-      expiresAt:    tokens.expiry_date   ?? null,
-    })
+    if (isLogin) {
+      // ── LOGIN FLOW ──────────────────────────────────────────────────────
+      // Identity only — find or create the user record, then issue a session.
+      // Calendar tokens are NOT stored here; that's a separate opt-in step.
+      const user = await findOrCreateUser(email)
+      await createSession(user.id)
 
-    return popupHtml(
-      `window.opener?.postMessage({type:'gc_connected',email:${JSON.stringify(email)},accountId:${JSON.stringify(id)}},'*');window.close();`,
-    )
+      const next = (state.next ?? '/').startsWith('/') ? (state.next ?? '/') : '/'
+      return Response.redirect(new URL(next, request.url))
+
+    } else {
+      // ── CONNECT FLOW (add extra account from within app) ────────────────
+      const session = await getSession()
+      if (!session) {
+        return popupHtml(
+          `window.opener?.postMessage({type:'gc_error',error:'Not signed in — please sign in first.'},'*');window.close();`,
+        )
+      }
+
+      const existing = (await getAccounts(session.userId)).find(a => a.email === email)
+      const id = await upsertAccount(session.userId, {
+        email,
+        accessToken:  tokens.access_token,
+        refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
+        expiresAt:    tokens.expiry_date   ?? null,
+      })
+
+      return popupHtml(
+        `window.opener?.postMessage({type:'gc_connected',email:${JSON.stringify(email)},accountId:${JSON.stringify(id)}},'*');window.close();`,
+      )
+    }
+
   } catch (err) {
     console.error('Google OAuth callback error:', err)
+    if (isLogin) {
+      return Response.redirect(new URL(`/login?error=${encodeURIComponent(err.message)}`, request.url))
+    }
     return popupHtml(
       `window.opener?.postMessage({type:'gc_error',error:${JSON.stringify(err.message)}},'*');window.close();`,
     )
