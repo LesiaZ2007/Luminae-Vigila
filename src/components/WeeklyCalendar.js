@@ -9,9 +9,11 @@ import interactionPlugin from '@fullcalendar/interaction'
 
 export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile }) {
   const calendarRef = useRef(null)
-  const touchStart  = useRef(null)
-  const wheelTimer  = useRef(null)
-  const wheelLocked = useRef(false)
+  const touchStart     = useRef(null)
+  const swipedRef      = useRef(false)
+  const swipeResetRef  = useRef(null)
+  const wheelTimer     = useRef(null)
+  const wheelLocked    = useRef(false)
   const animTimer   = useRef(null)
   const [navAnim,   setNavAnim] = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
 
@@ -115,6 +117,10 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     const dy = e.changedTouches[0].clientY - touchStart.current.y
     touchStart.current = null
     if (Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 60) return
+    // Flag a swipe so FullCalendar's dateClick / eventClick are suppressed
+    swipedRef.current = true
+    clearTimeout(swipeResetRef.current)
+    swipeResetRef.current = setTimeout(() => { swipedRef.current = false }, 500)
     navigate(dx < 0 ? 'next' : 'prev')
   }
 
@@ -250,8 +256,8 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
             const api = calendarRef.current?.getApi()
             if (api) requestAnimationFrame(() => updateOverlapClasses(api))
           }}
-          eventClick={onEventClick}
-          dateClick={onDateClick}
+          eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
+          dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
           datesSet={handleDatesSet}
           height="100%"
           allDaySlot={true}
