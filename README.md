@@ -2,10 +2,10 @@
 
 # 🪶 luminaeVigila
 
-**A student planner that actually gets it.**  
-Sync your Google Calendar and Canvas LMS, manage tasks, and ask an AI assistant — all in one dark, minimal interface.
+**An All-Purpose Student Planner.**  
+Sync your Google Calendar and Canvas LMS, manage tasks, and ask an AI assistant — all in one minimal interface.
 
-Works fully offline without an account. Sign in to sync across devices.
+Works fully offline without an account. Sign in to sync across devices or manually import export using JSON.
 
 [![Live App](https://img.shields.io/badge/Live%20App-luminae--vigila.vercel.app-4a90d9?style=for-the-badge&logo=vercel&logoColor=white)](https://luminae-vigila.vercel.app)
 [![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
@@ -62,6 +62,7 @@ Works fully offline without an account. Sign in to sync across devices.
 - **Import** a previously-exported file to restore or transfer data to any browser or device
 - Only local data is included — Google Calendar and Canvas data re-sync from the source
 - Access via the `{ }` button to the left of the Corvus button (bottom-right)
+- Popup panel fully respects light/dark theme via CSS variables
 
 ### 🪶 Corvus AI Assistant
 - Chat-based assistant powered by [Groq](https://groq.com) (`llama-3.3-70b-versatile`)

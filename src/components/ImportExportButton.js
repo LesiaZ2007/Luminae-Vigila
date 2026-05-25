@@ -158,11 +158,11 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           bottom:   isMobile ? 148 : 86,
           right:    82,
           zIndex:   199,
-          background: 'var(--sidebar)',
-          border:   '1px solid rgba(255,255,255,.12)',
+          background: 'var(--surface)',
+          border:   '1px solid var(--border)',
           borderRadius: 14,
           padding: '12px 14px',
-          boxShadow: '0 8px 32px rgba(0,0,0,.4)',
+          boxShadow: 'var(--shadow-modal)',
           width: isReviewing ? 260 : 200,
           maxWidth: 'calc(100vw - 32px)',
           backdropFilter: 'blur(8px)',
@@ -171,18 +171,18 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
           {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'rgba(255,255,255,.8)' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)' }}>
               {isReviewing ? 'Review import' : 'Local data'}
             </span>
             <button onClick={() => { setOpen(false); reset() }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(147,197,253,.4)', padding: 2, display: 'flex' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, display: 'flex' }}>
               <X size={13} />
             </button>
           </div>
 
           {/* Done */}
           {status === 'done' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#10b981', fontSize: '0.78rem', fontWeight: 600 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--green)', fontSize: '0.78rem', fontWeight: 600 }}>
               <CheckCircle2 size={14} /> Done!
             </div>
           )}
@@ -190,10 +190,10 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           {/* Error */}
           {status?.error && (
             <>
-              <div style={{ fontSize: '0.72rem', color: '#fca5a5', lineHeight: 1.45, marginBottom: 10 }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--red)', lineHeight: 1.45, marginBottom: 10 }}>
                 ⚠ {status.error}
               </div>
-              <button onClick={reset} style={btnStyle('rgba(147,197,253,.7)', 'rgba(255,255,255,.06)')}>
+              <button onClick={reset} style={btnStyle('var(--text-2)', 'var(--surface2)')}>
                 Try again
               </button>
             </>
@@ -202,14 +202,14 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           {/* Idle — main menu */}
           {!status && (
             <>
-              <p style={{ fontSize: '0.7rem', color: 'rgba(147,197,253,.45)', margin: '0 0 12px', lineHeight: 1.45 }}>
+              <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', margin: '0 0 12px', lineHeight: 1.45 }}>
                 Exports local events &amp; tasks (not Google Calendar or Canvas data).
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <button onClick={handleExport} style={btnStyle('#10b981', 'rgba(16,185,129,.12)')}>
+                <button onClick={handleExport} style={btnStyle('var(--green)', 'var(--surface2)')}>
                   <Download size={13} /> Export as JSON
                 </button>
-                <button onClick={() => fileRef.current?.click()} style={btnStyle('#60a5fa', 'rgba(96,165,250,.12)')}>
+                <button onClick={() => fileRef.current?.click()} style={btnStyle('var(--blue)', 'var(--blue-bg)')}>
                   <Upload size={13} /> Import from JSON
                 </button>
               </div>
@@ -242,7 +242,7 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
               {/* Conflict strategy picker */}
               {hasConflicts && (
                 <div>
-                  <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(147,197,253,.5)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                  <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                     For duplicates
                   </div>
                   {[
@@ -257,13 +257,13 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
                         value={opt.value}
                         checked={conflictStrategy === opt.value}
                         onChange={() => setConflictStrategy(opt.value)}
-                        style={{ marginTop: 2, accentColor: '#60a5fa', flexShrink: 0 }}
+                        style={{ marginTop: 2, accentColor: 'var(--blue)', flexShrink: 0 }}
                       />
                       <div>
-                        <div style={{ fontSize: '0.76rem', fontWeight: 600, color: conflictStrategy === opt.value ? '#fff' : 'rgba(255,255,255,.65)', lineHeight: 1.2 }}>
+                        <div style={{ fontSize: '0.76rem', fontWeight: 600, color: conflictStrategy === opt.value ? 'var(--text)' : 'var(--text-2)', lineHeight: 1.2 }}>
                           {opt.label}
                         </div>
-                        <div style={{ fontSize: '0.65rem', color: 'rgba(147,197,253,.4)', lineHeight: 1.3 }}>
+                        <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', lineHeight: 1.3 }}>
                           {opt.desc}
                         </div>
                       </div>
@@ -275,11 +275,11 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
               {/* Action buttons */}
               <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
                 <button onClick={reset}
-                        style={{ ...btnStyle('rgba(147,197,253,.6)', 'rgba(255,255,255,.06)'), flex: 1, justifyContent: 'center' }}>
+                        style={{ ...btnStyle('var(--text-2)', 'var(--surface2)'), flex: 1, justifyContent: 'center' }}>
                   Cancel
                 </button>
                 <button onClick={handleConfirmImport}
-                        style={{ ...btnStyle('#fff', 'rgba(96,165,250,.25)'), flex: 1.5, justifyContent: 'center', fontWeight: 700 }}>
+                        style={{ ...btnStyle('var(--blue-text)', 'var(--blue-bg)'), flex: 1.5, justifyContent: 'center', fontWeight: 700, border: '1px solid var(--blue-ring)' }}>
                   Import
                 </button>
               </div>
@@ -297,26 +297,25 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           bottom:   isMobile ? 76 : 24,
           right:    82,
           width:    50, height: 50,
-          borderRadius: '50%', border: 'none',
-          background: open ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.1)',
-          backdropFilter: 'blur(6px)',
-          color:    'rgba(147,197,253,.7)',
+          borderRadius: '50%', border: '1px solid var(--border)',
+          background: open ? 'var(--blue-bg)' : 'var(--surface)',
+          color:    open ? 'var(--blue)' : 'var(--text-2)',
           cursor:   'pointer', zIndex: 200,
           display:  'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 4px 20px rgba(0,0,0,.3)',
+          boxShadow: 'var(--shadow-md)',
           transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
         }}
         onMouseEnter={e => {
-          e.currentTarget.style.background = 'rgba(255,255,255,.2)'
-          e.currentTarget.style.color      = '#fff'
+          e.currentTarget.style.background = 'var(--blue-bg)'
+          e.currentTarget.style.color      = 'var(--blue)'
           e.currentTarget.style.transform  = 'scale(1.08)'
-          e.currentTarget.style.boxShadow  = '0 6px 28px rgba(0,0,0,.4)'
+          e.currentTarget.style.boxShadow  = 'var(--shadow-lg)'
         }}
         onMouseLeave={e => {
-          e.currentTarget.style.background = open ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.1)'
-          e.currentTarget.style.color      = 'rgba(147,197,253,.7)'
+          e.currentTarget.style.background = open ? 'var(--blue-bg)' : 'var(--surface)'
+          e.currentTarget.style.color      = open ? 'var(--blue)' : 'var(--text-2)'
           e.currentTarget.style.transform  = 'scale(1)'
-          e.currentTarget.style.boxShadow  = '0 4px 20px rgba(0,0,0,.3)'
+          e.currentTarget.style.boxShadow  = 'var(--shadow-md)'
         }}
       >
         <FileJson size={20} />
@@ -328,13 +327,13 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 function SummaryRow({ label, newCount, conflictCount }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.73rem' }}>
-      <span style={{ color: 'rgba(255,255,255,.7)', fontWeight: 600 }}>{label}</span>
+      <span style={{ color: 'var(--text)', fontWeight: 600 }}>{label}</span>
       <span style={{ display: 'flex', gap: 6 }}>
         {newCount > 0 && (
-          <span style={{ color: '#10b981', fontWeight: 700 }}>+{newCount} new</span>
+          <span style={{ color: 'var(--green)', fontWeight: 700 }}>+{newCount} new</span>
         )}
         {conflictCount > 0 && (
-          <span style={{ color: '#fbbf24', fontWeight: 700 }}>{conflictCount} duplicate{conflictCount !== 1 ? 's' : ''}</span>
+          <span style={{ color: 'var(--amber)', fontWeight: 700 }}>{conflictCount} duplicate{conflictCount !== 1 ? 's' : ''}</span>
         )}
       </span>
     </div>
