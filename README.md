@@ -21,11 +21,15 @@ Works fully offline without an account. Sign in to sync across devices.
 - **Weekly / monthly / daily views** — create, edit, and delete events with categories, colors, recurrence rules, reminders, and notes
 - **Drag to create** — drag the sidebar card onto any time slot to start a new event
 - **To-do list** — tasks with priorities, categories, due dates, recurring schedules, and event linking
+- **Link tasks to a class** — tag any task with a class schedule entry (shows a color-coded chip on the task row)
 - **Hide events** — hide individual events from view; reveal them back semi-transparently anytime
+- **Overlapping events** — when events start at the same time the shorter one is indented; same-duration events get a stable stagger so both are always visible
+- **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
 
 ### 🔵 Google Calendar
 - Connect **multiple Google accounts** and toggle individual calendars on or off
 - Events auto-refresh every 5 minutes; per-calendar color overrides stored locally
+- Calendar visibility toggles and custom colors are never reset by background syncs
 - **Signing in does not auto-connect Google Calendar** — that is a separate explicit step
 
 ### 🟠 Canvas LMS
@@ -44,6 +48,7 @@ Works fully offline without an account. Sign in to sync across devices.
 ### 📆 Class Schedule *(no Canvas required)*
 - Add recurring class meetings manually — days of week, time, room, semester dates
 - Classes appear as color-coded repeating events on the calendar
+- **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course; assignments for that course can then be associated through the link
 - Fully independent of Canvas
 
 ### 🔐 Sign In *(optional)*
@@ -68,7 +73,8 @@ Works fully offline without an account. Sign in to sync across devices.
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
 - **Responsive design** — desktop (full sidebar), tablet (168px mini-sidebar with labels), mobile (bottom tab navigation)
-- **Mobile view switcher** — M / W / D labels instead of Month / Week / Day
+- **Mobile view switcher** — M / W / D labels instead of Month / Week / Day; toolbar buttons and bottom nav icons are sized for touch targets
+- **Corvus on mobile** — tapping Corvus in the bottom tab bar or the floating button opens the full Corvus tab (not a small popup)
 
 ---
 
