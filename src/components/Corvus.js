@@ -6,7 +6,7 @@ import EventModal   from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
 
 const SESSION_KEY = 'corvus-session'
-const SESSION_TTL = 10 * 60 * 1000   // 10 min
+const SESSION_TTL = 30 * 60 * 1000   // 30 min
 
 function CrowIcon({ size = 18, color = 'currentColor' }) {
   return (
@@ -228,10 +228,23 @@ function MentionCard({ item, type, eventCategories, onNavigate }) {
 
 // ── Main component ────────────────────────────────────────────────────────
 export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
-  const [history, setHistory]           = useState([])
-  const [items,   setItems]             = useState([
-    { type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." },
-  ])
+  // ── Lazy-init state from localStorage so history survives tab switches ──
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
+      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.history?.length) return saved.history
+    } catch (_) {}
+    return []
+  })
+  const [items, setItems] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
+      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.items?.length) {
+        return saved.items.map(it => it.state === 'pending' ? { ...it, state: 'cancelled' } : it)
+      }
+    } catch (_) {}
+    return [{ type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." }]
+  })
   const [pending,       setPending]       = useState(null)
   const [editingPreview, setEditingPreview] = useState(false)
   const [autoAdd,       setAutoAdd]       = useState(false)
@@ -239,17 +252,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
   const [input,         setInput]         = useState('')
   const bottomRef = useRef(null)
 
-  // ── Persist session for 10 min ──
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
-      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.items?.length) {
-        if (saved.history?.length) setHistory(saved.history)
-        setItems(saved.items.map(it => it.state === 'pending' ? { ...it, state: 'cancelled' } : it))
-      }
-    } catch (_) {}
-  }, [])
-
+  // ── Persist session to localStorage ──
   useEffect(() => {
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ history: history.slice(-20), items: items.slice(-60), t: Date.now() }))
