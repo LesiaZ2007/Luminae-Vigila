@@ -124,8 +124,7 @@ export default function Home() {
   const resizingRef    = useRef(false)
   const startXRef      = useRef(0)
   const startWRef      = useRef(280)
-  const dragCardRef    = useRef(null)
-  const draggableRef   = useRef(null)
+  const addMenuRef     = useRef(null)
 
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
@@ -138,6 +137,7 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
+  const [showAddMenu,   setShowAddMenu]   = useState(false)
   const [showSearchPopup,   setShowSearchPopup]   = useState(false)
   const [searchClosing,     setSearchClosing]     = useState(false)
   const [searchQuery,       setSearchQuery]       = useState('')
@@ -331,17 +331,13 @@ export default function Home() {
     return () => clearTimeout(syncTimerRef.current)
   }, [events, todos, todoCategories, canvasClasses, eventPrefs, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initialize FullCalendar Draggable on the drag card
+  // Close "+ New" popup on outside click
   useEffect(() => {
-    if (!dragCardRef.current || !mounted) return
-    import('@fullcalendar/interaction').then(({ Draggable }) => {
-      draggableRef.current?.destroy()
-      draggableRef.current = new Draggable(dragCardRef.current, {
-        eventData: { title: 'New Event', duration: '01:00' },
-      })
-    }).catch(() => {})
-    return () => draggableRef.current?.destroy()
-  }, [mounted])
+    if (!showAddMenu) return
+    function onDown(e) { if (!addMenuRef.current?.contains(e.target)) setShowAddMenu(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showAddMenu])
 
   useEffect(() => {
     const id = setInterval(() => setClockTime(new Date()), 1000)
@@ -525,12 +521,6 @@ export default function Home() {
     const addedTodos  = mergedTodos.length  - todos.length
     pushToast('Import complete', `${addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events'}, ${addedTodos > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}` : 'no new tasks'}.`)
   }, [events.length, todos.length, pushToast])
-
-  /* ── External drag-to-create ── */
-  const handleEventReceive = useCallback((start, end) => {
-    const dateStr = start ? start.toISOString() : new Date().toISOString()
-    setEventModal({ open: true, event: null, date: dateStr })
-  }, [])
 
   /* ── Google Calendar sync ── */
   const syncGoogleCalendar = useCallback(async () => {
@@ -1002,8 +992,9 @@ export default function Home() {
     }
 
     const googleFilter = (e) => {
-      const title = e.summary || ''
-      const notes = e.description || e.extendedProps?.description || ''
+      // Google events use `title` (set by API route), not `summary`
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.description || e.description || ''
       return (matchesText(title) || matchesText(notes)) && shouldIncludeStatus(e, 'google')
     }
 
@@ -1026,9 +1017,9 @@ export default function Home() {
       const weekFromNow = new Date(now.getTime() + 7 * 24 * 3600_000)
       if (searchScope === 'all' || searchScope === 'events') {
         result.events = events
-          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow })
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
           .sort((a, b) => new Date(a.start) - new Date(b.start))
-          .slice(0, 8)
+          .slice(0, 5)
           .map(event => ({
             kind: 'event',
             label: event.title || event.summary || 'Untitled event',
@@ -1039,17 +1030,17 @@ export default function Home() {
             tagColor: categoryColor(event.extendedProps?.category),
           }))
         result.googleEvents = googleEvents
-          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow })
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
           .sort((a, b) => new Date(a.start) - new Date(b.start))
-          .slice(0, 8)
+          .slice(0, 5)
           .map(event => ({
             kind: 'google',
-            label: event.summary || 'Google event',
+            label: event.title || event.summary || 'Untitled event',
             subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
             source: 'Google Calendar',
             item: event,
             tagLabel: 'Google',
-            tagColor: '#4285f4',
+            tagColor: eventPrefs[event.id]?.color || event.color || event.backgroundColor || '#4285f4',
           }))
       }
       if (searchScope === 'all' || searchScope === 'tasks') {
@@ -1094,6 +1085,7 @@ export default function Home() {
           subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
           source: 'Event',
           item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
           tagLabel: categoryLabel(event.extendedProps?.category),
           tagColor: categoryColor(event.extendedProps?.category),
         }))
@@ -1104,12 +1096,13 @@ export default function Home() {
         .slice(0, 15)
         .map(event => ({
           kind: 'google',
-          label: event.summary || 'Google event',
+          label: event.summary || event.title || 'Untitled event',
           subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
           source: 'Google Calendar',
           item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
           tagLabel: 'Google',
-          tagColor: '#4285f4',
+          tagColor: event.color || event.backgroundColor || '#4285f4',
         }))
     }
     if (searchScope === 'all' || searchScope === 'canvas') {
@@ -1135,7 +1128,7 @@ export default function Home() {
       }))
     }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -1170,9 +1163,17 @@ export default function Home() {
 
   const nextEventToday = useMemo(() => {
     if (!mounted) return null
-    const todayStr = clockTime.toISOString().slice(0, 10)
-    return visibleEvents
+    const todayStr    = clockTime.toISOString().slice(0, 10)
+    const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
+    const tomorrowStr = tomorrowDt.toISOString().slice(0, 10)
+    // First: soonest remaining event today
+    const todayNext = visibleEvents
       .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
+      .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
+    if (todayNext) return todayNext
+    // Fallback: first event tomorrow
+    return visibleEvents
+      .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
   }, [visibleEvents, clockTime, mounted])
 
@@ -1289,11 +1290,14 @@ export default function Home() {
           )}
 
           {nextEventToday && (() => {
-            const until = timeUntil(nextEventToday.start)
-            return until ? (
+            const todayStr   = clockTime.toISOString().slice(0, 10)
+            const isTomorrow = !nextEventToday.start?.startsWith(todayStr)
+            const until      = isTomorrow ? null : timeUntil(nextEventToday.start)
+            const label      = isTomorrow ? 'Tomorrow' : until ? `In ${until}` : null
+            return label ? (
               <div style={{ marginTop: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(96,165,250,.14)', borderLeft: '2.5px solid rgba(96,165,250,.5)' }}>
                 <div style={{ fontSize: '0.6rem', color: 'rgba(147,197,253,.6)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  In {until}
+                  {label}
                 </div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {nextEventToday.title}
@@ -1326,22 +1330,6 @@ export default function Home() {
           onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
           onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
         />
-
-        {/* Drag card — desktop only, not enough space on tablet */}
-        {!isTablet && (
-          <div ref={dragCardRef} title="Drag onto the calendar to create an event"
-               style={{
-                 margin: '0 12px 8px', padding: '9px 12px', borderRadius: 10, cursor: 'grab',
-                 background: 'rgba(255,255,255,.07)', border: '1px dashed rgba(147,197,253,.3)',
-                 color: 'rgba(147,197,253,.6)', fontSize: '0.78rem', fontWeight: 600,
-                 display: 'flex', alignItems: 'center', gap: 7, transition: 'all .15s', userSelect: 'none',
-               }}
-               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.12)'; e.currentTarget.style.borderColor = 'rgba(147,197,253,.6)'; e.currentTarget.style.color = '#fff' }}
-               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,.07)'; e.currentTarget.style.borderColor = 'rgba(147,197,253,.3)'; e.currentTarget.style.color = 'rgba(147,197,253,.6)' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="3"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
-            Drag to create
-          </div>
-        )}
 
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1376,19 +1364,40 @@ export default function Home() {
               <GoogleLogo size={13} /> Sign in to sync
             </a>
           )}
-          <button onClick={() => setEventModal({ open: true, event: null, date: null })}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
-                  onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}
-                  onMouseLeave={e => e.currentTarget.style.filter = 'none'}>
-            <Plus size={14}/> Add Event
-          </button>
-          <button onClick={() => setShowTodoModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.25)'; e.currentTarget.style.color = '#fff' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.12)'; e.currentTarget.style.color = 'rgba(147,197,253,.7)' }}>
-            <Plus size={14}/> Add Task
-          </button>
+
+          {/* + New button with Event / Task popup */}
+          <div ref={addMenuRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowAddMenu(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: showAddMenu ? 'var(--blue-hover)' : 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
+              onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+              onMouseLeave={e => e.currentTarget.style.filter = 'none'}>
+              <Plus size={14}/> New
+            </button>
+            {showAddMenu && (
+              <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--shadow-modal)', animation: 'modal-in .16s cubic-bezier(.22,1,.36,1)', zIndex: 300 }}>
+                <button
+                  onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <CalendarDays size={13}/> Event
+                </button>
+                <div style={{ height: 1, background: 'var(--border)' }}/>
+                <button
+                  onClick={() => { setShowTodoModal(true); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <ListTodo size={13}/> Task
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Dark mode toggle */}
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
                   onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
@@ -1437,7 +1446,7 @@ export default function Home() {
               )}
               <WeeklyCalendar events={allCalendarEvents} todos={todos}
                               onDateClick={handleDateClick} onEventClick={handleEventClick}
-                              onViewChange={handleViewChange} onEventReceive={handleEventReceive}
+                              onViewChange={handleViewChange}
                               isMobile={isMobile}
                               highlightEventId={searchHighlightId} />
             </main>
