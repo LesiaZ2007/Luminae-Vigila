@@ -8,15 +8,18 @@ import webpush        from 'web-push'
 import { getSession } from '@/lib/session'
 import sql            from '@/lib/db'
 
-webpush.setVapidDetails(
-  process.env.VAPID_SUBJECT,
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY,
-)
-
 export async function POST(request) {
   const session = await getSession()
   if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Use the signed-in user's email as the VAPID contact (required by the spec)
+  const userRows = await sql`SELECT email FROM users WHERE id = ${session.userId} LIMIT 1`
+  const email = userRows[0]?.email ?? 'noreply@localhost'
+  webpush.setVapidDetails(
+    `mailto:${email}`,
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY,
+  )
 
   const { title = 'luminaeVigila', body = '' } = await request.json().catch(() => ({}))
 

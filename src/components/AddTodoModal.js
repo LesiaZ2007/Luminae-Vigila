@@ -4,12 +4,14 @@ import { useState, useEffect, useRef } from 'react'
 import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
+import TimePicker from '@/components/TimePicker'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
   { label: '1 day before', ms: 24 * 60 * 60_000 },
   { label: '2 days before',ms: 2 * 24 * 60 * 60_000 },
   { label: '1 week before',ms: 7 * 24 * 60 * 60_000 },
+  { label: 'Custom time…', ms: -1 },
 ]
 
 const PRIORITY = [
@@ -27,7 +29,14 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
   const [notes,         setNotes]         = useState(editTodo?.notes || '')
-  const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.ms || 0)
+  const _existingCustomAt = editTodo?.reminder?.at ? new Date(editTodo.reminder.at) : null
+  const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.at ? -1 : (editTodo?.reminder?.ms || 0))
+  const [customReminderDate, setCustomReminderDate] = useState(
+    _existingCustomAt ? _existingCustomAt.toISOString().slice(0, 10) : ''
+  )
+  const [customReminderTime, setCustomReminderTime] = useState(
+    _existingCustomAt ? `${String(_existingCustomAt.getHours()).padStart(2,'0')}:${String(_existingCustomAt.getMinutes()).padStart(2,'0')}` : '09:00'
+  )
   const [linkedEventId, setLinkedEventId] = useState(editTodo?.linkedEventId || '')
   const [showDoBefore,  setShowDoBefore]  = useState(!!editTodo?.linkedEventId)
   const [linkedClassId, setLinkedClassId] = useState(editTodo?.linkedClassId  || '')
@@ -63,13 +72,20 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
     if (!title.trim()) { setError('Please enter a task title.'); return false }
     if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return false }
     const opt = REMINDER_OPTIONS.find(r => r.ms === Number(reminderMs))
+    let reminderObj = null
+    if (Number(reminderMs) === -1 && customReminderDate) {
+      const isoAt = `${customReminderDate}T${customReminderTime || '09:00'}:00`
+      reminderObj = { at: isoAt, label: `Custom: ${new Date(isoAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`, ms: 0 }
+    } else if (Number(reminderMs) > 0) {
+      reminderObj = { ms: Number(reminderMs), label: opt?.label || '' }
+    }
     const payload = {
       title:         title.trim(),
       category,
       dueDate:       dueDate || null,
       priority,
       notes:         notes.trim() || null,
-      reminder:      Number(reminderMs) > 0 ? { ms: Number(reminderMs), label: opt?.label || '' } : null,
+      reminder:      reminderObj,
       linkedEventId: showDoBefore ? linkedEventId : null,
       linkedClassId: showClassLink ? linkedClassId : null,
       recurrence:    (!isCanvas && repeats) ? {
@@ -246,6 +262,18 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
             <label className="field-label">Reminder</label>
             <Select value={reminderMs} onChange={v => setReminderMs(Number(v))}
                     options={REMINDER_OPTIONS.map(r => ({ value: r.ms, label: r.label }))} />
+            {reminderMs === -1 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <label className="field-label">Reminder date</label>
+                  <DatePicker value={customReminderDate} onChange={setCustomReminderDate} />
+                </div>
+                <div>
+                  <label className="field-label">Reminder time</label>
+                  <TimePicker value={customReminderTime} onChange={setCustomReminderTime} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Do before */}

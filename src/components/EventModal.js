@@ -39,7 +39,7 @@ function initState(event, initialDate, categories) {
       endDate:   aDay ? eDisplay.toISOString().slice(0, 10) : '',
       startTime: aDay ? '09:00' : toHHMM(s),
       endTime:   aDay ? '10:00' : toHHMM(eRaw),
-      reminderMs: event.reminder?.ms ?? 0,
+      reminderMs: event.reminder?.at ? -1 : (event.reminder?.ms ?? 0),
       repeats:   false,
       repeatType: 'weekly',
       repeatDays: [s.getDay()],
@@ -85,7 +85,14 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
   const [repeatDays,  setRepeatDays]  = useState(init.repeatDays)
   const [repeatUntil, setRepeatUntil] = useState(init.repeatUntil)
   const [notes,        setNotes]        = useState(init.notes)
-  const [customReminderAt, setCustomReminderAt] = useState('')
+  // If editing an event with a custom-time reminder, pre-populate the pickers
+  const _existingCustomAt = event?.reminder?.at ? new Date(event.reminder.at) : null
+  const [customReminderDate, setCustomReminderDate] = useState(
+    _existingCustomAt ? _existingCustomAt.toISOString().slice(0, 10) : ''
+  )
+  const [customReminderTime, setCustomReminderTime] = useState(
+    _existingCustomAt ? toHHMM(_existingCustomAt) : '09:00'
+  )
   const [error,         setError]         = useState('')
   const [closing,       setClosing]       = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -152,8 +159,9 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
       : `${date}T${endTime}:00`
     const reminderOpt = REMINDER_OPTIONS.find(r => r.ms === reminderMs)
     let reminderObj = null
-    if (reminderMs === -1 && customReminderAt) {
-      reminderObj = { at: customReminderAt, label: 'Custom reminder', ms: 0 }
+    if (reminderMs === -1 && customReminderDate) {
+      const isoAt = `${customReminderDate}T${customReminderTime || '09:00'}:00`
+      reminderObj = { at: isoAt, label: `Custom: ${new Date(isoAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`, ms: 0 }
     } else if (reminderMs > 0) {
       reminderObj = { ms: reminderMs, label: reminderOpt?.label || '' }
     }
@@ -390,10 +398,15 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
               <Select value={reminderMs} onChange={v => setReminderMs(Number(v))}
                       options={REMINDER_OPTIONS.map(r => ({ value: r.ms, label: r.label }))} />
               {reminderMs === -1 && (
-                <div style={{ marginTop: 8 }}>
-                  <label className="field-label">Remind me at</label>
-                  <input type="datetime-local" value={customReminderAt}
-                         onChange={e => setCustomReminderAt(e.target.value)} className="field" />
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div>
+                    <label className="field-label">Reminder date</label>
+                    <DatePicker value={customReminderDate} onChange={setCustomReminderDate} />
+                  </div>
+                  <div>
+                    <label className="field-label">Reminder time</label>
+                    <TimePicker value={customReminderTime} onChange={setCustomReminderTime} />
+                  </div>
                 </div>
               )}
             </div>
