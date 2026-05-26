@@ -282,8 +282,20 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
   async function processBlocks(content, hist) {
     const newHist = [...hist, { role: 'assistant', content }]
     setHistory(newHist)
+    const hasShowItems = content.some(b => b.type === 'tool_use' && b.name === 'show_items')
     for (const b of content) {
-      if (b.type === 'text' && b.text.trim()) setItems(p => [...p, { type: 'assistant', text: b.text.trim() }])
+      if (b.type === 'text' && b.text.trim()) {
+        setItems(p => [...p, { type: 'assistant', text: b.text.trim() }])
+        // Fallback: if model didn't call show_items, auto-match mentioned events/tasks by title
+        if (!hasShowItems) {
+          const txt = b.text.toLowerCase()
+          const matchedEvents = events.filter(e => e.title && txt.includes(e.title.toLowerCase()))
+          const matchedTasks  = todos.filter(t => t.title && txt.includes(t.title.toLowerCase()))
+          if (matchedEvents.length > 0 || matchedTasks.length > 0) {
+            setItems(p => [...p, { type: 'mention_items', events: matchedEvents, tasks: matchedTasks }])
+          }
+        }
+      }
       else if (b.type === 'tool_use') await handleTool(b, newHist)
     }
     return newHist

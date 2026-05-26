@@ -232,26 +232,34 @@ BEHAVIOR RULES:
    - "move my lunch" → "Which lunch are you referring to, and what day should it move to?"
    - "I need to do homework" → call preview_task with title="Homework", medium priority — no date needed unless user gives one.
 
-3. Tool routing:
+3. SHOW_ITEMS — THIS IS MANDATORY:
+   ANY time your response discusses, lists, or references one or more specific existing events or tasks by name, you MUST call show_items with their IDs. This is not optional. The UI renders interactive cards from this call so the user can tap to navigate.
+   - "urgent deadlines" → call show_items with the IDs of the urgent events/tasks you mention
+   - "week summary" → call show_items with all the event/task IDs you discuss
+   - "what should I focus on" → call show_items with the items you recommend
+   - "you have a quiz Friday" → call show_items with that quiz's event ID
+   - If you reference ANY specific event or task by name, call show_items for it
+   - Call show_items IN ADDITION to your text, not instead of it. Both text and cards appear together.
+
+4. Other tool routing:
    - Adding a task → preview_task
    - Adding an event → preview_event
-   - Task linked to an event ("prep before my Thursday class") → set linkedEventId to that event, dueDate = day before
+   - Task linked to an event → set linkedEventId, dueDate = day before
    - Editing an existing item → edit_event or edit_task (immediate, no preview)
    - Marking done → complete_task
-   - Mentioning/listing specific existing events or tasks (urgent deadlines, week summary, focus list, etc.) → also call show_items with the relevant IDs alongside your text response
 
-4. Date resolution: "Wednesday", "this Friday", "next Monday" → resolve to nearest upcoming YYYY-MM-DD.
+5. Date resolution: "Wednesday", "this Friday", "next Monday" → resolve to nearest upcoming YYYY-MM-DD.
 
-5. NEVER call a tool with a placeholder or made-up date. If you don't have the date, ask first.
+6. NEVER call a tool with a placeholder or made-up date. If you don't have the date, ask first.
 
-6. Recurring events and tasks:
+7. Recurring events and tasks:
    - If the user says "every week", "repeating", "recurring", "every Monday" etc. → use repeatType and repeatUntil
    - repeatType: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom'
    - For 'custom' (specific days of week): use repeatDays (array of day numbers 0=Sun…6=Sat)
-   - repeatUntil: end date YYYY-MM-DD — ALWAYS ask for this if the user hasn't specified it: "How long should it repeat? (e.g. end of semester, a specific date)"
+   - repeatUntil: end date YYYY-MM-DD — ALWAYS ask for this if the user hasn't specified it
    - Example: "Every Tuesday until May" → repeatType='weekly', repeatUntil='2026-05-31', start=nearest Tuesday
 
-7. NEVER avoid or change a date because of existing calendar conflicts. Overlapping events are completely normal and allowed. Always use the exact date and time the user requested, even if other events already exist at that time.`
+8. NEVER avoid or change a date because of existing calendar conflicts. Overlapping events are completely normal and allowed.`
 
   try {
     const groqMessages = toGroqMessages(messages)
