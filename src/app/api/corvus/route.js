@@ -100,6 +100,20 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'show_items',
+      description: 'Show interactive clickable cards for specific existing events and/or tasks so the user can tap them to navigate directly to that item. Always call this alongside your text response when you mention, list, or discuss specific events or tasks — e.g. urgent deadlines, weekly summary, what to focus on.',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventIds: { type: 'array', items: { type: 'string' }, description: 'IDs of existing calendar events to show as cards' },
+          taskIds:  { type: 'array', items: { type: 'string' }, description: 'IDs of existing tasks/todos to show as cards' },
+        },
+      },
+    },
+  },
 ]
 
 // Convert our internal (Anthropic-style) messages → OpenAI/Groq format
@@ -224,6 +238,7 @@ BEHAVIOR RULES:
    - Task linked to an event ("prep before my Thursday class") → set linkedEventId to that event, dueDate = day before
    - Editing an existing item → edit_event or edit_task (immediate, no preview)
    - Marking done → complete_task
+   - Mentioning/listing specific existing events or tasks (urgent deadlines, week summary, focus list, etc.) → also call show_items with the relevant IDs alongside your text response
 
 4. Date resolution: "Wednesday", "this Friday", "next Monday" → resolve to nearest upcoming YYYY-MM-DD.
 

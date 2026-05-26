@@ -144,6 +144,7 @@ export default function Home() {
   const [searchScope,       setSearchScope]       = useState('all')
   const [searchStatus,      setSearchStatus]      = useState('all')
   const [searchHighlightId, setSearchHighlightId] = useState(null)
+  const [calendarTargetDate, setCalendarTargetDate] = useState(null)
 
   const [googleEvents,       setGoogleEvents]       = useState([])
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
@@ -1135,6 +1136,8 @@ export default function Home() {
     if (result.kind === 'event' && result.item) {
       setActiveNav('calendar')
       setSearchHighlightId(result.item.id)
+      const evDate = result.item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
       setEventModal({ open: true, event: result.item, date: null })
       return
     }
@@ -1160,6 +1163,20 @@ export default function Home() {
       return
     }
   }, [closeSearchPopup, setToasts])
+
+  const navigateToItem = useCallback((item, type) => {
+    if (type === 'event') {
+      setActiveNav('calendar')
+      setSearchHighlightId(item.id)
+      const evDate = item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      setEventModal({ open: true, event: item, date: null })
+    } else if (type === 'task') {
+      setActiveNav('todos')
+      setEditingTodo(item)
+      setShowTodoModal(true)
+    }
+  }, [])
 
   const nextEventToday = useMemo(() => {
     if (!mounted) return null
@@ -1448,7 +1465,8 @@ export default function Home() {
                               onDateClick={handleDateClick} onEventClick={handleEventClick}
                               onViewChange={handleViewChange}
                               isMobile={isMobile}
-                              highlightEventId={searchHighlightId} />
+                              highlightEventId={searchHighlightId}
+                              targetDate={calendarTargetDate} />
             </main>
 
             {/* Resize handle — desktop only */}
@@ -1536,6 +1554,7 @@ export default function Home() {
               onAddTodo={addTodo}
               onSaveEvent={saveEvent}
               onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
             />
           </main>
         )}

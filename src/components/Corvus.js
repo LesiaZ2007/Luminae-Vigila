@@ -180,8 +180,54 @@ function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel,
   )
 }
 
+// ── Mention card (existing event/task, clickable to navigate) ─────────────
+function MentionCard({ item, type, eventCategories, onNavigate }) {
+  const isTask = type === 'task'
+  const cat    = !isTask && (eventCategories || []).find(c => c.id === item.extendedProps?.category)
+  const accent = isTask
+    ? (item.priority === 'high' ? '#ef4444' : item.priority === 'low' ? '#10b981' : '#f59e0b')
+    : (cat?.color || '#3a6fa8')
+
+  return (
+    <button
+      onClick={() => onNavigate?.(item, type)}
+      style={{
+        background: 'var(--surface2)', border: `1px solid var(--border)`,
+        borderLeft: `3px solid ${accent}`, borderRadius: 11, padding: '10px 13px',
+        maxWidth: 280, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+        transition: 'background .15s, transform .1s', display: 'block', width: '100%',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface2)'; e.currentTarget.style.transform = 'none' }}
+    >
+      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: accent, marginBottom: 4 }}>
+        {isTask ? '📋 Task' : '📅 Event'}
+      </div>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--text)', marginBottom: 3 }}>
+        {item.title}
+      </div>
+      {!isTask && item.start && (
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>
+          {formatDate(item.start)}{formatTime(item.start) ? ` · ${formatTime(item.start)}` : ''}
+        </div>
+      )}
+      {isTask && item.dueDate && (
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>
+          Due {formatDate(item.dueDate)}
+          {item.priority && item.priority !== 'medium' && (
+            <span style={{ marginLeft: 6 }}>{item.priority === 'high' ? '🔴' : '🟢'}</span>
+          )}
+        </div>
+      )}
+      <div style={{ fontSize: '0.68rem', color: 'var(--blue-text)', marginTop: 5, display: 'flex', alignItems: 'center', gap: 3 }}>
+        <ChevronRight size={10} /> View
+      </div>
+    </button>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────
-export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, compact = false, onExpand, onClose }) {
+export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
   const [history, setHistory]           = useState([])
   const [items,   setItems]             = useState([
     { type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." },
@@ -297,6 +343,14 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
         setItems(p => [...p, { type: 'action', text: "Couldn't find that task." }])
         await sendResult(hist, id, 'Task not found.')
       }
+    } else if (name === 'show_items') {
+      const resolvedEvents = (inp.eventIds || []).map(id => events.find(e => e.id === id)).filter(Boolean)
+      const resolvedTasks  = (inp.taskIds  || []).map(id => todos.find(t => t.id === id)).filter(Boolean)
+      if (resolvedEvents.length > 0 || resolvedTasks.length > 0) {
+        setItems(p => [...p, { type: 'mention_items', events: resolvedEvents, tasks: resolvedTasks }])
+      }
+      // Acknowledge without extra API round-trip (display-only tool)
+      setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Items shown to user.' }] }])
     }
   }
 
@@ -496,6 +550,16 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
             )
             if (item.type === 'action') return (
               <div key={i} style={{ fontSize: '0.74rem', color: 'var(--text-3)', padding: '1px 4px' }}>✓ {item.text}</div>
+            )
+            if (item.type === 'mention_items') return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+                {(item.events || []).map((ev, j) => (
+                  <MentionCard key={`ev-${j}`} item={ev} type="event" eventCategories={eventCategories} onNavigate={onNavigateToItem} />
+                ))}
+                {(item.tasks || []).map((t, j) => (
+                  <MentionCard key={`t-${j}`} item={t} type="task" eventCategories={eventCategories} onNavigate={onNavigateToItem} />
+                ))}
+              </div>
             )
             if (item.type === 'preview_task' || item.type === 'preview_event') {
               if (compact) {
