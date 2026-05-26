@@ -267,6 +267,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: msgs,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         events: events
           .filter(e => !e.start || new Date(e.start) >= new Date(Date.now() - 86400_000))
           .sort((a, b) => new Date(a.start) - new Date(b.start))

@@ -168,16 +168,20 @@ export async function POST(request) {
   const session = await getSession()
   if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { messages = [], events = [], todos = [], canvasAssignments = [] } = await request.json()
+  const { messages = [], events = [], todos = [], canvasAssignments = [], timezone = 'UTC' } = await request.json()
 
   const now     = new Date()
-  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  const tz      = timezone
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: tz })
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz })
 
   const eventsCtx = events.length
     ? events.map(e => {
-        const s = e.start || ''
-        return `[${e.id}] "${e.title}" — ${s.slice(0,10)} ${s.includes('T') ? s.slice(11,16) : 'all-day'}${e.extendedProps?.category ? ` (${e.extendedProps.category})` : ''}`
+        const s  = e.start || ''
+        const dt = s ? new Date(s) : null
+        const datePart = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz }) : 'no date'
+        const timePart = (dt && s.includes('T')) ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }) : 'all-day'
+        return `[${e.id}] "${e.title}" — ${datePart} ${timePart}${e.extendedProps?.category ? ` (${e.extendedProps.category})` : ''}`
       }).join('\n')
     : 'None'
 
@@ -194,7 +198,9 @@ export async function POST(request) {
         .filter(a => !a.done && !a.hidden && (!a.dueAt || new Date(a.dueAt) <= thirtyDaysOut))
         .sort((a, b) => (a.dueAt ?? 'z').localeCompare(b.dueAt ?? 'z'))
         .map(a => {
-          const due = a.dueAt ? a.dueAt.slice(0, 10) : 'no due date'
+          const due = a.dueAt
+            ? new Date(a.dueAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz })
+            : 'no due date'
           const status = a.submissionState === 'submitted' ? 'submitted' : a.submissionState === 'graded' ? 'graded' : 'unsubmitted'
           return `[${a.id}] [${a.courseName}] "${a.title}" — due ${due} — ${status}`
         })
