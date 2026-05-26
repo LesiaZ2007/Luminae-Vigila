@@ -8,17 +8,17 @@ import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
 export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate }) {
-  const calendarRef = useRef(null)
+  const calendarRef    = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
   const swipeResetRef  = useRef(null)
   const wheelTimer     = useRef(null)
   const wheelLocked    = useRef(false)
   const animTimer      = useRef(null)
-  const viewSwitchTimer = useRef(null)
-  const prevViewType   = useRef(null)
-  const [navAnim,      setNavAnim]      = useState(null)   // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
-  const [viewSwitching, setViewSwitching] = useState(false) // true while view-switch animation plays
+  const viewAnimTimer  = useRef(null)
+  const [navAnim,      setNavAnim]     = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+  const [viewAnim,     setViewAnim]    = useState(null) // 'exit' | 'enter' | null
+  const [currentView,  setCurrentView] = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
 
   useEffect(() => {
     if (!targetDate) return
@@ -125,6 +125,24 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     }, 140)
   }, [])
 
+  const switchView = useCallback((viewName) => {
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    if (viewName === currentView) return
+    clearTimeout(viewAnimTimer.current)
+
+    // Phase 1: fade+scale exit
+    setViewAnim('exit')
+
+    viewAnimTimer.current = setTimeout(() => {
+      api.changeView(viewName)
+      setViewAnim('enter')
+
+      // Phase 2 done — clear
+      viewAnimTimer.current = setTimeout(() => setViewAnim(null), 300)
+    }, 150)
+  }, [currentView])
+
   function handleTouchStart(e) {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
   }
@@ -219,26 +237,22 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
-    const newType = info.view.type
-    onViewChange?.(newType)
-    // Animate only when the view TYPE changes (week→month, month→day, etc.), not on prev/next
-    if (prevViewType.current && prevViewType.current !== newType) {
-      clearTimeout(viewSwitchTimer.current)
-      setViewSwitching(true)
-      viewSwitchTimer.current = setTimeout(() => setViewSwitching(false), 300)
-    }
-    prevViewType.current = newType
+    setCurrentView(info.view.type)
+    onViewChange?.(info.view.type)
   }
 
-  const animClass = viewSwitching
-    ? 'cal-view-switch'
-    : navAnim ? `cal-nav-${navAnim}` : ''
+  const containerClass = [
+    'flex-1 min-h-0 rounded-2xl overflow-hidden',
+    `lv-cal-view-${currentView}`,
+    navAnim  ? `cal-nav-${navAnim}`   : '',
+    viewAnim ? `cal-view-${viewAnim}` : '',
+  ].filter(Boolean).join(' ')
 
   return (
     <div className="flex flex-col h-full"
          onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}
          onWheel={handleWheel}>
-      <div className={`flex-1 min-h-0 rounded-2xl overflow-hidden ${animClass}`}
+      <div className={containerClass}
            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)' }}>
         <FullCalendar
           ref={calendarRef}
@@ -247,19 +261,9 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           headerToolbar={{
             left:   'prev,next today',
             center: 'title',
-            right:  'dayGridMonth,timeGridWeek,timeGridDay',
+            right:  'viewMonth,viewWeek,viewDay',
           }}
-          buttonText={isMobile ? {
-            today: 'today',
-            month: 'M',
-            week:  'W',
-            day:   'D',
-          } : {
-            today: 'today',
-            month: 'Month',
-            week:  'Week',
-            day:   'Day',
-          }}
+          buttonText={{ today: 'today' }}
           views={{
             timeGridWeek: {
               // Narrow day letters (M/T/W…) + date number → "M 26" fits the tight columns
@@ -273,8 +277,11 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
             },
           }}
           customButtons={{
-            prev: { click: () => navigate('prev') },
-            next: { click: () => navigate('next') },
+            prev:      { click: () => navigate('prev') },
+            next:      { click: () => navigate('next') },
+            viewMonth: { text: isMobile ? 'M' : 'Month', click: () => switchView('dayGridMonth') },
+            viewWeek:  { text: isMobile ? 'W' : 'Week',  click: () => switchView('timeGridWeek') },
+            viewDay:   { text: isMobile ? 'D' : 'Day',   click: () => switchView('timeGridDay')  },
           }}
           events={events}
           eventContent={renderEventContent}
