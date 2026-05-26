@@ -29,6 +29,7 @@ import CoursesPanel           from '@/components/CoursesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
+import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -1393,6 +1394,20 @@ export default function Home() {
             ) : null
           })()}
         </div>
+
+        {/* ── Mini month navigator (desktop/tablet only) ── */}
+        {!isMobile && (
+          <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+            <MiniMonthCalendar
+              currentDate={clockTime}
+              highlightWeekOf={clockTime}
+              onDayClick={(dateStr) => {
+                setActiveNav('calendar')
+                setCalendarTargetDate(dateStr)
+              }}
+            />
+          </div>
+        )}
 
         {/* ── Google Calendar inline section ── */}
         <SidebarGoogleSection
