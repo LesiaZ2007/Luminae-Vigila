@@ -72,40 +72,62 @@ function getThisWeekBounds() {
 
 // ── AssignmentRow ─────────────────────────────────────────────────────────────
 
-function AssignmentRow({ a, courseColor, onToggle, onClickDetail }) {
+function AssignmentRow({ a, courseColor, onToggle, onClickDetail, selectMode, isSelected, onToggleSelect }) {
   const [hovered, setHovered] = useState(false)
   const color   = courseColor ?? CANVAS_COLOR
   const due     = formatDue(a.dueAt)
   const done    = isCompleted(a)
   const showCrossed = done  // always show strikethrough + muted when done
 
+  function handleRowClick() {
+    if (selectMode) { onToggleSelect?.(a.id); return }
+    onClickDetail?.(a)
+  }
+
   return (
     <div
-      onClick={() => onClickDetail?.(a)}
+      onClick={handleRowClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px',
         borderRadius: 9, transition: 'background .12s', cursor: 'pointer',
-        background: hovered ? 'var(--surface2)' : 'transparent',
+        background: isSelected ? `${color}18` : hovered ? 'var(--surface2)' : 'transparent',
+        outline: isSelected ? `1.5px solid ${color}44` : 'none',
       }}
     >
-      {/* Check button */}
-      <button
-        onClick={e => { e.stopPropagation(); onToggle?.(a.id) }}
-        title={a.done ? 'Mark undone' : 'Mark done'}
-        style={{
-          flexShrink: 0, marginTop: 1, width: 18, height: 18, borderRadius: '50%', border: 'none',
-          background: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center',
-          color: done ? color : 'var(--text-3)', transition: 'color .15s',
-        }}
-        onMouseEnter={e => { e.stopPropagation(); e.currentTarget.style.color = color }}
-        onMouseLeave={e => { e.stopPropagation(); e.currentTarget.style.color = done ? color : 'var(--text-3)' }}
-      >
-        {done
-          ? <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          : <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
-      </button>
+      {/* Select checkbox OR regular check button */}
+      {selectMode ? (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleSelect?.(a.id) }}
+          title={isSelected ? 'Deselect' : 'Select'}
+          style={{
+            flexShrink: 0, marginTop: 1, width: 18, height: 18, borderRadius: 4, border: `2px solid ${isSelected ? color : 'var(--text-3)'}`,
+            background: isSelected ? color : 'none', cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .13s',
+          }}
+        >
+          {isSelected && (
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={e => { e.stopPropagation(); onToggle?.(a.id) }}
+          title={a.done ? 'Mark undone' : 'Mark done'}
+          style={{
+            flexShrink: 0, marginTop: 1, width: 18, height: 18, borderRadius: '50%', border: 'none',
+            background: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center',
+            color: done ? color : 'var(--text-3)', transition: 'color .15s',
+          }}
+          onMouseEnter={e => { e.stopPropagation(); e.currentTarget.style.color = color }}
+          onMouseLeave={e => { e.stopPropagation(); e.currentTarget.style.color = done ? color : 'var(--text-3)' }}
+        >
+          {done
+            ? <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            : <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
+        </button>
+      )}
 
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -156,7 +178,7 @@ function AssignmentRow({ a, courseColor, onToggle, onClickDetail }) {
 
 // ── CourseCard ────────────────────────────────────────────────────────────────
 
-function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, defaultOpen = true }) {
+function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, defaultOpen = true, selectMode, selectedIds, onToggleSelect }) {
   const [open, setOpen] = useState(defaultOpen)
   const color = courseColor ?? CANVAS_COLOR
 
@@ -230,6 +252,9 @@ function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, 
                   courseColor={color}
                   onToggle={onToggle}
                   onClickDetail={onClickDetail}
+                  selectMode={selectMode}
+                  isSelected={selectedIds?.has(a.id)}
+                  onToggleSelect={onToggleSelect}
                 />
               ))
           }
@@ -414,7 +439,7 @@ function GradesPanel({ canvasAssignments, courseColors, courseIds }) {
 
 // ── ComingUpSection ───────────────────────────────────────────────────────────
 
-function ComingUpSection({ courses, courseColors, onToggle, onClickDetail }) {
+function ComingUpSection({ courses, courseColors, onToggle, onClickDetail, selectMode, selectedIds, onToggleSelect }) {
   const [open, setOpen] = useState(false)
   const total = courses.reduce((s, c) => s + c.assignments.length, 0)
 
@@ -449,6 +474,9 @@ function ComingUpSection({ courses, courseColors, onToggle, onClickDetail }) {
           onToggle={onToggle}
           onClickDetail={onClickDetail}
           defaultOpen={false}
+          selectMode={selectMode}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
         />
       ))}
     </div>
@@ -469,6 +497,32 @@ export default function CoursesPanel({
   const [tab,          setTab]          = useState('thisweek') // 'thisweek' | 'upcoming'
   const [gradesOpen,   setGradesOpen]   = useState(false)
   const [detailAssign, setDetailAssign] = useState(null)
+  const [selectMode,   setSelectMode]   = useState(false)
+  const [selectedIds,  setSelectedIds]  = useState(new Set())
+
+  function handleToggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleBulkMarkDone() {
+    selectedIds.forEach(id => {
+      // Only toggle undone ones to avoid toggling done → undone
+      const a = canvasAssignments.find(a => a.id === id)
+      if (a && !isCompleted(a)) onToggleCanvas?.(id)
+    })
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  function handleExitSelect() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
 
   // ── Group by course ──
   const byCourse = useMemo(() => {
@@ -573,6 +627,22 @@ export default function CoursesPanel({
           <span style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text)', flex: 1, letterSpacing: '-0.01em' }}>
             My Courses
           </span>
+
+          {/* Bulk select toggle */}
+          <button
+            onClick={() => selectMode ? handleExitSelect() : setSelectMode(true)}
+            title={selectMode ? 'Exit selection' : 'Select assignments'}
+            style={{
+              background: selectMode ? 'rgba(147,197,253,.15)' : 'none',
+              border: selectMode ? '1px solid rgba(147,197,253,.35)' : '1px solid transparent',
+              cursor: 'pointer', padding: '4px 8px', borderRadius: 6,
+              color: selectMode ? '#93c5fd' : 'var(--text-3)',
+              fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', gap: 4, transition: 'all .13s',
+            }}
+          >
+            {selectMode ? 'Cancel' : 'Select'}
+          </button>
 
           {/* Grades toggle */}
           <button
@@ -681,7 +751,10 @@ export default function CoursesPanel({
                       courseColor={getCourseColor(course.id, courseColors)}
                       onToggle={onToggleCanvas}
                       onClickDetail={setDetailAssign}
-                      />
+                      selectMode={selectMode}
+                      selectedIds={selectedIds}
+                      onToggleSelect={handleToggleSelect}
+                    />
                   ))}
 
                   {/* Coming Up section (only in This Week tab) */}
@@ -691,12 +764,53 @@ export default function CoursesPanel({
                       courseColors={courseColors}
                       onToggle={onToggleCanvas}
                       onClickDetail={setDetailAssign}
+                      selectMode={selectMode}
+                      selectedIds={selectedIds}
+                      onToggleSelect={handleToggleSelect}
                     />
                   )}
                 </>
               )}
             </div>
           </div>
+
+          {/* ── Bulk action bar (sticky bottom) ── */}
+          {selectMode && selectedIds.size > 0 && (
+            <div style={{
+              flexShrink: 0,
+              borderTop: '1px solid var(--border)',
+              background: 'var(--surface)',
+              padding: '10px 16px',
+              display: 'flex', gap: 8, alignItems: 'center',
+            }}>
+              <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-2)' }}>
+                {selectedIds.size} selected
+              </span>
+              <button
+                onClick={handleBulkMarkDone}
+                style={{
+                  padding: '6px 14px', borderRadius: 8, border: 'none',
+                  background: barColor, color: '#fff',
+                  fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
+                  transition: 'opacity .13s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >
+                Mark done
+              </button>
+              <button
+                onClick={handleExitSelect}
+                style={{
+                  padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+                  background: 'var(--surface2)', color: 'var(--text-2)',
+                  fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {/* ── Right: grades panel ── */}
           {gradesOpen && (
