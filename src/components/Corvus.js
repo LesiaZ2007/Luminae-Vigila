@@ -248,9 +248,14 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
   const [pending,       setPending]       = useState(null)
   const [editingPreview, setEditingPreview] = useState(false)
   const [autoAdd,       setAutoAdd]       = useState(false)
-  const [loading,       setLoading]       = useState(false)
-  const [input,         setInput]         = useState('')
+  const [loading,           setLoading]           = useState(false)
+  const [input,             setInput]             = useState('')
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0)
+  const countdownRef = useRef(null)
   const bottomRef = useRef(null)
+
+  // Clean up countdown interval on unmount
+  useEffect(() => () => clearInterval(countdownRef.current), [])
 
   // ── Persist session to localStorage ──
   useEffect(() => {
@@ -446,10 +451,21 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       if (data.error) throw new Error(data.error)
       await processBlocks(data.content, newHistory)
     } catch (e) {
-      const msg = e?.message?.includes('429') ? "I'm getting rate-limited — give me a moment and try again."
+      const is429 = e?.message?.includes('429')
+      const msg = is429 ? "I'm getting rate-limited — give me a moment and try again."
                 : e?.message?.includes('401') ? "API key issue — check your GROQ_API_KEY in .env.local."
                 : "Hmm, something went wrong on my end. Try again?"
       setItems(p => [...p, { type: 'assistant', text: msg }])
+      if (is429) {
+        setRateLimitCountdown(30)
+        clearInterval(countdownRef.current)
+        countdownRef.current = setInterval(() => {
+          setRateLimitCountdown(prev => {
+            if (prev <= 1) { clearInterval(countdownRef.current); return 0 }
+            return prev - 1
+          })
+        }, 1000)
+      }
     }
     setLoading(false)
   }
@@ -631,8 +647,8 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
             <textarea
               value={input} onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-              placeholder={pending ? 'Waiting for confirmation…' : 'Ask me to add or edit anything…'}
-              disabled={!!pending || loading} rows={1}
+              placeholder={pending ? 'Waiting for confirmation…' : rateLimitCountdown > 0 ? `Rate limited — retry in ${rateLimitCountdown}s…` : 'Ask me to add or edit anything…'}
+              disabled={!!pending || loading || rateLimitCountdown > 0} rows={1}
               style={{
                 flex: 1, resize: 'none', background: 'var(--input-bg)', border: '1.5px solid var(--border)',
                 borderRadius: 11, padding: compact ? '9px 12px' : '11px 14px',
@@ -642,13 +658,19 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--blue)' }}
               onBlur={e  => { e.currentTarget.style.borderColor = 'var(--border)' }}
             />
-            <button onClick={handleSend} disabled={!input.trim() || loading || !!pending} style={{
+            <button onClick={handleSend} disabled={!input.trim() || loading || !!pending || rateLimitCountdown > 0} style={{
               padding: compact ? '9px 11px' : '11px 13px', borderRadius: 11, border: 'none',
-              background: 'var(--blue)', color: '#fff', flexShrink: 0,
-              cursor: (!input.trim() || loading || pending) ? 'not-allowed' : 'pointer',
-              opacity: (!input.trim() || loading || pending) ? 0.4 : 1, transition: 'opacity .15s',
+              background: rateLimitCountdown > 0 ? 'var(--surface2)' : 'var(--blue)',
+              color: rateLimitCountdown > 0 ? 'var(--text-2)' : '#fff',
+              flexShrink: 0, minWidth: rateLimitCountdown > 0 ? 72 : undefined,
+              cursor: (!input.trim() || loading || pending || rateLimitCountdown > 0) ? 'not-allowed' : 'pointer',
+              opacity: (!input.trim() || loading || pending) && rateLimitCountdown === 0 ? 0.4 : 1,
+              transition: 'opacity .15s, background .2s',
+              fontSize: rateLimitCountdown > 0 ? '0.7rem' : undefined,
+              fontWeight: rateLimitCountdown > 0 ? 700 : undefined,
+              fontFamily: rateLimitCountdown > 0 ? 'inherit' : undefined,
             }}>
-              <Send size={compact ? 13 : 15} />
+              {rateLimitCountdown > 0 ? `${rateLimitCountdown}s` : <Send size={compact ? 13 : 15} />}
             </button>
           </div>
         </div>
