@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { X, RefreshCw, ExternalLink, BookOpen } from 'lucide-react'
+import { COURSE_PALETTE, getCourseColor } from '@/components/CoursesPanel'
 
 // Inline Canvas "C" logo
 export function CanvasLogo({ size = 16 }) {
@@ -19,7 +20,7 @@ export function CanvasLogo({ size = 16 }) {
   )
 }
 
-export default function CanvasSettingsModal({ onClose, onSync }) {
+export default function CanvasSettingsModal({ onClose, onSync, onColorsChange }) {
   const [connected,    setConnected]    = useState(false)
   const [baseUrl,      setBaseUrl]      = useState('')
   const [token,        setToken]        = useState('')
@@ -32,6 +33,7 @@ export default function CanvasSettingsModal({ onClose, onSync }) {
   const [coursesLoading, setCoursesLoading] = useState(false)
   const [closing,      setClosing]      = useState(false)
   const [syncing,      setSyncing]      = useState(false)
+  const [colorPickerFor, setColorPickerFor] = useState(null) // courseId with open color picker
   const [prefs,        setPrefs]        = useState(() => {
     try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}') }
     catch { return {} }
@@ -86,6 +88,16 @@ export default function CanvasSettingsModal({ onClose, onSync }) {
     } catch { setCourses([]) }
     finally { setCoursesLoading(false) }
   }, [])
+
+  function setCourseColor(courseId, color) {
+    setPrefs(p => {
+      const updated = { ...p, courseColors: { ...(p.courseColors ?? {}), [courseId]: color } }
+      localStorage.setItem('lv-canvas-prefs', JSON.stringify(updated))
+      onColorsChange?.(updated.courseColors)
+      return updated
+    })
+    setColorPickerFor(null)
+  }
 
   async function handleConnect(e) {
     e.preventDefault()
@@ -209,19 +221,47 @@ export default function CanvasSettingsModal({ onClose, onSync }) {
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {courses.map(course => {
-                      const enabled = prefs.coursesEnabled?.[course.id] !== false
+                      const enabled    = prefs.coursesEnabled?.[course.id] !== false
+                      const courseColor = getCourseColor(course.id, prefs.courseColors)
+                      const pickerOpen = colorPickerFor === course.id
                       return (
-                        <div key={course.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)' }}>
-                          <BookOpen size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: enabled ? 'var(--text)' : 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color .15s' }}>
-                              {course.name}
+                        <div key={course.id} style={{ borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)', overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px' }}>
+                            {/* Color swatch button */}
+                            <button
+                              type="button"
+                              onClick={() => setColorPickerFor(pickerOpen ? null : course.id)}
+                              title="Pick course color"
+                              style={{ width: 18, height: 18, borderRadius: '50%', background: courseColor, border: pickerOpen ? '2px solid var(--text)' : '2px solid transparent', cursor: 'pointer', flexShrink: 0, transition: 'border-color .13s' }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: enabled ? 'var(--text)' : 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color .15s' }}>
+                                {course.name}
+                              </div>
+                              {course.courseCode && (
+                                <div style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}>{course.courseCode}</div>
+                              )}
                             </div>
-                            {course.courseCode && (
-                              <div style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}>{course.courseCode}</div>
-                            )}
+                            <CourseToggle enabled={enabled} onChange={v => toggleCourse(course.id, v)} />
                           </div>
-                          <CourseToggle enabled={enabled} onChange={v => toggleCourse(course.id, v)} />
+
+                          {/* Inline color picker */}
+                          {pickerOpen && (
+                            <div style={{ padding: '6px 12px 10px', display: 'flex', flexWrap: 'wrap', gap: 6, borderTop: '1px solid var(--border)' }}>
+                              {COURSE_PALETTE.map(hex => (
+                                <button
+                                  key={hex} type="button"
+                                  onClick={() => setCourseColor(course.id, hex)}
+                                  title={hex}
+                                  style={{
+                                    width: 22, height: 22, borderRadius: '50%', background: hex,
+                                    border: courseColor === hex ? '2px solid var(--text)' : '2px solid transparent',
+                                    cursor: 'pointer', transition: 'border-color .13s', padding: 0,
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
