@@ -356,9 +356,10 @@ select option {
 .cal-view-enter { animation: cal-view-enter 0.28s cubic-bezier(0.22,1,0.36,1) forwards; }
 
 /* Active state for custom view-switch buttons (lv-cal-view-* class on container) */
-.lv-cal-view-dayGridMonth .fc-viewMonth-button,
-.lv-cal-view-timeGridWeek .fc-viewWeek-button,
-.lv-cal-view-timeGridDay  .fc-viewDay-button {
+.lv-cal-view-dayGridMonth  .fc-viewMonth-button,
+.lv-cal-view-timeGridWeek  .fc-viewWeek-button,
+.lv-cal-view-timeGrid2Week .fc-view2Week-button,
+.lv-cal-view-timeGridDay   .fc-viewDay-button {
   background-color: var(--blue) !important;
   border-color:     var(--blue) !important;
   color:            #fff !important;
