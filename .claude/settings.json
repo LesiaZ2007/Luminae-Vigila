@@ -16,7 +16,12 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\" -Force)",
       "Bash(Select-Object Name, PSIsContainer)",
       "Bash(Format-Table -AutoSize)",
-      "Bash(git commit -m 'feat\\(sidebar+search\\): remove drag-to-create, +New popup, fix google events, hidden events, result scroll, tomorrow label *)"
+      "Bash(git commit -m 'feat\\(sidebar+search\\): remove drag-to-create, +New popup, fix google events, hidden events, result scroll, tomorrow label *)",
+      "Bash(git stash *)",
+      "Bash(git reset *)",
+      "Bash(git commit -m 'feat\\(courses\\): redesign Courses tab + Todo two-column layout *)",
+      "Bash(git commit -m 'feat\\(courses+todos\\): Coming Up section, correct two-column layout, merged sidebar list *)",
+      "Bash(git commit -m 'fix\\(courses\\): always show strikethrough on done assignments; remove crossedOut prop *)"
     ]
   }
 }

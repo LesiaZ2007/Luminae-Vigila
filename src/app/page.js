@@ -122,7 +122,7 @@ function expandRecurringTodo(t) {
 export default function Home() {
   const { theme, setTheme } = useTheme()
   const [mounted,       setMounted]       = useState(false)
-  const [todoPanelWidth, setTodoPanelWidth] = useState(280)
+  const [todoPanelWidth, setTodoPanelWidth] = useState(520)
   const resizingRef    = useRef(false)
   const startXRef      = useRef(0)
   const startWRef      = useRef(280)
@@ -197,8 +197,8 @@ export default function Home() {
   const [canvasCalPrefs, setCanvasCalPrefs] = useState(() => {
     try {
       const p = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
-      return { showOnCalendar: p.showOnCalendar !== false, coursesEnabled: p.coursesEnabled ?? {} }
-    } catch { return { showOnCalendar: true, coursesEnabled: {} } }
+      return { showOnCalendar: p.showOnCalendar !== false, coursesEnabled: p.coursesEnabled ?? {}, courseColors: p.courseColors ?? {} }
+    } catch { return { showOnCalendar: true, coursesEnabled: {}, courseColors: {} } }
   })
 
   const shownReminders  = useRef(new Set())
@@ -706,6 +706,10 @@ export default function Home() {
     })
   }, [])
 
+  const updateCourseColors = useCallback((courseColors) => {
+    setCanvasCalPrefs(prev => ({ ...prev, courseColors: courseColors ?? {} }))
+  }, [])
+
   const toggleCourseOnCalendar = useCallback((courseId, enabled) => {
     setCanvasCalPrefs(prev => {
       const next = { ...prev, coursesEnabled: { ...prev.coursesEnabled, [String(courseId)]: enabled } }
@@ -734,6 +738,10 @@ export default function Home() {
 
   const updateCanvasAssignment = useCallback((updated) => {
     setCanvasAssignments(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a))
+  }, [])
+
+  const updateCanvasNotes = useCallback((id, notes) => {
+    setCanvasAssignments(prev => prev.map(a => a.id === id ? { ...a, notes } : a))
   }, [])
 
   /* ── Class schedule CRUD ── */
@@ -899,6 +907,15 @@ export default function Home() {
     ),
   [canvasCalEvents, canvasCalPrefs])
 
+  // Map from Canvas courseId → class schedule color (for linked courses)
+  const scheduleColorByCourseId = useMemo(() => {
+    const map = {}
+    for (const cls of canvasClasses) {
+      if (cls.canvasCourseId) map[cls.canvasCourseId] = cls.color
+    }
+    return map
+  }, [canvasClasses])
+
   // Canvas assignments shown as all-day task markers (like todos) — not done, has due date
   const canvasAssignmentTasks = useMemo(() =>
     canvasCalPrefs.showOnCalendar
@@ -912,11 +929,14 @@ export default function Home() {
             title: a.title,
             start: a.dueAt.slice(0, 10),
             allDay: true,
-            color:  '#E8751A',
+            // Color priority: schedule-linked color > user-set course color > Canvas orange
+            color: scheduleColorByCourseId[a.courseId]
+              ?? canvasCalPrefs.courseColors?.[a.courseId]
+              ?? '#E8751A',
             extendedProps: { type: 'canvas-assignment', canvasId: a.id, courseName: a.courseName, htmlUrl: a.htmlUrl },
           }))
       : [],
-  [canvasAssignments, canvasCalPrefs])
+  [canvasAssignments, canvasCalPrefs, scheduleColorByCourseId])
 
   const allCalendarEvents = [
     ...visibleEvents,
@@ -1491,7 +1511,7 @@ export default function Home() {
                   startWRef.current   = todoPanelWidth
                   const onMove = mv => {
                     const delta = startXRef.current - mv.clientX
-                    setTodoPanelWidth(Math.max(220, Math.min(480, startWRef.current + delta)))
+                    setTodoPanelWidth(Math.max(220, Math.min(600, startWRef.current + delta)))
                   }
                   const onUp = () => {
                     resizingRef.current = false
@@ -1529,7 +1549,7 @@ export default function Home() {
 
 
         {activeNav === 'todos' && (
-          <main className="dot-grid" style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
@@ -1545,7 +1565,9 @@ export default function Home() {
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
             <CoursesPanel
               canvasAssignments={canvasAssignments}
+              courseColors={canvasCalPrefs.courseColors}
               onToggleCanvas={toggleCanvasAssignment}
+              onUpdateCanvasNotes={updateCanvasNotes}
               onOpenSettings={() => setShowCanvasSettings(true)}
               onSync={syncCanvas}
               syncing={cvSyncing}
@@ -1742,6 +1764,7 @@ export default function Home() {
             syncCanvas()
           }}
           onSync={syncCanvas}
+          onColorsChange={updateCourseColors}
         />
       )}
 
