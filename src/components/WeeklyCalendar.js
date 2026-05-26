@@ -7,7 +7,11 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate }) {
+export default function WeeklyCalendar({
+  events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
+  // Event recolor
+  onRecolorEvent, colorSwatches,
+}) {
   const calendarRef    = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
@@ -19,6 +23,7 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
   const [navAnim,      setNavAnim]     = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
   const [viewAnim,     setViewAnim]    = useState(null) // 'exit' | 'enter' | null
   const [currentView,  setCurrentView] = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
+  const [colorPopover, setColorPopover] = useState(null) // { eventId, x, y }
 
   useEffect(() => {
     if (!targetDate) return
@@ -88,6 +93,53 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     }
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
+
+    const isUserEvent = !info.event.extendedProps?.source
+
+    // ── Right-click / long-press recolor (user events only) ───────────────
+    if (isUserEvent && onRecolorEvent) {
+      const el = info.el
+      let touchTimer = null
+      let touchMoved = false
+
+      // Desktop: right-click
+      function onContextMenu(e) {
+        e.preventDefault()
+        e.stopPropagation()
+        setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
+      }
+
+      // Mobile: long-press (500ms)
+      function onTouchStart(e) {
+        touchMoved = false
+        const touch = e.touches[0]
+        touchTimer = setTimeout(() => {
+          if (!touchMoved) {
+            setColorPopover({ eventId: info.event.id, x: touch.clientX, y: touch.clientY })
+          }
+        }, 500)
+      }
+      function onTouchMove() { touchMoved = true; clearTimeout(touchTimer) }
+      function onTouchEnd()  { clearTimeout(touchTimer) }
+
+      el.addEventListener('contextmenu', onContextMenu)
+      el.addEventListener('touchstart', onTouchStart, { passive: true })
+      el.addEventListener('touchmove',  onTouchMove,  { passive: true })
+      el.addEventListener('touchend',   onTouchEnd)
+
+      const prevCleanup = el._lvDragCleanup
+      el._lvDragCleanup = () => {
+        prevCleanup?.()
+        el.removeEventListener('contextmenu', onContextMenu)
+        el.removeEventListener('touchstart', onTouchStart)
+        el.removeEventListener('touchmove', onTouchMove)
+        el.removeEventListener('touchend', onTouchEnd)
+      }
+    }
+  }
+
+  function handleEventWillUnmount(info) {
+    info.el._lvDragCleanup?.()
   }
 
   function updateOverlapClasses(calendarApi) {
@@ -254,10 +306,59 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     viewAnim ? `cal-view-${viewAnim}` : '',
   ].filter(Boolean).join(' ')
 
+  // Close color popover on outside click
+  useEffect(() => {
+    if (!colorPopover) return
+    const h = () => setColorPopover(null)
+    // Small delay so the click that opened it doesn't immediately close it
+    const t = setTimeout(() => document.addEventListener('click', h), 50)
+    return () => { clearTimeout(t); document.removeEventListener('click', h) }
+  }, [colorPopover])
+
+  const swatchColors = colorSwatches && colorSwatches.length > 0
+    ? colorSwatches
+    : ['#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6','#e8751a','#0ea5e9','#ec4899','#6366f1','#14b8a6']
+
   return (
     <div className="flex flex-col h-full"
          onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}
          onWheel={handleWheel}>
+
+      {/* Color popover */}
+      {colorPopover && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'fixed', zIndex: 9999,
+            top: Math.min(colorPopover.y + 8, window.innerHeight - 80),
+            left: Math.min(colorPopover.x, window.innerWidth - 220),
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 14, padding: '10px 12px',
+            boxShadow: 'var(--shadow-modal)',
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)' }}>
+            Event color
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, maxWidth: 190 }}>
+            {swatchColors.map(color => (
+              <button
+                key={color}
+                title={color}
+                onClick={() => { onRecolorEvent?.(colorPopover.eventId, color); setColorPopover(null) }}
+                style={{
+                  width: 24, height: 24, borderRadius: '50%', background: color,
+                  border: '2px solid rgba(255,255,255,0.25)',
+                  cursor: 'pointer', transition: 'transform .1s, box-shadow .1s', padding: 0,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.2)'; e.currentTarget.style.boxShadow = `0 0 0 3px ${color}55` }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)';   e.currentTarget.style.boxShadow = 'none' }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className={containerClass}
            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)' }}>
         <FullCalendar
@@ -292,6 +393,7 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           events={events}
           eventContent={renderEventContent}
           eventDidMount={handleEventDidMount}
+          eventWillUnmount={handleEventWillUnmount}
           eventsSet={() => {
             const api = calendarRef.current?.getApi()
             if (api) requestAnimationFrame(() => updateOverlapClasses(api))
@@ -299,6 +401,7 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
           dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
           datesSet={handleDatesSet}
+          editable={false}
           height="100%"
           allDaySlot={true}
           allDayText="Tasks"

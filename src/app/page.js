@@ -28,6 +28,8 @@ import ClassScheduleModal     from '@/components/ClassScheduleModal'
 import CoursesPanel           from '@/components/CoursesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
+import ErrorBoundary          from '@/components/ErrorBoundary'
+import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -439,6 +441,14 @@ export default function Home() {
           pushToast(`Reminder: ${title}`, item.reminder.label)
           if (typeof window !== 'undefined' && Notification?.permission === 'granted')
             new Notification(`Reminder: ${title}`, { body: item.reminder.label })
+          // Also send via service worker push so it works when the tab is backgrounded
+          if (typeof navigator !== 'undefined' && navigator.serviceWorker?.controller) {
+            fetch('/api/push/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: `Reminder: ${title}`, body: item.reminder.label }),
+            }).catch(() => {})
+          }
         }
       })
     }
@@ -477,6 +487,33 @@ export default function Home() {
       setEvents(prev => prev.filter(e => e.id !== id))
     }
     setTodos(prev => prev.map(t => t.linkedEventId === id ? { ...t, linkedEventId: null } : t))
+  }, [])
+
+  // ── Drag-to-reschedule handlers ──────────────────────────────────────────
+  const handleEventDrop = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    const duration = new Date(ev.end || ev.start).getTime() - new Date(ev.start).getTime()
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   new Date(info.event.start.getTime() + Math.max(duration, 0)).toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  const handleEventResize = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   info.event.end.toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  // ── Event recolor ─────────────────────────────────────────────────────────
+  const handleRecolorEvent = useCallback((id, color) => {
+    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
   }, [])
 
   const hideEvent = useCallback((id) => {
@@ -524,6 +561,16 @@ export default function Home() {
   }, [])
   const deleteTodo = useCallback((id) => setTodos(p => p.filter(t => t.id !== id)), [])
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
+  const toggleSubtask = useCallback((todoId, subtaskId) => {
+    setTodos(prev => prev.map(t =>
+      t.id !== todoId ? t : {
+        ...t,
+        subtasks: (t.subtasks || []).map(s =>
+          s.id === subtaskId ? { ...s, completed: !s.completed } : s
+        ),
+      }
+    ))
+  }, [])
 
   /* ── Import / Export ── */
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
@@ -615,6 +662,28 @@ export default function Home() {
     if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
     if (!res.ok) return
     const { assignments: fresh } = await res.json()
+
+    // ── New-assignment notification ───────────────────────────────────────
+    try {
+      const seenRaw  = localStorage.getItem('lv-canvas-seen-ids')
+      const seenIds  = new Set(seenRaw ? JSON.parse(seenRaw) : [])
+      const freshIds = (fresh ?? []).map(a => a.id)
+
+      if (seenRaw !== null) {
+        // Not the first sync — diff for genuinely new items
+        const newOnes = (fresh ?? []).filter(a => !seenIds.has(a.id))
+        if (newOnes.length > 0) {
+          const names  = newOnes.slice(0, 3).map(a => a.title).join(', ')
+          const suffix = newOnes.length > 3 ? ` +${newOnes.length - 3} more` : ''
+          pushToast(`${newOnes.length} new Canvas assignment${newOnes.length > 1 ? 's' : ''}`, names + suffix)
+          if (typeof window !== 'undefined' && Notification?.permission === 'granted') {
+            new Notification('New Canvas Assignments', { body: names + suffix })
+          }
+        }
+      }
+      // Always update seen set (first sync seeds it silently)
+      localStorage.setItem('lv-canvas-seen-ids', JSON.stringify(freshIds))
+    } catch (_) { /* non-fatal */ }
 
     setCanvasAssignments(prev => {
       const prevMap = Object.fromEntries(prev.map(a => [a.id, a]))
@@ -867,7 +936,9 @@ export default function Home() {
 
   /* ── Merge todos + Google events → calendar events ── */
   const visibleEvents = useMemo(
-    () => events.filter(e => !eventPrefs[e.id]?.hidden),
+    () => events
+      .filter(e => !eventPrefs[e.id]?.hidden)
+      .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
     [events, eventPrefs],
   )
   const visibleGoogleEvents = useMemo(
@@ -1354,6 +1425,20 @@ export default function Home() {
           })()}
         </div>
 
+        {/* ── Mini month navigator (desktop/tablet only) ── */}
+        {!isMobile && (
+          <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+            <MiniMonthCalendar
+              currentDate={clockTime}
+              highlightWeekOf={clockTime}
+              onDayClick={(dateStr) => {
+                setActiveNav('calendar')
+                setCalendarTargetDate(dateStr)
+              }}
+            />
+          </div>
+        )}
+
         {/* ── Google Calendar inline section ── */}
         <SidebarGoogleSection
           onOpenSettings={() => setShowGoogleSettings(true)}
@@ -1491,12 +1576,18 @@ export default function Home() {
                   {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
-              <WeeklyCalendar events={allCalendarEvents} todos={todos}
-                              onDateClick={handleDateClick} onEventClick={handleEventClick}
-                              onViewChange={handleViewChange}
-                              isMobile={isMobile}
-                              highlightEventId={searchHighlightId}
-                              targetDate={calendarTargetDate} />
+              <ErrorBoundary>
+                <WeeklyCalendar events={allCalendarEvents} todos={todos}
+                                onDateClick={handleDateClick} onEventClick={handleEventClick}
+                                onViewChange={handleViewChange}
+                                isMobile={isMobile}
+                                highlightEventId={searchHighlightId}
+                                targetDate={calendarTargetDate}
+                                onEventDrop={handleEventDrop}
+                                onEventResize={handleEventResize}
+                                onRecolorEvent={handleRecolorEvent}
+                                colorSwatches={EVENT_CATEGORIES.map(c => c.color)} />
+              </ErrorBoundary>
             </main>
 
             {/* Resize handle — desktop only */}
@@ -1534,14 +1625,16 @@ export default function Home() {
                 background: 'var(--surface)', overflowY: 'auto', flexShrink: 0,
                 transition: 'width 0.35s cubic-bezier(0.16,1,0.3,1)',
               }}>
-                <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                           onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                           onCategoriesChange={setTodoCategories}
-                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                           onToggleCanvas={toggleCanvasAssignment}
-                           onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                           onHideCanvas={hideCanvasAssignment} />
+                <ErrorBoundary>
+                  <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                             onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                             onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                             onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                             canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                             onToggleCanvas={toggleCanvasAssignment}
+                             onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                             onHideCanvas={hideCanvasAssignment} />
+                </ErrorBoundary>
               </aside>
             )}
           </>
@@ -1550,33 +1643,39 @@ export default function Home() {
 
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                       onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                       onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                       onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
-                       canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                       onToggleCanvas={toggleCanvasAssignment}
-                       onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                       onHideCanvas={hideCanvasAssignment} />
+            <ErrorBoundary>
+              <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                         onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                         onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                         onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                         fullPage isMobile={isMobile}
+                         canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                         onToggleCanvas={toggleCanvasAssignment}
+                         onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                         onHideCanvas={hideCanvasAssignment} />
+            </ErrorBoundary>
           </main>
         )}
 
         {activeNav === 'courses' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-            <CoursesPanel
-              canvasAssignments={canvasAssignments}
-              courseColors={canvasCalPrefs.courseColors}
-              onToggleCanvas={toggleCanvasAssignment}
-              onUpdateCanvasNotes={updateCanvasNotes}
-              onOpenSettings={() => setShowCanvasSettings(true)}
-              onSync={syncCanvas}
-              syncing={cvSyncing}
-            />
+            <ErrorBoundary>
+              <CoursesPanel
+                canvasAssignments={canvasAssignments}
+                courseColors={canvasCalPrefs.courseColors}
+                onToggleCanvas={toggleCanvasAssignment}
+                onUpdateCanvasNotes={updateCanvasNotes}
+                onOpenSettings={() => setShowCanvasSettings(true)}
+                onSync={syncCanvas}
+                syncing={cvSyncing}
+              />
+            </ErrorBoundary>
           </main>
         )}
 
         {activeNav === 'corvus' && (
           <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            <ErrorBoundary>
             <Corvus
               events={events}
               canvasClassEvents={canvasClassEvents}
@@ -1589,6 +1688,7 @@ export default function Home() {
               onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
             />
+            </ErrorBoundary>
           </main>
         )}
 
@@ -1600,18 +1700,20 @@ export default function Home() {
               <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 2 }}>Upcoming shown by default</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px' }}>
-              <SearchPanel
-                query={searchQuery}
-                onQueryChange={setSearchQuery}
-                scope={searchScope}
-                onScopeChange={setSearchScope}
-                status={searchStatus}
-                onStatusChange={setSearchStatus}
-                results={searchResults}
-                onSelect={openSearchResult}
-                onToggleTodo={toggleTodo}
-                isMobile={isMobile}
-              />
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
             </div>
           </main>
         )}
@@ -1845,18 +1947,20 @@ export default function Home() {
               </button>
             </div>
             <div style={{ padding: '18px 20px' }}>
-              <SearchPanel
-                query={searchQuery}
-                onQueryChange={setSearchQuery}
-                scope={searchScope}
-                onScopeChange={setSearchScope}
-                status={searchStatus}
-                onStatusChange={setSearchStatus}
-                results={searchResults}
-                onSelect={openSearchResult}
-                onToggleTodo={toggleTodo}
-                isMobile={isMobile}
-              />
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
             </div>
           </div>
         </div>
