@@ -368,7 +368,7 @@ export default function WeeklyCalendar({
           headerToolbar={{
             left:   'prev,next today',
             center: 'title',
-            right:  'viewMonth,viewWeek,viewDay',
+            right:  'viewMonth,viewWeek,view2Week,viewDay',
           }}
           buttonText={{ today: 'today' }}
           views={{
@@ -382,13 +382,21 @@ export default function WeeklyCalendar({
               // Full date in the single-column header
               dayHeaderFormat: { weekday: 'long', month: 'short', day: 'numeric' },
             },
+            timeGrid2Week: {
+              type: 'timeGrid',
+              duration: { weeks: 2 },
+              dayHeaderFormat: isMobile
+                ? { weekday: 'narrow', day: 'numeric' }
+                : { weekday: 'short', day: 'numeric', month: 'short' },
+            },
           }}
           customButtons={{
-            prev:      { click: () => navigate('prev') },
-            next:      { click: () => navigate('next') },
-            viewMonth: { text: isMobile ? 'M' : 'Month', click: () => switchView('dayGridMonth') },
-            viewWeek:  { text: isMobile ? 'W' : 'Week',  click: () => switchView('timeGridWeek') },
-            viewDay:   { text: isMobile ? 'D' : 'Day',   click: () => switchView('timeGridDay')  },
+            prev:        { click: () => navigate('prev') },
+            next:        { click: () => navigate('next') },
+            viewMonth:   { text: isMobile ? 'M' : 'Month',  click: () => switchView('dayGridMonth')  },
+            viewWeek:    { text: isMobile ? 'W' : 'Week',   click: () => switchView('timeGridWeek')  },
+            view2Week:   { text: isMobile ? '2W' : '2 Wks', click: () => switchView('timeGrid2Week') },
+            viewDay:     { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
           }}
           events={events}
           eventContent={renderEventContent}
