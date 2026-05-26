@@ -1553,7 +1553,7 @@ export default function Home() {
             <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                       onCategoriesChange={setTodoCategories} fullPage
+                       onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
                        canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                        onToggleCanvas={toggleCanvasAssignment}
                        onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
@@ -1579,6 +1579,7 @@ export default function Home() {
           <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <Corvus
               events={events}
+              canvasClassEvents={canvasClassEvents}
               todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories}
@@ -1588,6 +1589,30 @@ export default function Home() {
               onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
             />
+          </main>
+        )}
+
+        {/* ── Mobile Search tab ── Full-screen search instead of a popup */}
+        {activeNav === 'search' && isMobile && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search</div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 2 }}>Upcoming shown by default</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px' }}>
+              <SearchPanel
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                scope={searchScope}
+                onScopeChange={setSearchScope}
+                status={searchStatus}
+                onStatusChange={setSearchStatus}
+                results={searchResults}
+                onSelect={openSearchResult}
+                onToggleTodo={toggleTodo}
+                isMobile={isMobile}
+              />
+            </div>
           </main>
         )}
 
@@ -1709,9 +1734,14 @@ export default function Home() {
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
           {NAV_ITEMS.map(item => {
-            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+            const isActive = activeNav === item.id
             return (
-              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+              <button key={item.id} onClick={() => {
+                if (item.id === 'search' && activeNav !== 'search') {
+                  setSearchQuery(''); setSearchScope('all'); setSearchStatus('upcoming')
+                }
+                setActiveNav(item.id)
+              }}
                       style={{
                         flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                         gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
@@ -1789,7 +1819,8 @@ export default function Home() {
         />
       )}
 
-      {showSearchPopup && (
+      {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
+      {showSearchPopup && !isMobile && (
         <div
           onClick={closeSearchPopup}
           style={{
@@ -1875,7 +1906,7 @@ export default function Home() {
             animation: 'corvus-panel-in .22s cubic-bezier(.22,1,.36,1)',
           }}>
             <Corvus
-              events={events} todos={todos}
+              events={events} canvasClassEvents={canvasClassEvents} todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}

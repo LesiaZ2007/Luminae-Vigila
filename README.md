@@ -70,7 +70,8 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 🪶 Corvus AI Assistant
 - Chat-based assistant powered by [Groq](https://groq.com) (`llama-3.3-70b-versatile`)
-- Aware of your upcoming events, tasks, and Canvas assignments
+- Aware of your upcoming events, tasks, Canvas assignments, **and class schedule entries**
+- **Distinguishes events from classes** — recurring class schedule entries are labeled `[CLASS]`; professor-posted Canvas events are `[CANVAS EVENT]`; user-created entries are `[EVENT]`. Corvus uses the correct term in every response.
 - **Add events and tasks**, edit them, and mark things complete — all via natural language
 - **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
@@ -85,6 +86,8 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
 - **Responsive design** — desktop (full sidebar), tablet (mini-sidebar with labels), mobile (bottom tab navigation)
+- **Mobile To-Do tab** — stacked layout with To-Do / Canvas / Both toggle pills; shows priority tasks up top and Canvas assignments below
+- **Mobile search** — full-screen tab (no overlay), query resets each time you enter the tab; desktop keeps the Ctrl+K popup
 - **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, and import/export on mobile
 - **Swipe-safe navigation** — horizontal swipes advance/retreat weeks without accidentally triggering event creation
 - **100dvh layout** — dynamic viewport height keeps the bottom tab bar fully visible on real devices
