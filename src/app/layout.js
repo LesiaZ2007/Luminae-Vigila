@@ -1,5 +1,7 @@
 import { Plus_Jakarta_Sans } from "next/font/google";
 import ThemeProvider from "@/components/ThemeProvider";
+import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
+import { getSession } from "@/lib/session";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -20,11 +22,15 @@ export const viewport = {
   viewportFit: 'cover',
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  const session = await getSession().catch(() => null)
+  const isSignedIn = !!session?.userId
+
   return (
     <html lang="en" className={jakarta.variable} suppressHydrationWarning>
       <body className="h-full overflow-hidden">
         <ThemeProvider>{children}</ThemeProvider>
+        <ServiceWorkerRegistration isSignedIn={isSignedIn} />
       </body>
     </html>
   );
