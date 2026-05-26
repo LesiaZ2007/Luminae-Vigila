@@ -534,7 +534,7 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
               <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>· {totalCount}</span>
               {isFuture && (
                 <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600 }}>
-                  {showFuture ? '▲ hide' : '▼ show'}
+                  {showFuture ? 'hide' : 'show'}
                 </span>
               )}
             </div>
