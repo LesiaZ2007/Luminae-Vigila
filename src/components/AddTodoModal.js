@@ -59,10 +59,9 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
     .sort((a, b) => new Date(a.start) - new Date(b.start))
     .slice(0, 25)
 
-  function handleSubmit(e) {
-    e.preventDefault()
-    if (!title.trim()) { setError('Please enter a task title.'); return }
-    if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return }
+  function trySubmit() {
+    if (!title.trim()) { setError('Please enter a task title.'); return false }
+    if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return false }
     const opt = REMINDER_OPTIONS.find(r => r.ms === Number(reminderMs))
     const payload = {
       title:         title.trim(),
@@ -81,7 +80,6 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
       subtasks:      subtasks.length > 0 ? subtasks : [],
     }
     if (isCanvas) {
-      // Canvas assignments: call onEditCanvas with local-override fields only
       onEditCanvas?.({ ...editTodo, ...payload })
     } else if (isEdit) {
       onEdit({ ...editTodo, ...payload })
@@ -89,6 +87,12 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
       onAdd(payload)
     }
     handleClose()
+    return true
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    trySubmit()
   }
 
   function chipStyle(active, color) {
@@ -106,7 +110,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   return (
     <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={handleClose}>
+         onClick={trySubmit}>
       <div className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
            onClick={e => e.stopPropagation()}>
 
