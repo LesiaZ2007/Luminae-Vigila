@@ -1,13 +1,13 @@
 'use client'
 
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useState, useEffect } from 'react'
 import FullCalendar from '@fullcalendar/react'
 
 import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId }) {
+export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate }) {
   const calendarRef = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
@@ -16,6 +16,13 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
   const wheelLocked    = useRef(false)
   const animTimer   = useRef(null)
   const [navAnim,   setNavAnim] = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+
+  useEffect(() => {
+    if (!targetDate) return
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    api.gotoDate(targetDate)
+  }, [targetDate])
 
   function timedRange(ev) {
     if (ev.allDay || !ev.start) return null
