@@ -10,7 +10,13 @@
       "Bash(git commit -m 'fix\\(mobile\\): bottom tabs, swipe guard, settings tab, safe-area *)",
       "Bash(gh pr *)",
       "Bash(gh auth *)",
-      "Bash(git commit -m 'fix\\(mobile\\): remove corvus FAB on mobile; deduplicate import/export *)"
+      "Bash(git commit -m 'fix\\(mobile\\): remove corvus FAB on mobile; deduplicate import/export *)",
+      "Bash(git commit -m 'fix\\(mobile\\): inline import/export in Settings tab, no floating FAB *)",
+      "Bash(git commit -m 'feat\\(search\\): split layout, smart due labels, event cutoff, sidebar state persistence, mobile scrollbar fix *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(git commit -m 'feat\\(sidebar+search\\): remove drag-to-create, +New popup, fix google events, hidden events, result scroll, tomorrow label *)"
     ]
   }
 }

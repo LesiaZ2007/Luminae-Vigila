@@ -283,10 +283,24 @@ select option {
 /* ══════════════════════════════════════════════
    SCROLLBAR
 ══════════════════════════════════════════════ */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* Desktop: slim styled scrollbar */
+@media (pointer: fine) {
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+}
+
+/* Touch / mobile: hide all scrollbars (overlay scrolling is used instead) */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  * { scrollbar-width: none; }
+}
+
+/* Always hide FullCalendar's internal scroller scrollbar — it's handled by touch/wheel */
+.fc-scroller::-webkit-scrollbar { display: none; }
+.fc-scroller { scrollbar-width: none; }
 
 /* ══════════════════════════════════════════════
    ANIMATIONS
@@ -333,6 +347,13 @@ select option {
 .cal-nav-enter-right{ animation: cal-enter-right 0.26s cubic-bezier(0.22,1,0.36,1) forwards; }
 .cal-nav-enter-left { animation: cal-enter-left  0.26s cubic-bezier(0.22,1,0.36,1) forwards; }
 
+/* Calendar view switch (week ↔ month ↔ day) */
+@keyframes cal-view-in {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+.cal-view-switch { animation: cal-view-in 0.28s cubic-bezier(0.22,1,0.36,1) forwards; }
+
 /* Todo item check bounce */
 @keyframes check-bounce {
   0%   { transform: scale(1); }
@@ -355,6 +376,20 @@ select option {
   60%  { opacity: 1; }
   100% { transform: translate(var(--cdx, 0px), var(--cdy, -120px)) rotate(var(--crot, 360deg)); opacity: 0; }
 }
+
+/* ══════════════════════════════════════════════
+   SEARCH MODAL ANIMATIONS
+══════════════════════════════════════════════ */
+@keyframes lv-modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+}
+@keyframes lv-modal-out {
+  from { opacity: 1; transform: scale(1)    translateY(0);    }
+  to   { opacity: 0; transform: scale(0.96) translateY(10px); }
+}
+@keyframes lv-backdrop-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lv-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
 
 /* ══════════════════════════════════════════════
    FULLCALENDAR OVERRIDES
