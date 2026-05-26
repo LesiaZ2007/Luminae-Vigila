@@ -59,100 +59,141 @@ export default function TodoPanel({
   const pendingCount = todos.filter(t => !t.completed).length
                      + canvasAssignments.filter(a => !a.done && !a.hidden).length
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: fullPage ? 640 : undefined, width: '100%', margin: fullPage ? '0 auto' : undefined }}>
+  // In the full-page todos view, show two-column layout (tasks left, Canvas right)
+  // In the calendar sidebar (!fullPage), merge Canvas into the chronological list instead
+  const twoColumn = !!fullPage && canvasAssignments.length > 0
 
-      {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text)' }}>To-Do</span>
-          {pendingCount > 0 && (
-            <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue-text)' }}>
-              {pendingCount}
-            </span>
+  return (
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', width: '100%' }}>
+
+      {/* ── Left column: todos ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
+
+        {/* Header */}
+        <div style={{ padding: fullPage ? '16px 28px 14px' : '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text)' }}>To-Do</span>
+            {pendingCount > 0 && (
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue-text)' }}>
+                {pendingCount}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => setShowCatMgr(true)} title="Manage categories"
+                    style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', transition: 'color .15s' }}
+                    onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+              <Settings2 size={14} />
+            </button>
+            <button onClick={onAddClick}
+                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600 }}>
+              <Plus size={13} /> Add
+            </button>
+          </div>
+        </div>
+
+        {/* Status filters */}
+        <div style={{ display: 'flex', padding: fullPage ? '8px 24px' : '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
+          {FILTERS.map(f => (
+            <button key={f.id} onClick={() => setFilter(f.id)}
+                    style={{
+                      flex: 1, padding: '6px 4px', borderRadius: 8, border: 'none',
+                      fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .13s',
+                      background: filter === f.id ? 'var(--blue-bg)' : 'transparent',
+                      color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
+                    }}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Category filter chips */}
+        {todoCategories.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            {todoCategories.map(cat => {
+              const active = activeCategories.includes(cat.id)
+              return (
+                <button key={cat.id} onClick={() => setActiveCategories(prev =>
+                  prev.includes(cat.id) ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
+                )}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                          borderRadius: 999, border: active ? `1.5px solid ${cat.color}` : '1.5px solid transparent',
+                          background: active ? cat.color + '18' : 'var(--surface2)',
+                          color: active ? cat.color : 'var(--text-3)',
+                          fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                          transition: 'all .13s', whiteSpace: 'nowrap',
+                        }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
+                  {cat.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* List — grouped by date bucket */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: fullPage ? '16px 28px 40px' : '8px 8px 16px' }}>
+          {filtered.length === 0 && (twoColumn || canvasAssignments.filter(a => !a.hidden).length === 0) ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
+                {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
+              </p>
+            </div>
+          ) : (
+            <>
+              {filtered.length > 0 && (
+                filter === 'done' ? (
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filtered.map(todo => (
+                      <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
+                                todoCategories={todoCategories} todayStr={todayStr}
+                                onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+                    ))}
+                  </ul>
+                ) : (
+                  /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
+                  <GroupedList
+                    todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
+                    todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                    canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
+                    onToggleCanvas={onToggleCanvas}
+                  />
+                )
+              )}
+
+              {/* Canvas section: only in mobile/fullPage single-column mode (not sidebar, not two-column desktop) */}
+              {!twoColumn && !!fullPage && canvasAssignments.length > 0 && (
+                <CanvasAssignmentsSection
+                  assignments={canvasAssignments}
+                  events={events}
+                  filter={filter}
+                  todayStr={todayStr}
+                  onToggle={onToggleCanvas}
+                  onEdit={onEditCanvas}
+                  onHide={onHideCanvas}
+                />
+              )}
+            </>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={() => setShowCatMgr(true)} title="Manage categories"
-                  style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', transition: 'color .15s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
-            <Settings2 size={14} />
-          </button>
-          <button onClick={onAddClick}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600 }}>
-            <Plus size={13} /> Add
-          </button>
-        </div>
-      </div>
+      </div>{/* end left column */}
 
-      {/* Status filters */}
-      <div style={{ display: 'flex', padding: '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
-        {FILTERS.map(f => (
-          <button key={f.id} onClick={() => setFilter(f.id)}
-                  style={{
-                    flex: 1, padding: '6px 4px', borderRadius: 8, border: 'none',
-                    fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .13s',
-                    background: filter === f.id ? 'var(--blue-bg)' : 'transparent',
-                    color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
-                  }}>
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {/* ── Right column: Canvas assignments (desktop two-column only) ── */}
+      {twoColumn && (
+        <>
+          {/* Divider */}
+          <div style={{ width: 1, background: 'var(--border)', flexShrink: 0 }} />
 
-      {/* Category filter chips */}
-      {todoCategories.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          {todoCategories.map(cat => {
-            const active = activeCategories.includes(cat.id)
-            return (
-              <button key={cat.id} onClick={() => setActiveCategories(prev =>
-                prev.includes(cat.id) ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
-              )}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-                        borderRadius: 999, border: active ? `1.5px solid ${cat.color}` : '1.5px solid transparent',
-                        background: active ? cat.color + '18' : 'var(--surface2)',
-                        color: active ? cat.color : 'var(--text-3)',
-                        fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                        transition: 'all .13s', whiteSpace: 'nowrap',
-                      }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
-                {cat.label}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {/* List — grouped by date bucket */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 16px' }}>
-        {filtered.length === 0 && canvasAssignments.filter(a => !a.hidden).length === 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
-              {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
-            </p>
-          </div>
-        ) : (
-          <>
-            {filtered.length > 0 && (
-              filter === 'done' ? (
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {filtered.map(todo => (
-                    <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
-                              todoCategories={todoCategories} todayStr={todayStr}
-                              onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
-                  ))}
-                </ul>
-              ) : (
-                <GroupedList todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
-                             todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
-              )
-            )}
-
-            {/* ── Canvas Assignments section ── */}
-            {canvasAssignments.length > 0 && (
+          {/* Canvas panel */}
+          <div style={{ flex: '0 0 38%', minWidth: 300, maxWidth: 560, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Column header */}
+            <div style={{ padding: '16px 28px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text)' }}>Canvas</span>
+            </div>
+            {/* Canvas list */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px 32px' }}>
               <CanvasAssignmentsSection
                 assignments={canvasAssignments}
                 events={events}
@@ -161,11 +202,12 @@ export default function TodoPanel({
                 onToggle={onToggleCanvas}
                 onEdit={onEditCanvas}
                 onHide={onHideCanvas}
+                compact
               />
-            )}
-          </>
-        )}
-      </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {showCatMgr && (
         <CategoryManager categories={todoCategories} onChange={onCategoriesChange} onClose={() => setShowCatMgr(false)} />
@@ -265,7 +307,45 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
   )
 }
 
-function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit }) {
+// Compact Canvas item row for use inside the merged GroupedList
+function CanvasMiniItem({ a, onToggle }) {
+  const [hovered, setHovered] = useState(false)
+  const done = a.done || a.submissionState === 'graded' || a.submissionState === 'submitted'
+  return (
+    <li
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8,
+        background: hovered ? 'var(--surface2)' : 'transparent', transition: 'background .12s',
+        listStyle: 'none',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Canvas dot */}
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#E8751A', flexShrink: 0, marginTop: 1 }} />
+      {/* Toggle */}
+      <button
+        onClick={() => onToggle?.(a.id)}
+        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                 color: done ? '#10b981' : 'var(--text-3)', display: 'flex' }}
+      >
+        {done
+          ? <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          : <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
+      </button>
+      {/* Title */}
+      <span style={{ flex: 1, fontSize: '0.78rem', color: done ? 'var(--text-3)' : 'var(--text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: done ? 'line-through' : 'none' }}>
+        {a.title}
+      </span>
+      {/* Course tag */}
+      <span style={{ fontSize: '0.65rem', color: 'var(--text-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>{a.courseName?.split(' ').slice(0,2).join(' ')}</span>
+    </li>
+  )
+}
+
+function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit,
+                       // optional: merge Canvas assignments inline
+                       canvasAssignments = [], onToggleCanvas }) {
   const [showFuture, setShowFuture] = useState(false)
 
   const weekStr = (() => {
@@ -275,20 +355,50 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
     const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10)
   })()
 
+  // Visible Canvas items (not hidden, filtered by same filter as parent)
+  const visibleCanvas = canvasAssignments.filter(a => !a.hidden)
+
+  function canvasDateStr(a) { return a.dueAt ? a.dueAt.slice(0, 10) : null }
+
   const buckets = [
-    { id: 'overdue', label: 'Overdue',        accent: 'var(--red)',    items: todos.filter(t => { const d = effectiveDate(t, events); return d && d < todayStr }) },
-    { id: 'today',   label: 'Today',          accent: 'var(--amber)',  items: todos.filter(t => effectiveDate(t, events) === todayStr) },
-    { id: 'week',    label: 'This Week',      accent: 'var(--blue)',   items: todos.filter(t => { const d = effectiveDate(t, events); return d && d > todayStr && d <= weekStr }) },
-    { id: 'later',   label: 'Next 2 Weeks',   accent: 'var(--text-2)', items: todos.filter(t => { const d = effectiveDate(t, events); return d && d > weekStr && d <= twoWeekStr }) },
-    { id: 'future',  label: 'Further Out',    accent: 'var(--text-3)', items: todos.filter(t => { const d = effectiveDate(t, events); return d && d > twoWeekStr }) },
-    { id: 'none',    label: 'No Date',        accent: 'var(--text-3)', items: todos.filter(t => !effectiveDate(t, events)) },
-  ].filter(b => b.items.length > 0)
+    {
+      id: 'overdue', label: 'Overdue', accent: 'var(--red)',
+      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d < todayStr }),
+      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d < todayStr && !a.done }),
+    },
+    {
+      id: 'today', label: 'Today', accent: 'var(--amber)',
+      todos:  todos.filter(t => effectiveDate(t, events) === todayStr),
+      canvas: visibleCanvas.filter(a => canvasDateStr(a) === todayStr),
+    },
+    {
+      id: 'week', label: 'This Week', accent: 'var(--blue)',
+      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > todayStr && d <= weekStr }),
+      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > todayStr && d <= weekStr }),
+    },
+    {
+      id: 'later', label: 'Next 2 Weeks', accent: 'var(--text-2)',
+      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > weekStr && d <= twoWeekStr }),
+      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > weekStr && d <= twoWeekStr }),
+    },
+    {
+      id: 'future', label: 'Further Out', accent: 'var(--text-3)',
+      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > twoWeekStr }),
+      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > twoWeekStr }),
+    },
+    {
+      id: 'none', label: 'No Date', accent: 'var(--text-3)',
+      todos:  todos.filter(t => !effectiveDate(t, events)),
+      canvas: visibleCanvas.filter(a => !canvasDateStr(a)),
+    },
+  ].filter(b => b.todos.length + b.canvas.length > 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {buckets.map((bucket, bi) => {
         const isFuture = bucket.id === 'future'
         const isVisible = !isFuture || showFuture
+        const totalCount = bucket.todos.length + bucket.canvas.length
         return (
           <div key={bucket.id}>
             <div
@@ -299,7 +409,7 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
               <span style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: bucket.accent }}>
                 {bucket.label}
               </span>
-              <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>· {bucket.items.length}</span>
+              <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>· {totalCount}</span>
               {isFuture && (
                 <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600 }}>
                   {showFuture ? '▲ hide' : '▼ show'}
@@ -308,10 +418,13 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
             </div>
             {isVisible && (
               <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {bucket.items.map(todo => (
+                {bucket.todos.map(todo => (
                   <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                             todoCategories={todoCategories} todayStr={todayStr}
                             onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />
+                ))}
+                {bucket.canvas.map(a => (
+                  <CanvasMiniItem key={a.id} a={a} onToggle={onToggleCanvas} />
                 ))}
               </ul>
             )}
