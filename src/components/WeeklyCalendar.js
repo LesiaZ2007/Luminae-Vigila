@@ -7,7 +7,7 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile, highlightEventId }) {
+export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId }) {
   const calendarRef = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
@@ -293,11 +293,6 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           eventMinHeight={isMobile ? 32 : 28}
           eventDisplay="block"
           businessHours={{ daysOfWeek: [1,2,3,4,5], startTime: '08:00', endTime: '20:00' }}
-          droppable={true}
-          eventReceive={info => {
-            info.event.remove()
-            onEventReceive?.(info.event.start, info.event.end)
-          }}
         />
       </div>
     </div>

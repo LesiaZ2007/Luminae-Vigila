@@ -31,9 +31,10 @@ function ResultGroup({ title, items, onSelect, onToggleTodo }) {
         <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text)' }}>{title}</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{items.length}</div>
       </div>
-      <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'grid', gap: 10, maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
         {items.map(item => {
           const isTodo    = item.kind === 'todo'
+          const isHidden  = !!item.hidden
           const completed = Boolean(item.item?.completed || (item.item?.completedDates && item.item.completedDates.length > 0))
           const dueDays   = isTodo ? daysUntil(item.item?.dueDate) : null
           const showDueBadge = isTodo && !completed && dueDays >= 1 && dueDays <= 6
@@ -43,7 +44,7 @@ function ResultGroup({ title, items, onSelect, onToggleTodo }) {
                  role="button" tabIndex={0}
                  onClick={() => onSelect(item)}
                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(item) } }}
-                 style={{ textAlign: 'left', width: '100%', padding: '11px 13px', borderRadius: 12, border: '1px solid rgba(147,197,253,.1)', background: 'rgba(255,255,255,.03)', color: 'var(--text)', cursor: 'pointer', transition: 'background .15s' }}
+                 style={{ textAlign: 'left', width: '100%', padding: '11px 13px', borderRadius: 12, border: '1px solid rgba(147,197,253,.1)', background: 'rgba(255,255,255,.03)', color: 'var(--text)', cursor: 'pointer', transition: 'background .15s', opacity: isHidden ? 0.45 : 1 }}
                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(147,197,253,.08)'}
                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,.03)'}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -71,6 +72,11 @@ function ResultGroup({ title, items, onSelect, onToggleTodo }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  {isHidden && (
+                    <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'rgba(147,197,253,.5)', background: 'rgba(147,197,253,.08)', borderRadius: 999, padding: '2px 6px', whiteSpace: 'nowrap' }}>
+                      hidden
+                    </span>
+                  )}
                   {showDueBadge && (
                     <span style={{ fontSize: '0.66rem', fontWeight: 700, color: '#f59e0b', background: 'rgba(245,158,11,.15)', borderRadius: 999, padding: '2px 7px', whiteSpace: 'nowrap' }}>
                       in {dueDays}d
