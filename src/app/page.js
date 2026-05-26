@@ -28,6 +28,7 @@ import ClassScheduleModal     from '@/components/ClassScheduleModal'
 import CoursesPanel           from '@/components/CoursesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
+import ErrorBoundary          from '@/components/ErrorBoundary'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -1491,12 +1492,14 @@ export default function Home() {
                   {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
-              <WeeklyCalendar events={allCalendarEvents} todos={todos}
-                              onDateClick={handleDateClick} onEventClick={handleEventClick}
-                              onViewChange={handleViewChange}
-                              isMobile={isMobile}
-                              highlightEventId={searchHighlightId}
-                              targetDate={calendarTargetDate} />
+              <ErrorBoundary>
+                <WeeklyCalendar events={allCalendarEvents} todos={todos}
+                                onDateClick={handleDateClick} onEventClick={handleEventClick}
+                                onViewChange={handleViewChange}
+                                isMobile={isMobile}
+                                highlightEventId={searchHighlightId}
+                                targetDate={calendarTargetDate} />
+              </ErrorBoundary>
             </main>
 
             {/* Resize handle — desktop only */}
@@ -1534,14 +1537,16 @@ export default function Home() {
                 background: 'var(--surface)', overflowY: 'auto', flexShrink: 0,
                 transition: 'width 0.35s cubic-bezier(0.16,1,0.3,1)',
               }}>
-                <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                           onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                           onCategoriesChange={setTodoCategories}
-                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                           onToggleCanvas={toggleCanvasAssignment}
-                           onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                           onHideCanvas={hideCanvasAssignment} />
+                <ErrorBoundary>
+                  <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                             onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                             onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                             onCategoriesChange={setTodoCategories}
+                             canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                             onToggleCanvas={toggleCanvasAssignment}
+                             onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                             onHideCanvas={hideCanvasAssignment} />
+                </ErrorBoundary>
               </aside>
             )}
           </>
@@ -1550,33 +1555,38 @@ export default function Home() {
 
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                       onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                       onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                       onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
-                       canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                       onToggleCanvas={toggleCanvasAssignment}
-                       onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                       onHideCanvas={hideCanvasAssignment} />
+            <ErrorBoundary>
+              <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                         onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                         onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                         onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
+                         canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                         onToggleCanvas={toggleCanvasAssignment}
+                         onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                         onHideCanvas={hideCanvasAssignment} />
+            </ErrorBoundary>
           </main>
         )}
 
         {activeNav === 'courses' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-            <CoursesPanel
-              canvasAssignments={canvasAssignments}
-              courseColors={canvasCalPrefs.courseColors}
-              onToggleCanvas={toggleCanvasAssignment}
-              onUpdateCanvasNotes={updateCanvasNotes}
-              onOpenSettings={() => setShowCanvasSettings(true)}
-              onSync={syncCanvas}
-              syncing={cvSyncing}
-            />
+            <ErrorBoundary>
+              <CoursesPanel
+                canvasAssignments={canvasAssignments}
+                courseColors={canvasCalPrefs.courseColors}
+                onToggleCanvas={toggleCanvasAssignment}
+                onUpdateCanvasNotes={updateCanvasNotes}
+                onOpenSettings={() => setShowCanvasSettings(true)}
+                onSync={syncCanvas}
+                syncing={cvSyncing}
+              />
+            </ErrorBoundary>
           </main>
         )}
 
         {activeNav === 'corvus' && (
           <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            <ErrorBoundary>
             <Corvus
               events={events}
               canvasClassEvents={canvasClassEvents}
@@ -1589,6 +1599,7 @@ export default function Home() {
               onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
             />
+            </ErrorBoundary>
           </main>
         )}
 
@@ -1600,18 +1611,20 @@ export default function Home() {
               <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 2 }}>Upcoming shown by default</div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px' }}>
-              <SearchPanel
-                query={searchQuery}
-                onQueryChange={setSearchQuery}
-                scope={searchScope}
-                onScopeChange={setSearchScope}
-                status={searchStatus}
-                onStatusChange={setSearchStatus}
-                results={searchResults}
-                onSelect={openSearchResult}
-                onToggleTodo={toggleTodo}
-                isMobile={isMobile}
-              />
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
             </div>
           </main>
         )}
@@ -1845,18 +1858,20 @@ export default function Home() {
               </button>
             </div>
             <div style={{ padding: '18px 20px' }}>
-              <SearchPanel
-                query={searchQuery}
-                onQueryChange={setSearchQuery}
-                scope={searchScope}
-                onScopeChange={setSearchScope}
-                status={searchStatus}
-                onStatusChange={setSearchStatus}
-                results={searchResults}
-                onSelect={openSearchResult}
-                onToggleTodo={toggleTodo}
-                isMobile={isMobile}
-              />
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
             </div>
           </div>
         </div>
