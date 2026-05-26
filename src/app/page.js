@@ -480,6 +480,33 @@ export default function Home() {
     setTodos(prev => prev.map(t => t.linkedEventId === id ? { ...t, linkedEventId: null } : t))
   }, [])
 
+  // ── Drag-to-reschedule handlers ──────────────────────────────────────────
+  const handleEventDrop = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    const duration = new Date(ev.end || ev.start).getTime() - new Date(ev.start).getTime()
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   new Date(info.event.start.getTime() + Math.max(duration, 0)).toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  const handleEventResize = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   info.event.end.toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  // ── Event recolor ─────────────────────────────────────────────────────────
+  const handleRecolorEvent = useCallback((id, color) => {
+    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
+  }, [])
+
   const hideEvent = useCallback((id) => {
     setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), hidden: true } }))
     setToasts(prev => prev.filter(t => t.eventId !== id))
@@ -878,7 +905,9 @@ export default function Home() {
 
   /* ── Merge todos + Google events → calendar events ── */
   const visibleEvents = useMemo(
-    () => events.filter(e => !eventPrefs[e.id]?.hidden),
+    () => events
+      .filter(e => !eventPrefs[e.id]?.hidden)
+      .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
     [events, eventPrefs],
   )
   const visibleGoogleEvents = useMemo(
@@ -1508,7 +1537,11 @@ export default function Home() {
                                 onViewChange={handleViewChange}
                                 isMobile={isMobile}
                                 highlightEventId={searchHighlightId}
-                                targetDate={calendarTargetDate} />
+                                targetDate={calendarTargetDate}
+                                onEventDrop={handleEventDrop}
+                                onEventResize={handleEventResize}
+                                onRecolorEvent={handleRecolorEvent}
+                                colorSwatches={EVENT_CATEGORIES.map(c => c.color)} />
               </ErrorBoundary>
             </main>
 
