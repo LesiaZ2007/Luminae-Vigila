@@ -525,6 +525,16 @@ export default function Home() {
   }, [])
   const deleteTodo = useCallback((id) => setTodos(p => p.filter(t => t.id !== id)), [])
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
+  const toggleSubtask = useCallback((todoId, subtaskId) => {
+    setTodos(prev => prev.map(t =>
+      t.id !== todoId ? t : {
+        ...t,
+        subtasks: (t.subtasks || []).map(s =>
+          s.id === subtaskId ? { ...s, completed: !s.completed } : s
+        ),
+      }
+    ))
+  }, [])
 
   /* ── Import / Export ── */
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
@@ -1541,7 +1551,7 @@ export default function Home() {
                   <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                              onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                              onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                             onCategoriesChange={setTodoCategories}
+                             onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
                              canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                              onToggleCanvas={toggleCanvasAssignment}
                              onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
@@ -1559,7 +1569,8 @@ export default function Home() {
               <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                          onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                          onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                         onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
+                         onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                         fullPage isMobile={isMobile}
                          canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                          onToggleCanvas={toggleCanvasAssignment}
                          onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
