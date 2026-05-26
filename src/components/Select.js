@@ -31,14 +31,17 @@ export default function Select({ value, onChange, options, placeholder = 'Select
         onClick={() => setOpen(v => !v)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-          background: 'var(--input-bg)', border: '1.5px solid var(--border)', borderRadius: 10,
+          background: 'var(--input-bg)',
+          borderWidth: '1.5px', borderStyle: 'solid',
+          borderColor: open ? 'var(--blue)' : 'var(--border)',
+          borderRadius: 10,
           padding: '10px 14px', color: selected ? 'var(--text)' : 'var(--text-3)',
           fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer',
+          boxShadow: open ? '0 0 0 3px var(--blue-ring)' : 'none',
           transition: 'border-color .15s, box-shadow .15s',
-          ...(open ? { borderColor: 'var(--blue)', boxShadow: '0 0 0 3px var(--blue-ring)' } : {}),
         }}
         onFocus={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--blue-ring)' }}
-        onBlur={e => { if (!open) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none' } }}
+        onBlur={e => { if (!open) { e.currentTarget.style.borderColor = ''; e.currentTarget.style.boxShadow = '' } }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected?.label || placeholder}
