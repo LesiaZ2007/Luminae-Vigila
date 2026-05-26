@@ -9,8 +9,6 @@ import interactionPlugin from '@fullcalendar/interaction'
 
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
-  // Drag-to-reschedule
-  onEventDrop, onEventResize,
   // Event recolor
   onRecolorEvent, colorSwatches,
 }) {
@@ -96,76 +94,7 @@ export default function WeeklyCalendar({
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
 
-    // ── Hold-to-unlock drag (user events only) ─────────────────────────────
-    // FullCalendar's interaction plugin uses mousedown (not pointerdown) to
-    // start drag. We intercept mousedown in capture phase so FC never sees it,
-    // play the border-fill animation for 600 ms, then re-dispatch a real
-    // MouseEvent so FC picks it up while the button is still held.
     const isUserEvent = !info.event.extendedProps?.source
-    if (isUserEvent) {
-      const el = info.el
-      let holdTimer = null
-      let startX = 0, startY = 0
-
-      function onMouseDown(e) {
-        if (e.button !== 0) return
-        // Block FullCalendar's own mousedown drag handler from firing
-        e.stopImmediatePropagation()
-        startX = e.clientX; startY = e.clientY
-        el.classList.add('lv-drag-unlocking')
-
-        holdTimer = setTimeout(() => {
-          holdTimer = null
-          el.classList.remove('lv-drag-unlocking')
-          el.classList.add('lv-drag-ready')
-
-          // Re-dispatch so FullCalendar initiates drag naturally
-          try {
-            el.dispatchEvent(new MouseEvent('mousedown', {
-              bubbles: true, cancelable: true,
-              clientX: startX, clientY: startY,
-              button: 0, buttons: 1,
-              view: window,
-            }))
-          } catch (_) {}
-
-          // Remove ready class when mouse releases
-          const cleanup = () => {
-            el.classList.remove('lv-drag-ready')
-            document.removeEventListener('mouseup', cleanup)
-          }
-          document.addEventListener('mouseup', cleanup)
-        }, 600)
-      }
-
-      function cancelHold() {
-        if (holdTimer === null) return  // already fired — drag in progress
-        clearTimeout(holdTimer); holdTimer = null
-        el.classList.remove('lv-drag-unlocking')
-      }
-
-      function onMouseMove(e) {
-        // Cancel if user moves more than ~5 px before hold completes
-        if (holdTimer !== null && e.buttons === 1) {
-          const dx = e.clientX - startX, dy = e.clientY - startY
-          if (Math.sqrt(dx * dx + dy * dy) > 5) cancelHold()
-        }
-      }
-
-      el.addEventListener('mousedown', onMouseDown, { capture: true })
-      el.addEventListener('mouseup',   cancelHold,  { capture: true })
-      el.addEventListener('mouseleave', cancelHold)
-      document.addEventListener('mousemove', onMouseMove)
-
-      // Store cleanup fn
-      el._lvDragCleanup = () => {
-        cancelHold()
-        el.removeEventListener('mousedown', onMouseDown, { capture: true })
-        el.removeEventListener('mouseup',   cancelHold,  { capture: true })
-        el.removeEventListener('mouseleave', cancelHold)
-        document.removeEventListener('mousemove', onMouseMove)
-      }
-    }
 
     // ── Right-click / long-press recolor (user events only) ───────────────
     if (isUserEvent && onRecolorEvent) {
@@ -472,11 +401,7 @@ export default function WeeklyCalendar({
           eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
           dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
           datesSet={handleDatesSet}
-          editable={true}
-          longPressDelay={600}
-          eventDrop={onEventDrop}
-          eventResize={onEventResize}
-          eventAllow={(dropInfo, draggedEvent) => !draggedEvent.extendedProps?.source}
+          editable={false}
           height="100%"
           allDaySlot={true}
           allDayText="Tasks"
