@@ -413,6 +413,50 @@ function GradesPanel({ canvasAssignments, courseColors, courseIds }) {
   )
 }
 
+// ── ComingUpSection ───────────────────────────────────────────────────────────
+
+function ComingUpSection({ courses, courseColors, onToggle, onClickDetail }) {
+  const [open, setOpen] = useState(false)
+  const total = courses.reduce((s, c) => s + c.assignments.length, 0)
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      {/* Section header */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          padding: '6px 4px', marginBottom: 6,
+        }}
+      >
+        {open ? <ChevronDown size={13} style={{ color: 'var(--text-3)' }} /> : <ChevronRight size={13} style={{ color: 'var(--text-3)' }} />}
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+          Coming Up
+        </span>
+        <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 7px', marginLeft: 2 }}>
+          {total}
+        </span>
+        <div style={{ flex: 1, height: 1, background: 'var(--border)', marginLeft: 6 }} />
+      </button>
+
+      {open && courses.map(course => (
+        <CourseCard
+          key={course.id}
+          courseId={course.id}
+          courseName={course.name}
+          assignments={course.assignments}
+          courseColor={getCourseColor(course.id, courseColors)}
+          onToggle={onToggle}
+          onClickDetail={onClickDetail}
+          crossedOut={false}
+          defaultOpen={false}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function CoursesPanel({
@@ -471,6 +515,19 @@ export default function CoursesPanel({
       return { ...course, assignments }
     }).filter(c => c.assignments.length > 0)
   }, [byCourse, tab, weekStart.getTime(), weekEnd.getTime()]) // eslint-disable-line
+
+  // ── Assignments beyond this week (for the "Coming Up" section in This Week tab) ──
+  const futureByCourse = useMemo(() => {
+    if (tab !== 'thisweek') return []
+    return byCourse.map(course => {
+      const assignments = course.assignments.filter(a => {
+        if (!a.dueAt) return false
+        const d = new Date(a.dueAt)
+        return d > weekEnd && !isCompleted(a)
+      })
+      return { ...course, assignments }
+    }).filter(c => c.assignments.length > 0)
+  }, [byCourse, tab, weekEnd.getTime()]) // eslint-disable-line
 
   const courseIds = useMemo(() => byCourse.map(c => c.id), [byCourse])
 
@@ -610,23 +667,36 @@ export default function CoursesPanel({
 
             {/* Course cards */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '6px 16px 24px' }}>
-              {filteredByCourse.length === 0 ? (
+              {filteredByCourse.length === 0 && futureByCourse.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-3)', fontSize: '0.82rem' }}>
                   {tab === 'thisweek' ? 'No assignments due this week 🎉' : 'No assignments found.'}
                 </div>
               ) : (
-                filteredByCourse.map(course => (
-                  <CourseCard
-                    key={course.id}
-                    courseId={course.id}
-                    courseName={course.name}
-                    assignments={course.assignments}
-                    courseColor={getCourseColor(course.id, courseColors)}
-                    onToggle={onToggleCanvas}
-                    onClickDetail={setDetailAssign}
-                    crossedOut={tab === 'thisweek'}
-                  />
-                ))
+                <>
+                  {/* This week's assignments */}
+                  {filteredByCourse.map(course => (
+                    <CourseCard
+                      key={course.id}
+                      courseId={course.id}
+                      courseName={course.name}
+                      assignments={course.assignments}
+                      courseColor={getCourseColor(course.id, courseColors)}
+                      onToggle={onToggleCanvas}
+                      onClickDetail={setDetailAssign}
+                      crossedOut={tab === 'thisweek'}
+                    />
+                  ))}
+
+                  {/* Coming Up section (only in This Week tab) */}
+                  {tab === 'thisweek' && futureByCourse.length > 0 && (
+                    <ComingUpSection
+                      courses={futureByCourse}
+                      courseColors={courseColors}
+                      onToggle={onToggleCanvas}
+                      onClickDetail={setDetailAssign}
+                    />
+                  )}
+                </>
               )}
             </div>
           </div>

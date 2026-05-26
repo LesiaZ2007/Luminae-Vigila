@@ -1511,7 +1511,7 @@ export default function Home() {
                   startWRef.current   = todoPanelWidth
                   const onMove = mv => {
                     const delta = startXRef.current - mv.clientX
-                    setTodoPanelWidth(Math.max(220, Math.min(480, startWRef.current + delta)))
+                    setTodoPanelWidth(Math.max(220, Math.min(600, startWRef.current + delta)))
                   }
                   const onUp = () => {
                     resizingRef.current = false
