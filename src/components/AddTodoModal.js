@@ -327,18 +327,19 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                       <button type="button"
                               onClick={() => setSubtasks(p => p.map((s, j) => j === i ? { ...s, completed: !s.completed } : s))}
                               style={{
-                                width: 16, height: 16, borderRadius: '50%', flexShrink: 0, cursor: 'pointer',
-                                border: `2px solid ${st.completed ? 'var(--blue)' : 'var(--border)'}`,
-                                background: st.completed ? 'var(--blue)' : 'transparent',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
-                              }}>
-                        {st.completed && (
-                          <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-                            <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        )}
+                                flexShrink: 0, width: 17, height: 17, borderRadius: '50%',
+                                border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: st.completed ? 'var(--blue)' : 'var(--text-3)',
+                                transition: 'color .15s',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.color = 'var(--blue)' }}
+                              onMouseLeave={e => { e.currentTarget.style.color = st.completed ? 'var(--blue)' : 'var(--text-3)' }}>
+                        {st.completed
+                          ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                          : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
                       </button>
-                      <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--text)', textDecoration: st.completed ? 'line-through' : 'none', opacity: st.completed ? 0.55 : 1 }}>
+                      <span style={{ flex: 1, fontSize: '0.82rem', color: st.completed ? 'var(--text-3)' : 'var(--text)', textDecoration: st.completed ? 'line-through' : 'none' }}>
                         {st.title}
                       </span>
                       <button type="button"
