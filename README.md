@@ -81,6 +81,52 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - Results grouped by type — Canvas assignments, tasks, and events in a split layout
 - **Smart navigation** — clicking a search result jumps the calendar directly to that event's date/week, opens the preview, and keeps the calendar on that date when you close it
 - **Due date labels** — smart relative labels (Today, Tomorrow, Overdue, etc.)
+- **Recent searches** — last 5 queries stored locally; tap a chip to re-run; Clear button removes history
+- **Date range filter** — collapsible From / To date pickers filter all result types simultaneously
+- **Keyboard navigation** — arrow keys move focus through results; Enter opens the highlighted item
+
+### 📋 Tasks — Subtasks
+- Add up to 20 subtasks to any to-do item in the Add/Edit modal
+- Each subtask can be checked off individually — matches CoursesPanel done style with strikethrough
+- Progress chip on the task row shows `X/Y steps`; click to expand the inline checklist
+
+### 🟠 Canvas — Assignment Notifications
+- When Canvas syncs and finds new assignments that weren't seen before, a toast fires in-app
+- If the browser has notification permission, an OS-level `Notification` also appears
+- First sync seeds the seen-IDs list silently (no false positives on setup)
+
+### 🟠 Canvas — Bulk Mark Done
+- "Select" button in the Courses header enters selection mode
+- Tap any assignment row or its checkbox to add it to the selection
+- Selected rows highlight with a color tint
+- A sticky bottom bar shows the count and "Mark done" / "Cancel" buttons
+- Only undone assignments are toggled — no double-toggle on already-done items
+
+### 🔔 Browser Push Notifications
+- Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded
+- On sign-in the app requests notification permission and registers a push subscription
+- Reminder alerts (event/task reminders) are sent via push so they fire when the tab is not active
+- iOS Safari requires the app to be added to the Home Screen (iOS 16.4+)
+
+### 🎨 Event Recolor
+- Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
+- Select from 10 preset swatches — change applies immediately and persists across sessions
+- Google Calendar and Canvas events cannot be recolored
+
+### 📆 Mini Month Navigator *(desktop / tablet)*
+- Compact month grid in the sidebar for fast date jumping
+- Click any day to navigate the main calendar to that week
+- Current week is highlighted; today is marked with a blue dot
+- Hidden on mobile (bottom nav leaves no sidebar space)
+
+### 🚨 Error Boundary
+- Every major panel is wrapped in a React error boundary
+- Crashes show a friendly in-app recovery card instead of a blank screen
+- Individual panels can fail independently — the rest of the app keeps working
+
+### 🤖 Corvus — Rate Limit Feedback
+- When Groq returns 429 (rate limited), the send button shows a 30-second countdown
+- Input and button are disabled during the cooldown to prevent repeated hammering
 
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
@@ -146,6 +192,12 @@ SESSION_SECRET=your_session_secret
 
 # Neon PostgreSQL — required for sign-in and per-user token storage
 DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
+
+# Web Push / VAPID — required for background push notifications
+# Generate keys: node -e "const wp=require('web-push'); console.log(wp.generateVAPIDKeys())"
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
+VAPID_PRIVATE_KEY=your_vapid_private_key
+VAPID_SUBJECT=mailto:your@email.com
 ```
 
 ### Database Setup
@@ -156,7 +208,9 @@ Run `schema.sql` against your Neon (or any PostgreSQL) database:
 psql $DATABASE_URL -f schema.sql
 ```
 
-This creates three tables: `users`, `google_accounts`, and `canvas_credentials`.
+This creates the following tables: `users`, `google_accounts`, `canvas_credentials`, and `push_subscriptions` (for Web Push), plus supporting indexes.
+
+**If upgrading an existing install,** run only the new `push_subscriptions` block from the bottom of `schema.sql` in the Neon SQL Editor — all statements are `CREATE TABLE IF NOT EXISTS` so running the full file again is safe.
 
 ### Getting API Keys
 
@@ -207,8 +261,10 @@ No server-side setup needed. Users connect Canvas directly in the app:
 ## 📁 Project Structure
 
 ```
-schema.sql            # PostgreSQL schema: users, google_accounts, canvas_credentials
+schema.sql            # PostgreSQL schema: users, google_accounts, canvas_credentials, push_subscriptions
 proxy.js              # Next.js 16 route protection
+public/
+└── sw.js             # Service worker — handles push events + notification click
 
 src/
 ├── app/
@@ -226,32 +282,39 @@ src/
 │   │   │   ├── courses/      # Fetch active student course enrollments
 │   │   │   ├── assignments/  # Fetch assignments with submission data
 │   │   │   └── calendar/     # Fetch manual Canvas calendar events
+│   │   ├── push/
+│   │   │   ├── subscribe/    # POST upsert / DELETE remove push subscription
+│   │   │   └── send/         # POST send push notification to all user subs
 │   │   └── corvus/           # Groq AI chat endpoint (context-aware)
+│   ├── error.js              # Next.js App Router error boundary page
 │   ├── login/                # Sign-in page
 │   ├── globals.css
 │   ├── layout.js
 │   └── page.js               # Main app shell, state, and layout
 │
 ├── components/
-│   ├── Corvus.js                  # AI assistant (floating panel + full tab)
-│   ├── WeeklyCalendar.js          # FullCalendar wrapper (all views)
-│   ├── TodoPanel.js               # To-do list panel (sidebar strip + full-page)
-│   ├── CoursesPanel.js            # Canvas courses + assignments tab
-│   ├── SearchPanel.js             # Search UI — events, tasks, Canvas
-│   ├── ImportExportButton.js      # JSON import/export
-│   ├── EventModal.js              # Add/edit calendar event modal
-│   ├── AddTodoModal.js            # Add/edit task modal
-│   ├── GoogleCalendarSettings.js  # Google Calendar settings modal
-│   ├── SidebarGoogleSection.js    # Sidebar — Google Calendar accounts + toggles
-│   ├── CanvasSettingsModal.js     # Canvas connect/disconnect modal
-│   ├── SidebarCanvasSection.js    # Sidebar — Canvas courses + toggles
-│   ├── SidebarScheduleSection.js  # Sidebar — manual class schedule
-│   ├── ClassScheduleModal.js      # Add/edit class meeting
-│   ├── DatePicker.js              # Custom date picker
-│   ├── TimePicker.js              # Time picker — text input + analog clock popup
-│   ├── CategoryManager.js         # Manage to-do categories
-│   ├── Select.js                  # Custom dropdown
-│   └── Toast.js                   # Toast notifications
+│   ├── Corvus.js                     # AI assistant (floating panel + full tab)
+│   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
+│   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
+│   ├── CoursesPanel.js               # Canvas courses + assignments tab
+│   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
+│   ├── MiniMonthCalendar.js          # Compact month grid for sidebar (desktop only)
+│   ├── ErrorBoundary.js              # React error boundary with friendly recovery card
+│   ├── ServiceWorkerRegistration.js  # SW registration + push subscription client component
+│   ├── ImportExportButton.js         # JSON import/export
+│   ├── EventModal.js                 # Add/edit calendar event modal
+│   ├── AddTodoModal.js               # Add/edit task modal (with subtasks)
+│   ├── GoogleCalendarSettings.js     # Google Calendar settings modal
+│   ├── SidebarGoogleSection.js       # Sidebar — Google Calendar accounts + toggles
+│   ├── CanvasSettingsModal.js        # Canvas connect/disconnect modal
+│   ├── SidebarCanvasSection.js       # Sidebar — Canvas courses + toggles
+│   ├── SidebarScheduleSection.js     # Sidebar — manual class schedule
+│   ├── ClassScheduleModal.js         # Add/edit class meeting
+│   ├── DatePicker.js                 # Custom date picker
+│   ├── TimePicker.js                 # Time picker — text input + analog clock popup
+│   ├── CategoryManager.js            # Manage to-do categories
+│   ├── Select.js                     # Custom dropdown
+│   └── Toast.js                      # Toast notifications
 │
 └── lib/
     ├── db.js               # Neon PostgreSQL client
@@ -272,8 +335,11 @@ src/
 |:---|:---|
 | Events & tasks | Browser `localStorage` — no account needed |
 | Event / calendar preferences | Browser `localStorage` |
+| Search history | Browser `localStorage` (`lv-search-history`) |
+| Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
+| Push subscriptions | Neon DB, per user + device |
 | User accounts | Neon DB — created on first sign-in |
 | Session | httpOnly cookie `lv_session` (JWT, 30-day expiry) |
 

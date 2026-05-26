@@ -1,15 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, Link2, BookOpen, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
+import TimePicker from '@/components/TimePicker'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
   { label: '1 day before', ms: 24 * 60 * 60_000 },
   { label: '2 days before',ms: 2 * 24 * 60 * 60_000 },
   { label: '1 week before',ms: 7 * 24 * 60 * 60_000 },
+  { label: 'Custom time…', ms: -1 },
 ]
 
 const PRIORITY = [
@@ -27,7 +29,14 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
   const [notes,         setNotes]         = useState(editTodo?.notes || '')
-  const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.ms || 0)
+  const _existingCustomAt = editTodo?.reminder?.at ? new Date(editTodo.reminder.at) : null
+  const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.at ? -1 : (editTodo?.reminder?.ms || 0))
+  const [customReminderDate, setCustomReminderDate] = useState(
+    _existingCustomAt ? _existingCustomAt.toISOString().slice(0, 10) : ''
+  )
+  const [customReminderTime, setCustomReminderTime] = useState(
+    _existingCustomAt ? `${String(_existingCustomAt.getHours()).padStart(2,'0')}:${String(_existingCustomAt.getMinutes()).padStart(2,'0')}` : '09:00'
+  )
   const [linkedEventId, setLinkedEventId] = useState(editTodo?.linkedEventId || '')
   const [showDoBefore,  setShowDoBefore]  = useState(!!editTodo?.linkedEventId)
   const [linkedClassId, setLinkedClassId] = useState(editTodo?.linkedClassId  || '')
@@ -36,8 +45,15 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
   const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
   const [repeatUntil,   setRepeatUntil]   = useState(editTodo?.recurrence?.until || '')
+  const [subtasks,      setSubtasks]      = useState(editTodo?.subtasks ?? [])
+  const [newSubtask,    setNewSubtask]    = useState('')
+  const [editingIdx,    setEditingIdx]    = useState(-1)
+  const [editingVal,    setEditingVal]    = useState('')
+  const [dragOverIdx,   setDragOverIdx]   = useState(-1)
   const [error,         setError]         = useState('')
   const [closing,       setClosing]       = useState(false)
+  const subtaskInputRef = useRef(null)
+  const dragIdxRef      = useRef(null)
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
@@ -52,18 +68,24 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
     .sort((a, b) => new Date(a.start) - new Date(b.start))
     .slice(0, 25)
 
-  function handleSubmit(e) {
-    e.preventDefault()
-    if (!title.trim()) { setError('Please enter a task title.'); return }
-    if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return }
+  function trySubmit() {
+    if (!title.trim()) { setError('Please enter a task title.'); return false }
+    if (showDoBefore && !linkedEventId) { setError('Please select an event to link to.'); return false }
     const opt = REMINDER_OPTIONS.find(r => r.ms === Number(reminderMs))
+    let reminderObj = null
+    if (Number(reminderMs) === -1 && customReminderDate) {
+      const isoAt = `${customReminderDate}T${customReminderTime || '09:00'}:00`
+      reminderObj = { at: isoAt, label: `Custom: ${new Date(isoAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`, ms: 0 }
+    } else if (Number(reminderMs) > 0) {
+      reminderObj = { ms: Number(reminderMs), label: opt?.label || '' }
+    }
     const payload = {
       title:         title.trim(),
       category,
       dueDate:       dueDate || null,
       priority,
       notes:         notes.trim() || null,
-      reminder:      Number(reminderMs) > 0 ? { ms: Number(reminderMs), label: opt?.label || '' } : null,
+      reminder:      reminderObj,
       linkedEventId: showDoBefore ? linkedEventId : null,
       linkedClassId: showClassLink ? linkedClassId : null,
       recurrence:    (!isCanvas && repeats) ? {
@@ -71,9 +93,9 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
         days:  repeatType === 'custom' ? repeatDays : [],
         until: repeatUntil || null,
       } : null,
+      subtasks:      subtasks.length > 0 ? subtasks : [],
     }
     if (isCanvas) {
-      // Canvas assignments: call onEditCanvas with local-override fields only
       onEditCanvas?.({ ...editTodo, ...payload })
     } else if (isEdit) {
       onEdit({ ...editTodo, ...payload })
@@ -81,6 +103,12 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
       onAdd(payload)
     }
     handleClose()
+    return true
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    trySubmit()
   }
 
   function chipStyle(active, color) {
@@ -98,7 +126,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   return (
     <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={handleClose}>
+         onClick={trySubmit}>
       <div className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
            onClick={e => e.stopPropagation()}>
 
@@ -234,6 +262,18 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
             <label className="field-label">Reminder</label>
             <Select value={reminderMs} onChange={v => setReminderMs(Number(v))}
                     options={REMINDER_OPTIONS.map(r => ({ value: r.ms, label: r.label }))} />
+            {reminderMs === -1 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div>
+                  <label className="field-label">Reminder date</label>
+                  <DatePicker value={customReminderDate} onChange={setCustomReminderDate} />
+                </div>
+                <div>
+                  <label className="field-label">Reminder time</label>
+                  <TimePicker value={customReminderTime} onChange={setCustomReminderTime} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Do before */}
@@ -310,6 +350,153 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
             <textarea value={notes} onChange={e => setNotes(e.target.value)}
                       placeholder="Any extra details..." rows={2} className="field" />
           </div>
+
+          {/* Subtasks — hidden for canvas assignments */}
+          {!isCanvas && (
+            <div>
+              <label className="field-label">Subtasks <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+
+              {subtasks.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                  {subtasks.map((st, i) => (
+                    <div
+                      key={st.id}
+                      draggable
+                      onDragStart={e => { dragIdxRef.current = i; e.dataTransfer.effectAllowed = 'move' }}
+                      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIdx(i) }}
+                      onDrop={e => {
+                        e.preventDefault()
+                        const from = dragIdxRef.current
+                        if (from == null || from === i) { setDragOverIdx(-1); return }
+                        setSubtasks(p => {
+                          const next = [...p]
+                          const [moved] = next.splice(from, 1)
+                          next.splice(i, 0, moved)
+                          return next
+                        })
+                        dragIdxRef.current = null; setDragOverIdx(-1)
+                      }}
+                      onDragEnd={() => { dragIdxRef.current = null; setDragOverIdx(-1) }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        padding: '7px 10px', borderRadius: 9,
+                        background: dragOverIdx === i ? 'var(--blue-bg)' : 'var(--surface2)',
+                        border: dragOverIdx === i ? '1px solid var(--blue)' : '1px solid var(--border)',
+                        transition: 'background .1s, border-color .1s',
+                      }}
+                    >
+                      {/* Drag handle */}
+                      <span style={{ color: 'var(--text-3)', cursor: 'grab', display: 'flex', flexShrink: 0, touchAction: 'none' }}>
+                        <GripVertical size={13} />
+                      </span>
+
+                      {/* Check / uncheck */}
+                      <button type="button"
+                              onClick={() => setSubtasks(p => p.map((s, j) => j === i ? { ...s, completed: !s.completed } : s))}
+                              style={{
+                                flexShrink: 0, width: 17, height: 17, borderRadius: '50%',
+                                border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: st.completed ? 'var(--blue)' : 'var(--text-3)', transition: 'color .15s',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.color = 'var(--blue)' }}
+                              onMouseLeave={e => { e.currentTarget.style.color = st.completed ? 'var(--blue)' : 'var(--text-3)' }}>
+                        {st.completed
+                          ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                          : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
+                      </button>
+
+                      {/* Title — click to edit inline */}
+                      {editingIdx === i ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingVal}
+                          onChange={e => setEditingVal(e.target.value)}
+                          onBlur={() => {
+                            if (editingVal.trim())
+                              setSubtasks(p => p.map((s, j) => j === i ? { ...s, title: editingVal.trim() } : s))
+                            setEditingIdx(-1)
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') e.currentTarget.blur()
+                            if (e.key === 'Escape') { setEditingIdx(-1) }
+                          }}
+                          style={{
+                            flex: 1, fontSize: '0.82rem', border: 'none', outline: 'none',
+                            background: 'transparent', color: 'var(--text)', fontFamily: 'inherit',
+                            padding: 0,
+                          }}
+                        />
+                      ) : (
+                        <span
+                          title="Click to edit"
+                          onClick={() => { setEditingIdx(i); setEditingVal(st.title) }}
+                          style={{
+                            flex: 1, fontSize: '0.82rem', cursor: 'text',
+                            color: st.completed ? 'var(--text-3)' : 'var(--text)',
+                            textDecoration: st.completed ? 'line-through' : 'none',
+                          }}>
+                          {st.title}
+                        </span>
+                      )}
+
+                      {/* Delete */}
+                      <button type="button"
+                              onClick={() => setSubtasks(p => p.filter((_, j) => j !== i))}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 7 }}>
+                <input
+                  ref={subtaskInputRef}
+                  type="text"
+                  value={newSubtask}
+                  onChange={e => setNewSubtask(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const t = newSubtask.trim()
+                      if (t && subtasks.length < 20) {
+                        setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
+                        setNewSubtask('')
+                      }
+                    }
+                  }}
+                  placeholder="Add a step…"
+                  className="field"
+                  style={{ flex: 1, padding: '7px 10px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const t = newSubtask.trim()
+                    if (t && subtasks.length < 20) {
+                      setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
+                      setNewSubtask('')
+                      subtaskInputRef.current?.focus()
+                    }
+                  }}
+                  style={{
+                    padding: '7px 12px', borderRadius: 9, border: 'none',
+                    background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                    fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+              {subtasks.length >= 20 && (
+                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-3)' }}>Maximum 20 subtasks reached.</p>
+              )}
+            </div>
+          )}
 
           {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
 
