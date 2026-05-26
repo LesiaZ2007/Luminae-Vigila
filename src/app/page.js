@@ -1284,16 +1284,18 @@ export default function Home() {
     const todayStr    = clockTime.toISOString().slice(0, 10)
     const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
     const tomorrowStr = tomorrowDt.toISOString().slice(0, 10)
+    // Merge local + Google Calendar events for the sidebar preview
+    const allVisible = [...visibleEvents, ...visibleGoogleEvents]
     // First: soonest remaining event today
-    const todayNext = visibleEvents
+    const todayNext = allVisible
       .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
     if (todayNext) return todayNext
     // Fallback: first event tomorrow
-    return visibleEvents
+    return allVisible
       .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
-  }, [visibleEvents, clockTime, mounted])
+  }, [visibleEvents, visibleGoogleEvents, clockTime, mounted])
 
   function timeUntil(start) {
     const diff = new Date(start) - clockTime
