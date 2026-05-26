@@ -348,11 +348,12 @@ select option {
 .cal-nav-enter-left { animation: cal-enter-left  0.26s cubic-bezier(0.22,1,0.36,1) forwards; }
 
 /* Calendar view-switch animation (Month ↔ Week ↔ Day buttons) — two-phase, proactive */
-@keyframes cal-view-exit  { from { opacity:1; transform:scale(1)    translateY(0);    } to { opacity:0;   transform:scale(0.97) translateY(5px);  } }
-@keyframes cal-view-enter { from { opacity:0; transform:scale(1.02) translateY(-5px); } to { opacity:1;   transform:scale(1)    translateY(0);    } }
+/* Exit ends at scale(0.97) opacity:0; enter starts from the exact same state — no jump */
+@keyframes cal-view-exit  { from { opacity:1; transform:scale(1);    } to { opacity:0; transform:scale(0.97); } }
+@keyframes cal-view-enter { from { opacity:0; transform:scale(0.97); } to { opacity:1; transform:scale(1);    } }
 
 .cal-view-exit  { animation: cal-view-exit  0.15s cubic-bezier(0.4,0,1,1)     forwards; }
-.cal-view-enter { animation: cal-view-enter 0.30s cubic-bezier(0.22,1,0.36,1) forwards; }
+.cal-view-enter { animation: cal-view-enter 0.28s cubic-bezier(0.22,1,0.36,1) forwards; }
 
 /* Active state for custom view-switch buttons (lv-cal-view-* class on container) */
 .lv-cal-view-dayGridMonth .fc-viewMonth-button,
