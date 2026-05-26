@@ -137,13 +137,12 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
     )
   }
 
-  function handleSubmit(e) {
-    e.preventDefault()
-    if (!title.trim()) { setError('Please enter a title.'); return }
-    if (!allDay && startTime >= endTime) { setError('End time must be after start time.'); return }
-    if (repeats && !repeatUntil) { setError('Please set a repeat end date.'); return }
+  function trySubmit() {
+    if (!title.trim()) { setError('Please enter a title.'); return false }
+    if (!allDay && startTime >= endTime) { setError('End time must be after start time.'); return false }
+    if (repeats && !repeatUntil) { setError('Please set a repeat end date.'); return false }
     if (repeats && repeatType === 'custom' && repeatDays.length === 0) {
-      setError('Select at least one day.'); return
+      setError('Select at least one day.'); return false
     }
 
     const startISO = allDay ? date : `${date}T${startTime}:00`
@@ -185,6 +184,20 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
       ...(scope === 'all' && groupId ? { recurrenceGroupId: groupId } : {}),
     }, scope)
     handleClose()
+    return true
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    trySubmit()
+  }
+
+  function handleBackdropClick() {
+    // When the scope picker is showing (recurring event edit, scope not chosen yet),
+    // clicking outside just cancels — there's nothing to save yet
+    if (isRecurringEdit && editScope === null) { handleClose(); return }
+    // Otherwise auto-save; if validation fails the modal stays open with the error message
+    trySubmit()
   }
 
   function handleDelete() {
@@ -208,7 +221,7 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
   return (
     <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={handleClose}>
+         onClick={handleBackdropClick}>
       <div className={`modal-surface w-full max-w-md overflow-hidden${closing ? ' modal-closing' : ''}`}
            onClick={e => e.stopPropagation()}>
 
