@@ -25,7 +25,11 @@
       "Bash(Select-Object Name, FullName, Mode)",
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\\\\src\" -Recurse -Force | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName | Format-List)",
       "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(p.get\\('scripts',{}\\)\\)\")",
-      "PowerShell(Set-Location \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\"; Start-Process powershell -ArgumentList '-NoProfile -Command \"npm run dev 2>&1 | Tee-Object -FilePath dev-server.log\"' -WindowStyle Hidden; Start-Sleep -Seconds 8; Get-Content dev-server.log -Tail 20)"
+      "PowerShell(Set-Location \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\"; Start-Process powershell -ArgumentList '-NoProfile -Command \"npm run dev 2>&1 | Tee-Object -FilePath dev-server.log\"' -WindowStyle Hidden; Start-Sleep -Seconds 8; Get-Content dev-server.log -Tail 20)",
+      "Bash(echo dev-server.log)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'fix: corvus event/class distinction, mobile todo stacked layout, search bar z-index *)",
+      "Bash(git commit -m 'fix\\(mobile\\): search is now a full-screen tab, not a popup *)"
     ]
   }
 }

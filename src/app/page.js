@@ -1592,6 +1592,30 @@ export default function Home() {
           </main>
         )}
 
+        {/* ── Mobile Search tab ── Full-screen search instead of a popup */}
+        {activeNav === 'search' && isMobile && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search</div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 2 }}>Upcoming shown by default</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px' }}>
+              <SearchPanel
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                scope={searchScope}
+                onScopeChange={setSearchScope}
+                status={searchStatus}
+                onStatusChange={setSearchStatus}
+                results={searchResults}
+                onSelect={openSearchResult}
+                onToggleTodo={toggleTodo}
+                isMobile={isMobile}
+              />
+            </div>
+          </main>
+        )}
+
         {/* ── Mobile Settings tab ── Shows all the sidebar features on small screens */}
         {activeNav === 'settings' && isMobile && (
           <main style={{ flex: 1, overflowY: 'auto', background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -1710,9 +1734,14 @@ export default function Home() {
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
           {NAV_ITEMS.map(item => {
-            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+            const isActive = activeNav === item.id
             return (
-              <button key={item.id} onClick={() => { if (item.id === 'search') { showSearchPopup ? closeSearchPopup() : openSearchPopup() } else { if (showSearchPopup) closeSearchPopup(); setActiveNav(item.id) } }}
+              <button key={item.id} onClick={() => {
+                if (item.id === 'search' && activeNav !== 'search') {
+                  setSearchQuery(''); setSearchScope('all'); setSearchStatus('upcoming')
+                }
+                setActiveNav(item.id)
+              }}
                       style={{
                         flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                         gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
@@ -1790,15 +1819,12 @@ export default function Home() {
         />
       )}
 
-      {showSearchPopup && (
+      {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
+      {showSearchPopup && !isMobile && (
         <div
           onClick={closeSearchPopup}
           style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0,
-            // On mobile, leave the bottom tab bar (≈56px + safe area) uncovered so the user can tap it to close
-            bottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : 0,
-            zIndex: 2000,
+            position: 'fixed', inset: 0, zIndex: 2000,
             background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
             animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
           }}>

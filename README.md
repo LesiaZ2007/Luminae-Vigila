@@ -87,7 +87,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Dark / light mode** — toggle from the sidebar
 - **Responsive design** — desktop (full sidebar), tablet (mini-sidebar with labels), mobile (bottom tab navigation)
 - **Mobile To-Do tab** — stacked layout with To-Do / Canvas / Both toggle pills; shows priority tasks up top and Canvas assignments below
-- **Mobile search** — search overlay leaves the bottom tab bar visible so you can tap any tab to exit
+- **Mobile search** — full-screen tab (no overlay), query resets each time you enter the tab; desktop keeps the Ctrl+K popup
 - **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, and import/export on mobile
 - **Swipe-safe navigation** — horizontal swipes advance/retreat weeks without accidentally triggering event creation
 - **100dvh layout** — dynamic viewport height keeps the bottom tab bar fully visible on real devices
