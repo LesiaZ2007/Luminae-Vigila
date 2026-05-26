@@ -131,15 +131,21 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     if (viewName === currentView) return
     clearTimeout(viewAnimTimer.current)
 
-    // Phase 1: fade+scale exit
+    // Phase 1: fade+scale exit (ends at opacity:0, scale:0.97)
     setViewAnim('exit')
 
     viewAnimTimer.current = setTimeout(() => {
+      // Swap content while container is still invisible (exit forwards-fill holds opacity:0)
       api.changeView(viewName)
-      setViewAnim('enter')
 
-      // Phase 2 done — clear
-      viewAnimTimer.current = setTimeout(() => setViewAnim(null), 300)
+      // Double-RAF: let FullCalendar finish its DOM update and the browser paint
+      // the new content before we start the enter animation, eliminating the flash
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setViewAnim('enter')
+          viewAnimTimer.current = setTimeout(() => setViewAnim(null), 300)
+        })
+      })
     }, 150)
   }, [currentView])
 
