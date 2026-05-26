@@ -567,12 +567,12 @@ export default function Home() {
     if (Object.keys(prefs).length > 0) syncGoogleCalendar()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic sync every 5 minutes
+  // Periodic sync every 15 minutes
   useEffect(() => {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
       if (Object.keys(prefs).length > 0) syncGoogleCalendar()
-    }, 5 * 60_000)
+    }, 15 * 60_000)
     return () => clearInterval(id)
   }, [syncGoogleCalendar])
 
@@ -671,12 +671,12 @@ export default function Home() {
     if (prefs.connected) syncCanvas()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic 5-min sync
+  // Periodic 15-min sync
   useEffect(() => {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
       if (prefs.connected) syncCanvas()
-    }, 5 * 60_000)
+    }, 15 * 60_000)
     return () => clearInterval(id)
   }, [syncCanvas])
 
@@ -1144,16 +1144,15 @@ export default function Home() {
     if (result.kind === 'google' && result.item) {
       setActiveNav('calendar')
       setSearchHighlightId(result.item.id)
-      const desc = result.item.description || result.item.extendedProps?.description
-      const location = result.item.location || result.item.extendedProps?.location
-      const subtitle = [desc, location && `Location: ${location}`].filter(Boolean).join('\n') || 'Google Calendar event'
-      const id = String(Date.now())
-      setToasts(p => [...p, { id, title: result.item.summary || 'Google event', subtitle, actions: [], eventId: result.item.id }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 9000)
+      const evDate = (result.item.start?.dateTime || result.item.start?.date || result.item.start)?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
       return
     }
-    if (result.kind === 'canvas') {
-      setActiveNav('courses')
+    if (result.kind === 'canvas' && result.item) {
+      setActiveNav('calendar')
+      const dueDate = result.item.dueAt?.slice(0, 10)
+      if (dueDate) setCalendarTargetDate(dueDate)
+      setSearchHighlightId(result.item.id)
       return
     }
     if (result.kind === 'todo' && result.item) {
@@ -1846,6 +1845,7 @@ export default function Home() {
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
               compact={true}
               onExpand={() => { setCorvusFloat(false); setActiveNav('corvus') }}
               onClose={() => setCorvusFloat(false)}

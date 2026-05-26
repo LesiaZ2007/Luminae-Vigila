@@ -14,8 +14,11 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
   const swipeResetRef  = useRef(null)
   const wheelTimer     = useRef(null)
   const wheelLocked    = useRef(false)
-  const animTimer   = useRef(null)
-  const [navAnim,   setNavAnim] = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+  const animTimer      = useRef(null)
+  const viewSwitchTimer = useRef(null)
+  const prevViewType   = useRef(null)
+  const [navAnim,      setNavAnim]      = useState(null)   // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+  const [viewSwitching, setViewSwitching] = useState(false) // true while view-switch animation plays
 
   useEffect(() => {
     if (!targetDate) return
@@ -216,10 +219,20 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
-    onViewChange?.(info.view.type)
+    const newType = info.view.type
+    onViewChange?.(newType)
+    // Animate only when the view TYPE changes (week→month, month→day, etc.), not on prev/next
+    if (prevViewType.current && prevViewType.current !== newType) {
+      clearTimeout(viewSwitchTimer.current)
+      setViewSwitching(true)
+      viewSwitchTimer.current = setTimeout(() => setViewSwitching(false), 300)
+    }
+    prevViewType.current = newType
   }
 
-  const animClass = navAnim ? `cal-nav-${navAnim}` : ''
+  const animClass = viewSwitching
+    ? 'cal-view-switch'
+    : navAnim ? `cal-nav-${navAnim}` : ''
 
   return (
     <div className="flex flex-col h-full"
