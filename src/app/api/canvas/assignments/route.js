@@ -69,6 +69,7 @@ export async function POST(request) {
           score:            sub?.score ?? null,
           submissionTypes:  a.submission_types ?? [],
           submittedAt:      sub?.submitted_at ?? null,
+          gradedAt:         sub?.graded_at ?? null,
           submissionState:  sub?.workflow_state ?? null,
           syncedAt:         new Date().toISOString(),
         })
