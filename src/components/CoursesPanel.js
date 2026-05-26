@@ -72,12 +72,12 @@ function getThisWeekBounds() {
 
 // ── AssignmentRow ─────────────────────────────────────────────────────────────
 
-function AssignmentRow({ a, courseColor, onToggle, onClickDetail, crossedOut = false }) {
+function AssignmentRow({ a, courseColor, onToggle, onClickDetail }) {
   const [hovered, setHovered] = useState(false)
   const color   = courseColor ?? CANVAS_COLOR
   const due     = formatDue(a.dueAt)
   const done    = isCompleted(a)
-  const showCrossed = crossedOut && done
+  const showCrossed = done  // always show strikethrough + muted when done
 
   return (
     <div
@@ -156,7 +156,7 @@ function AssignmentRow({ a, courseColor, onToggle, onClickDetail, crossedOut = f
 
 // ── CourseCard ────────────────────────────────────────────────────────────────
 
-function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, crossedOut = false, defaultOpen = true }) {
+function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen)
   const color = courseColor ?? CANVAS_COLOR
 
@@ -230,7 +230,6 @@ function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, 
                   courseColor={color}
                   onToggle={onToggle}
                   onClickDetail={onClickDetail}
-                  crossedOut={crossedOut}
                 />
               ))
           }
@@ -449,7 +448,6 @@ function ComingUpSection({ courses, courseColors, onToggle, onClickDetail }) {
           courseColor={getCourseColor(course.id, courseColors)}
           onToggle={onToggle}
           onClickDetail={onClickDetail}
-          crossedOut={false}
           defaultOpen={false}
         />
       ))}
@@ -683,8 +681,7 @@ export default function CoursesPanel({
                       courseColor={getCourseColor(course.id, courseColors)}
                       onToggle={onToggleCanvas}
                       onClickDetail={setDetailAssign}
-                      crossedOut={tab === 'thisweek'}
-                    />
+                      />
                   ))}
 
                   {/* Coming Up section (only in This Week tab) */}
