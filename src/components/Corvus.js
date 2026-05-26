@@ -227,7 +227,7 @@ function MentionCard({ item, type, eventCategories, onNavigate }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────
-export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
+export default function Corvus({ events, canvasClassEvents = [], todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
   // ── Lazy-init state from localStorage so history survives tab switches ──
   const [history, setHistory] = useState(() => {
     try {
@@ -268,10 +268,10 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
       body: JSON.stringify({
         messages: msgs,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        events: events
+        events: [...events, ...canvasClassEvents]
           .filter(e => !e.start || new Date(e.start) >= new Date(Date.now() - 86400_000))
           .sort((a, b) => new Date(a.start) - new Date(b.start))
-          .slice(0, 20),
+          .slice(0, 30),
         todos: todos.filter(t => !t.completed).slice(0, 20),
         canvasAssignments: canvasAssignments.filter(a => !a.done && !a.hidden).slice(0, 30),
       }),

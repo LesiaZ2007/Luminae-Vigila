@@ -177,11 +177,13 @@ export async function POST(request) {
 
   const eventsCtx = events.length
     ? events.map(e => {
-        const s  = e.start || ''
-        const dt = s ? new Date(s) : null
+        const s      = e.start || ''
+        const dt     = s ? new Date(s) : null
         const datePart = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz }) : 'no date'
         const timePart = (dt && s.includes('T')) ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }) : 'all-day'
-        return `[${e.id}] "${e.title}" — ${datePart} ${timePart}${e.extendedProps?.category ? ` (${e.extendedProps.category})` : ''}`
+        const source   = e.extendedProps?.source
+        const typeLabel = source === 'canvas-class' ? '[CLASS]' : source === 'canvas-cal' ? '[CANVAS EVENT]' : '[EVENT]'
+        return `${typeLabel} [${e.id}] "${e.title}" — ${datePart} ${timePart}${e.extendedProps?.category ? ` (${e.extendedProps.category})` : ''}`
       }).join('\n')
     : 'None'
 
@@ -211,7 +213,11 @@ export async function POST(request) {
 
 Today is ${dateStr} at ${timeStr}.
 
-CALENDAR EVENTS:
+CALENDAR EVENTS (prefixed by type):
+  [CLASS] = recurring class from the student's course schedule (not editable, happens every week)
+  [CANVAS EVENT] = one-off event posted by a professor on Canvas
+  [EVENT] = user-created calendar event
+
 ${eventsCtx}
 
 PENDING TASKS:
@@ -265,7 +271,14 @@ BEHAVIOR RULES:
    - repeatUntil: end date YYYY-MM-DD — ALWAYS ask for this if the user hasn't specified it
    - Example: "Every Tuesday until May" → repeatType='weekly', repeatUntil='2026-05-31', start=nearest Tuesday
 
-8. NEVER avoid or change a date because of existing calendar conflicts. Overlapping events are completely normal and allowed.`
+8. NEVER avoid or change a date because of existing calendar conflicts. Overlapping events are completely normal and allowed.
+
+9. ITEM TERMINOLOGY — always use the correct term for each type:
+   - [CLASS] items → call them "class" or "your [ClassName] class" (e.g. "your Physics class")
+   - [CANVAS EVENT] items → call them "event" or "a Canvas event"
+   - [EVENT] items → call them "event" (e.g. "your dentist appointment")
+   - Never call a [EVENT] a "class", and never call a [CLASS] a generic "event".
+   - When summarizing someone's day/plan, clearly separate classes from one-off events.`
 
   try {
     const groqMessages = toGroqMessages(messages)
