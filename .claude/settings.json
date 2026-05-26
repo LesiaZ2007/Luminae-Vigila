@@ -29,7 +29,26 @@
       "Bash(echo dev-server.log)",
       "Bash(git rm *)",
       "Bash(git commit -m 'fix: corvus event/class distinction, mobile todo stacked layout, search bar z-index *)",
-      "Bash(git commit -m 'fix\\(mobile\\): search is now a full-screen tab, not a popup *)"
+      "Bash(git commit -m 'fix\\(mobile\\): search is now a full-screen tab, not a popup *)",
+      "Bash(git commit -m 'fix\\(todos\\): remove triangle arrows from '\\\\''show/hide further out'\\\\'' toggle *)",
+      "Bash(xargs grep -l \"serviceWorker\\\\|service-worker\\\\|push\\\\|notification\\\\|worker\\\\.js\")",
+      "Bash(dir \"C:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\\\\src\\\\app\")",
+      "Bash(dir \"C:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\\\\src\\\\components\")",
+      "Bash(git pull *)",
+      "Bash(git commit -m 'feat\\(infra\\): add error boundary UI for graceful crash recovery *)",
+      "Bash(git commit -m 'feat\\(corvus\\): add 30s countdown on rate limit \\(429\\) *)",
+      "Bash(git commit -m 'feat\\(todos\\): add subtasks with progress chip and inline checklist *)",
+      "Bash(git commit -m 'feat\\(search\\): recent searches, date range filter, keyboard navigation *)",
+      "Bash(git commit -m 'feat\\(calendar\\): drag-to-reschedule \\(hold-unlock\\) + event right-click recolor *)",
+      "Bash(git commit -m 'feat\\(sidebar\\): mini month navigator \\(desktop/tablet only\\) *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"const wp=require\\('web-push'\\); const keys = wp.generateVAPIDKeys\\(\\); console.log\\('PUBLIC:',keys.publicKey\\); console.log\\('PRIVATE:',keys.privateKey\\);\")",
+      "Bash(Get-ChildItem -Recurse -Depth 3 -Directory)",
+      "Bash(Select-Object -First 30)",
+      "PowerShell(cd \"C:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\" ; Get-ChildItem -Recurse -Depth 2 | Where-Object { $_.PSIsContainer } | Select-Object -First 30 FullName)",
+      "Read(//c/Users/KBITK/**)",
+      "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
+      "PowerShell(netstat -ano)"
     ]
   }
 }
