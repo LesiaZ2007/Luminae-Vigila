@@ -6,7 +6,7 @@ import EventModal   from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
 
 const SESSION_KEY = 'corvus-session'
-const SESSION_TTL = 10 * 60 * 1000   // 10 min
+const SESSION_TTL = 30 * 60 * 1000   // 30 min
 
 function CrowIcon({ size = 18, color = 'currentColor' }) {
   return (
@@ -24,6 +24,13 @@ function formatTime(iso) {
   if (!iso || !iso.includes('T')) return ''
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
+
+const QUICK_ACTIONS = [
+  { id: 'urgent', label: 'Urgent deadlines', prompt: 'Review my upcoming events, tasks, and Canvas assignments and tell me which ones are urgent.' },
+  { id: 'week',   label: 'Summarize my week', prompt: 'Summarize my schedule and to-dos for this week, including Canvas deadlines.' },
+  { id: 'focus',  label: 'What next?', prompt: 'What should I focus on next based on my current schedule and tasks?' },
+  { id: 'plan',   label: 'Plan study time', prompt: 'Create a simple study plan for my upcoming deadlines and classes.' },
+]
 
 function DetailRow({ label, value, dot }) {
   return (
@@ -173,12 +180,71 @@ function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel,
   )
 }
 
+// ── Mention card (existing event/task, clickable to navigate) ─────────────
+function MentionCard({ item, type, eventCategories, onNavigate }) {
+  const isTask = type === 'task'
+  const cat    = !isTask && (eventCategories || []).find(c => c.id === item.extendedProps?.category)
+  const accent = isTask
+    ? (item.priority === 'high' ? '#ef4444' : item.priority === 'low' ? '#10b981' : '#f59e0b')
+    : (cat?.color || '#3a6fa8')
+
+  return (
+    <button
+      onClick={() => onNavigate?.(item, type)}
+      style={{
+        background: 'var(--surface2)', border: `1px solid var(--border)`,
+        borderLeft: `3px solid ${accent}`, borderRadius: 11, padding: '10px 13px',
+        maxWidth: 280, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+        transition: 'background .15s, transform .1s', display: 'block', width: '100%',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface2)'; e.currentTarget.style.transform = 'none' }}
+    >
+      <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: accent, marginBottom: 4 }}>
+        {isTask ? '📋 Task' : '📅 Event'}
+      </div>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--text)', marginBottom: 3 }}>
+        {item.title}
+      </div>
+      {!isTask && item.start && (
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>
+          {formatDate(item.start)}{formatTime(item.start) ? ` · ${formatTime(item.start)}` : ''}
+        </div>
+      )}
+      {isTask && item.dueDate && (
+        <div style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>
+          Due {formatDate(item.dueDate)}
+          {item.priority && item.priority !== 'medium' && (
+            <span style={{ marginLeft: 6 }}>{item.priority === 'high' ? '🔴' : '🟢'}</span>
+          )}
+        </div>
+      )}
+      <div style={{ fontSize: '0.68rem', color: 'var(--blue-text)', marginTop: 5, display: 'flex', alignItems: 'center', gap: 3 }}>
+        <ChevronRight size={10} /> View
+      </div>
+    </button>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────
-export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, compact = false, onExpand, onClose }) {
-  const [history, setHistory]           = useState([])
-  const [items,   setItems]             = useState([
-    { type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." },
-  ])
+export default function Corvus({ events, todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
+  // ── Lazy-init state from localStorage so history survives tab switches ──
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
+      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.history?.length) return saved.history
+    } catch (_) {}
+    return []
+  })
+  const [items, setItems] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
+      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.items?.length) {
+        return saved.items.map(it => it.state === 'pending' ? { ...it, state: 'cancelled' } : it)
+      }
+    } catch (_) {}
+    return [{ type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." }]
+  })
   const [pending,       setPending]       = useState(null)
   const [editingPreview, setEditingPreview] = useState(false)
   const [autoAdd,       setAutoAdd]       = useState(false)
@@ -186,17 +252,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
   const [input,         setInput]         = useState('')
   const bottomRef = useRef(null)
 
-  // ── Persist session for 10 min ──
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || '{}')
-      if (saved.t && Date.now() - saved.t < SESSION_TTL && saved.items?.length) {
-        if (saved.history?.length) setHistory(saved.history)
-        setItems(saved.items.map(it => it.state === 'pending' ? { ...it, state: 'cancelled' } : it))
-      }
-    } catch (_) {}
-  }, [])
-
+  // ── Persist session to localStorage ──
   useEffect(() => {
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ history: history.slice(-20), items: items.slice(-60), t: Date.now() }))
@@ -211,6 +267,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: msgs,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         events: events
           .filter(e => !e.start || new Date(e.start) >= new Date(Date.now() - 86400_000))
           .sort((a, b) => new Date(a.start) - new Date(b.start))
@@ -226,8 +283,20 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
   async function processBlocks(content, hist) {
     const newHist = [...hist, { role: 'assistant', content }]
     setHistory(newHist)
+    const hasShowItems = content.some(b => b.type === 'tool_use' && b.name === 'show_items')
     for (const b of content) {
-      if (b.type === 'text' && b.text.trim()) setItems(p => [...p, { type: 'assistant', text: b.text.trim() }])
+      if (b.type === 'text' && b.text.trim()) {
+        setItems(p => [...p, { type: 'assistant', text: b.text.trim() }])
+        // Fallback: if model didn't call show_items, auto-match mentioned events/tasks by title
+        if (!hasShowItems) {
+          const txt = b.text.toLowerCase()
+          const matchedEvents = events.filter(e => e.title && txt.includes(e.title.toLowerCase()))
+          const matchedTasks  = todos.filter(t => t.title && txt.includes(t.title.toLowerCase()))
+          if (matchedEvents.length > 0 || matchedTasks.length > 0) {
+            setItems(p => [...p, { type: 'mention_items', events: matchedEvents, tasks: matchedTasks }])
+          }
+        }
+      }
       else if (b.type === 'tool_use') await handleTool(b, newHist)
     }
     return newHist
@@ -290,6 +359,14 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
         setItems(p => [...p, { type: 'action', text: "Couldn't find that task." }])
         await sendResult(hist, id, 'Task not found.')
       }
+    } else if (name === 'show_items') {
+      const resolvedEvents = (inp.eventIds || []).map(id => events.find(e => e.id === id)).filter(Boolean)
+      const resolvedTasks  = (inp.taskIds  || []).map(id => todos.find(t => t.id === id)).filter(Boolean)
+      if (resolvedEvents.length > 0 || resolvedTasks.length > 0) {
+        setItems(p => [...p, { type: 'mention_items', events: resolvedEvents, tasks: resolvedTasks }])
+      }
+      // Acknowledge without extra API round-trip (display-only tool)
+      setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Items shown to user.' }] }])
     }
   }
 
@@ -356,8 +433,7 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
     setLoading(false)
   }
 
-  async function handleSend() {
-    const text = input.trim()
+  async function sendMessage(text) {
     if (!text || loading || pending) return
     setInput('')
     setLoading(true)
@@ -376,6 +452,14 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
       setItems(p => [...p, { type: 'assistant', text: msg }])
     }
     setLoading(false)
+  }
+
+  async function handleSend() {
+    await sendMessage(input.trim())
+  }
+
+  async function handleQuickAction(prompt) {
+    await sendMessage(prompt)
   }
 
   // Build the event object to pass to EventModal for editing the preview
@@ -449,6 +533,20 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
           </div>
         </div>
 
+        <div style={{ padding: compact ? '8px 14px' : '12px 20px', gap: 8, overflowX: 'auto', display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+          {QUICK_ACTIONS.map(action => (
+            <button key={action.id} onClick={() => handleQuickAction(action.prompt)} disabled={loading || !!pending}
+                    style={{
+                      flex: '0 0 auto', padding: '8px 12px', borderRadius: 999, border: '1px solid',
+                      borderColor: 'rgba(255,255,255,.12)', background: 'var(--surface2)',
+                      color: 'var(--text-2)', fontSize: '0.75rem', fontWeight: 700, cursor: loading || pending ? 'not-allowed' : 'pointer',
+                      opacity: loading || pending ? 0.45 : 1,
+                    }}>
+              {action.label}
+            </button>
+          ))}
+        </div>
+
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: compact ? '14px' : '20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map((item, i) => {
@@ -468,6 +566,16 @@ export default function Corvus({ events, todos, canvasAssignments = [], todoCate
             )
             if (item.type === 'action') return (
               <div key={i} style={{ fontSize: '0.74rem', color: 'var(--text-3)', padding: '1px 4px' }}>✓ {item.text}</div>
+            )
+            if (item.type === 'mention_items') return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+                {(item.events || []).map((ev, j) => (
+                  <MentionCard key={`ev-${j}`} item={ev} type="event" eventCategories={eventCategories} onNavigate={onNavigateToItem} />
+                ))}
+                {(item.tasks || []).map((t, j) => (
+                  <MentionCard key={`t-${j}`} item={t} type="task" eventCategories={eventCategories} onNavigate={onNavigateToItem} />
+                ))}
+              </div>
             )
             if (item.type === 'preview_task' || item.type === 'preview_event') {
               if (compact) {

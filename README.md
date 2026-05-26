@@ -1,17 +1,23 @@
 <div align="center">
 
-# 🪶 luminaeVigila
+<img src="https://img.shields.io/badge/-%F0%9F%AA%B6%20luminaeVigila-243b55?style=for-the-badge&labelColor=243b55&color=243b55&logoColor=white" alt="luminaeVigila" height="42"/>
+
+<br/>
 
 **An All-Purpose Student Planner.**  
 Sync your Google Calendar and Canvas LMS, manage tasks, and ask an AI assistant — all in one minimal interface.
 
-Works fully offline without an account. Sign in to sync across devices or manually import export using JSON.
+Works fully offline without an account. Sign in to sync across devices or manually import/export using JSON.
 
-[![Live App](https://img.shields.io/badge/Live%20App-luminae--vigila.vercel.app-4a90d9?style=for-the-badge&logo=vercel&logoColor=white)](https://luminae-vigila.vercel.app)
-[![Next.js](https://img.shields.io/badge/Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
-[![FullCalendar](https://img.shields.io/badge/FullCalendar%206-4285F4?style=for-the-badge)](https://fullcalendar.io)
+<br/>
+
+[![Live App](https://img.shields.io/badge/Live%20App-luminae--vigila.vercel.app-3a6fa8?style=for-the-badge&logo=vercel&logoColor=white)](https://luminae-vigila.vercel.app)
+[![Next.js](https://img.shields.io/badge/Next.js%2016-243b55?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
+[![FullCalendar](https://img.shields.io/badge/FullCalendar%206-3a6fa8?style=for-the-badge&logoColor=white)](https://fullcalendar.io)
 
 </div>
+
+<br/>
 
 ---
 
@@ -19,7 +25,6 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 📅 Calendar & Tasks
 - **Weekly / monthly / daily views** — create, edit, and delete events with categories, colors, recurrence rules, reminders, and notes
-- **Drag to create** — drag the sidebar card onto any time slot to start a new event
 - **To-do list** — tasks with priorities, categories, due dates, recurring schedules, and event linking
 - **Link tasks to a class** — tag any task with a class schedule entry (shows a color-coded chip on the task row)
 - **Hide events** — hide individual events from view; reveal them back semi-transparently anytime
@@ -49,54 +54,61 @@ Works fully offline without an account. Sign in to sync across devices or manual
 ### 📆 Class Schedule *(no Canvas required)*
 - Add recurring class meetings manually — days of week, time, room, semester dates
 - Classes appear as color-coded repeating events on the calendar
-- **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course; assignments for that course can then be associated through the link
+- **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course
 - Fully independent of Canvas
 
 ### 🔐 Sign In *(optional)*
 - **Local-first by default** — events and tasks live in your browser's local storage, no account needed
 - **Sign in with Google** to sync your identity across devices
-- Google Calendar and Canvas connections are separate explicit opt-ins — signing in only handles identity
+- Google Calendar and Canvas connections are separate explicit opt-ins
 - Sidebar shows your email and a sign-out button when logged in; a "Sign in to sync" link when not
 
 ### 📦 Import / Export
 - **Export** all local events and tasks as a timestamped JSON file
 - **Import** a previously-exported file to restore or transfer data to any browser or device
 - Only local data is included — Google Calendar and Canvas data re-sync from the source
-- Access via the `{ }` button to the left of the Corvus button (bottom-right)
-- Popup panel fully respects light/dark theme via CSS variables
 
 ### 🪶 Corvus AI Assistant
 - Chat-based assistant powered by [Groq](https://groq.com) (`llama-3.3-70b-versatile`)
 - Aware of your upcoming events, tasks, and Canvas assignments
-- Can add events and tasks, edit them, and mark things complete — all via natural language
+- **Add events and tasks**, edit them, and mark things complete — all via natural language
+- **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
+
+### 🔍 Search
+- Search across events, tasks, and Canvas assignments with scope and status filters
+- Results grouped by type — Canvas assignments, tasks, and events in a split layout
+- **Smart navigation** — clicking a search result jumps the calendar directly to that event's date/week, opens the preview, and keeps the calendar on that date when you close it
+- **Due date labels** — smart relative labels (Today, Tomorrow, Overdue, etc.)
 
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
-- **Responsive design** — desktop (full sidebar), tablet (168px mini-sidebar with labels), mobile (bottom tab navigation)
-- **Mobile view switcher** — M / W / D labels instead of Month / Week / Day; toolbar buttons and bottom nav icons are sized for touch targets
-- **Corvus on mobile** — tapping Corvus in the bottom tab bar or the floating button opens the full Corvus tab (not a small popup)
-- **Mobile Settings tab** — dedicated Settings tab in the mobile bottom nav exposes Google Calendar sync, Canvas connection, class schedule management, account sign-in/out, time/weather widget, theme toggle, and import/export — all features previously only accessible from the sidebar
-- **Swipe-safe navigation** — horizontal swipes to advance/retreat weeks no longer accidentally trigger a new-event modal; swipe detection guards FullCalendar's `dateClick` and `eventClick` callbacks
-- **100dvh layout** — outer shell uses dynamic viewport height so the bottom tab bar is always fully visible on real devices (avoids browser-chrome clipping); iOS safe-area insets applied to the bottom bar
+- **Responsive design** — desktop (full sidebar), tablet (mini-sidebar with labels), mobile (bottom tab navigation)
+- **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, and import/export on mobile
+- **Swipe-safe navigation** — horizontal swipes advance/retreat weeks without accidentally triggering event creation
+- **100dvh layout** — dynamic viewport height keeps the bottom tab bar fully visible on real devices
 
 ---
 
 ## 🛠 Tech Stack
 
+<div align="center">
+
 | | |
-|---|---|
+|:---|:---|
 | **Framework** | [Next.js 16](https://nextjs.org) — App Router |
 | **Calendar** | [FullCalendar 6](https://fullcalendar.io) |
 | **AI** | [Groq SDK](https://groq.com) — `llama-3.3-70b-versatile` |
 | **Auth** | Google OAuth 2.0 · JWT sessions via [jose](https://github.com/panva/jose) |
-| **Database** | [Neon](https://neon.tech) serverless PostgreSQL via `@neondatabase/serverless` |
-| **Google APIs** | `googleapis` — Calendar API + OAuth2 API |
+| **Database** | [Neon](https://neon.tech) serverless PostgreSQL |
+| **Google APIs** | `googleapis` — Calendar API + OAuth2 |
 | **Canvas** | Canvas LMS REST API (token-based, no OAuth) |
 | **Icons** | [Lucide React](https://lucide.dev) |
 | **Theming** | [next-themes](https://github.com/pacocoursey/next-themes) |
 | **Deployment** | [Vercel](https://vercel.com) |
+
+</div>
 
 ---
 
@@ -135,7 +147,7 @@ DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
 
 ### Database Setup
 
-Run `schema.sql` against your Neon (or any PostgreSQL) database to create the required tables:
+Run `schema.sql` against your Neon (or any PostgreSQL) database:
 
 ```bash
 psql $DATABASE_URL -f schema.sql
@@ -193,65 +205,68 @@ No server-side setup needed. Users connect Canvas directly in the app:
 
 ```
 schema.sql            # PostgreSQL schema: users, google_accounts, canvas_credentials
-proxy.js              # Next.js 16 route protection (currently open — no pages require auth)
+proxy.js              # Next.js 16 route protection
 
 src/
 ├── app/
 │   ├── api/
 │   │   ├── auth/
-│   │   │   ├── google/       # Initiates Google sign-in OAuth flow (identity only, no calendar)
+│   │   │   ├── google/       # Initiates Google sign-in OAuth flow
 │   │   │   ├── logout/       # Deletes session cookie → redirects to /login
-│   │   │   └── me/           # Returns current signed-in user from session (or null)
+│   │   │   └── me/           # Returns current signed-in user from session
 │   │   ├── google/
-│   │   │   ├── auth/         # Initiates Google Calendar connect flow (calendar scope)
-│   │   │   ├── callback/     # Single callback handles both sign-in and calendar-connect
-│   │   │   └── events/       # Fetches events from all connected Google Calendar accounts
+│   │   │   ├── auth/         # Initiates Google Calendar connect flow
+│   │   │   ├── callback/     # Handles both sign-in and calendar-connect
+│   │   │   └── events/       # Fetches events from connected Google Calendar accounts
 │   │   ├── canvas/
-│   │   │   ├── credential/   # GET / POST / DELETE Canvas token + institution URL
+│   │   │   ├── credential/   # GET / POST / DELETE Canvas token + URL
 │   │   │   ├── courses/      # Fetch active student course enrollments
-│   │   │   ├── assignments/  # Fetch assignments for given courses (with submission data)
+│   │   │   ├── assignments/  # Fetch assignments with submission data
 │   │   │   └── calendar/     # Fetch manual Canvas calendar events
 │   │   └── corvus/           # Groq AI chat endpoint (context-aware)
-│   ├── login/                # Sign-in page — Google OAuth button, optional
+│   ├── login/                # Sign-in page
 │   ├── globals.css
 │   ├── layout.js
 │   └── page.js               # Main app shell, state, and layout
 │
 ├── components/
 │   ├── Corvus.js                  # AI assistant (floating panel + full tab)
-│   ├── WeeklyCalendar.js          # FullCalendar wrapper (all views, drag-to-create)
+│   ├── WeeklyCalendar.js          # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js               # To-do list panel (sidebar strip + full-page)
-│   ├── CoursesPanel.js            # Canvas courses + assignments tab (auto-shown when connected)
-│   ├── ImportExportButton.js      # JSON import/export FAB (local data only)
+│   ├── CoursesPanel.js            # Canvas courses + assignments tab
+│   ├── SearchPanel.js             # Search UI — events, tasks, Canvas
+│   ├── ImportExportButton.js      # JSON import/export
 │   ├── EventModal.js              # Add/edit calendar event modal
 │   ├── AddTodoModal.js            # Add/edit task modal
-│   ├── GoogleCalendarSettings.js  # Full Google Calendar settings modal
-│   ├── SidebarGoogleSection.js    # Compact sidebar — Google Calendar accounts + toggles
+│   ├── GoogleCalendarSettings.js  # Google Calendar settings modal
+│   ├── SidebarGoogleSection.js    # Sidebar — Google Calendar accounts + toggles
 │   ├── CanvasSettingsModal.js     # Canvas connect/disconnect modal
-│   ├── SidebarCanvasSection.js    # Compact sidebar — Canvas courses + calendar toggles
-│   ├── SidebarScheduleSection.js  # Compact sidebar — manual class schedule
-│   ├── ClassScheduleModal.js      # Add/edit class meeting (days, time, room, semester)
+│   ├── SidebarCanvasSection.js    # Sidebar — Canvas courses + toggles
+│   ├── SidebarScheduleSection.js  # Sidebar — manual class schedule
+│   ├── ClassScheduleModal.js      # Add/edit class meeting
 │   ├── DatePicker.js              # Custom date picker
-│   ├── TimePicker.js              # Time picker — inline text input + analog clock popup
+│   ├── TimePicker.js              # Time picker — text input + analog clock popup
 │   ├── CategoryManager.js         # Manage to-do categories
 │   ├── Select.js                  # Custom dropdown
 │   └── Toast.js                   # Toast notifications
 │
 └── lib/
-    ├── db.js               # Neon PostgreSQL client (lazy-init, safe at build time)
-    ├── session.js          # JWT session via jose — create / read / delete
+    ├── db.js               # Neon PostgreSQL client
+    ├── session.js          # JWT session via jose
     ├── auth.js             # findOrCreateUser(email)
-    ├── googleAuth.js       # OAuth2 client factory + automatic token refresh
-    ├── googleTokenStore.js # Per-user Google account token storage (Neon)
-    └── canvasTokenStore.js # Per-user Canvas credential storage (Neon)
+    ├── googleAuth.js       # OAuth2 client + token refresh
+    ├── googleTokenStore.js # Per-user Google token storage
+    └── canvasTokenStore.js # Per-user Canvas credential storage
 ```
 
 ---
 
 ## 🗄 Data Storage
 
+<div align="center">
+
 | Data | Where |
-|---|---|
+|:---|:---|
 | Events & tasks | Browser `localStorage` — no account needed |
 | Event / calendar preferences | Browser `localStorage` |
 | Google Calendar tokens | Neon DB, per user |
@@ -259,12 +274,17 @@ src/
 | User accounts | Neon DB — created on first sign-in |
 | Session | httpOnly cookie `lv_session` (JWT, 30-day expiry) |
 
+</div>
+
 Google Calendar and Canvas data is never stored server-side long-term. Tokens are used to fetch on demand; results are held in React state and cached to `localStorage` for fast reloads.
 
 ---
 
 <div align="center">
 
-Built by Lesia · Powered by Next.js, FullCalendar, Groq, and Neon
+[![Built by Lesia](https://img.shields.io/badge/Built%20by-Lesia-243b55?style=flat-square)](https://github.com/KBITK)&nbsp;
+[![Powered by Next.js](https://img.shields.io/badge/Next.js-black?style=flat-square&logo=next.js)](https://nextjs.org)&nbsp;
+[![Groq AI](https://img.shields.io/badge/Groq-AI-3a6fa8?style=flat-square)](https://groq.com)&nbsp;
+[![Neon DB](https://img.shields.io/badge/Neon-DB-10b981?style=flat-square)](https://neon.tech)
 
 </div>

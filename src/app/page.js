@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
@@ -27,6 +27,7 @@ import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
 import ClassScheduleModal     from '@/components/ClassScheduleModal'
 import CoursesPanel           from '@/components/CoursesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
+import SearchPanel            from '@/components/SearchPanel'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -125,8 +126,7 @@ export default function Home() {
   const resizingRef    = useRef(false)
   const startXRef      = useRef(0)
   const startWRef      = useRef(280)
-  const dragCardRef    = useRef(null)
-  const draggableRef   = useRef(null)
+  const addMenuRef     = useRef(null)
 
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
@@ -139,12 +139,49 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
+  const [showAddMenu,   setShowAddMenu]   = useState(false)
+  const [showSearchPopup,   setShowSearchPopup]   = useState(false)
+  const [searchClosing,     setSearchClosing]     = useState(false)
+  const [searchQuery,       setSearchQuery]       = useState('')
+  const [searchScope,       setSearchScope]       = useState('all')
+  const [searchStatus,      setSearchStatus]      = useState('all')
+  const [searchHighlightId, setSearchHighlightId] = useState(null)
+  const [calendarTargetDate, setCalendarTargetDate] = useState(null)
 
   const [googleEvents,       setGoogleEvents]       = useState([])
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
+
+  const openSearchPopup = useCallback(() => {
+    setSearchQuery('')
+    setSearchScope('all')
+    setSearchStatus('upcoming')
+    setShowSearchPopup(true)
+  }, [])
+
+  const closeSearchPopup = useCallback(() => {
+    setSearchClosing(true)
+    setTimeout(() => { setShowSearchPopup(false); setSearchClosing(false) }, 180)
+  }, [])
+
+  // Escape to close search
+  useEffect(() => {
+    if (!showSearchPopup) return
+    const onKeyDown = (e) => { if (e.key === 'Escape') closeSearchPopup() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSearchPopup, closeSearchPopup])
+
+  // Ctrl+K / Cmd+K to open search from anywhere
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openSearchPopup() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [openSearchPopup])
 
   // ── Canvas state ──
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
@@ -297,17 +334,13 @@ export default function Home() {
     return () => clearTimeout(syncTimerRef.current)
   }, [events, todos, todoCategories, canvasClasses, eventPrefs, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initialize FullCalendar Draggable on the drag card
+  // Close "+ New" popup on outside click
   useEffect(() => {
-    if (!dragCardRef.current || !mounted) return
-    import('@fullcalendar/interaction').then(({ Draggable }) => {
-      draggableRef.current?.destroy()
-      draggableRef.current = new Draggable(dragCardRef.current, {
-        eventData: { title: 'New Event', duration: '01:00' },
-      })
-    }).catch(() => {})
-    return () => draggableRef.current?.destroy()
-  }, [mounted])
+    if (!showAddMenu) return
+    function onDown(e) { if (!addMenuRef.current?.contains(e.target)) setShowAddMenu(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showAddMenu])
 
   useEffect(() => {
     const id = setInterval(() => setClockTime(new Date()), 1000)
@@ -504,12 +537,6 @@ export default function Home() {
     pushToast('Import complete', `${addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events'}, ${addedTodos > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}` : 'no new tasks'}.`)
   }, [events.length, todos.length, pushToast])
 
-  /* ── External drag-to-create ── */
-  const handleEventReceive = useCallback((start, end) => {
-    const dateStr = start ? start.toISOString() : new Date().toISOString()
-    setEventModal({ open: true, event: null, date: dateStr })
-  }, [])
-
   /* ── Google Calendar sync ── */
   const syncGoogleCalendar = useCallback(async () => {
     setGcSyncing(true)
@@ -554,12 +581,12 @@ export default function Home() {
     if (Object.keys(prefs).length > 0) syncGoogleCalendar()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic sync every 5 minutes
+  // Periodic sync every 15 minutes
   useEffect(() => {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
       if (Object.keys(prefs).length > 0) syncGoogleCalendar()
-    }, 5 * 60_000)
+    }, 15 * 60_000)
     return () => clearInterval(id)
   }, [syncGoogleCalendar])
 
@@ -658,12 +685,12 @@ export default function Home() {
     if (prefs.connected) syncCanvas()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic 5-min sync
+  // Periodic 15-min sync
   useEffect(() => {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
       if (prefs.connected) syncCanvas()
-    }, 5 * 60_000)
+    }, 15 * 60_000)
     return () => clearInterval(id)
   }, [syncCanvas])
 
@@ -918,11 +945,262 @@ export default function Home() {
     }),
   ]
 
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const now = new Date()
+
+    // Human-friendly due-date label for tasks due within 2 weeks
+    function smartDueLabel(dateStr) {
+      if (!dateStr) return 'No due date'
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const due = new Date(dateStr + 'T00:00:00')
+      const diffDays = Math.round((due - today) / 86_400_000)
+      if (diffDays < 0) return `Due ${dateStr}`
+      if (diffDays === 0) return 'Due today'
+      if (diffDays === 1) return 'Due tomorrow'
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      const dayName = dayNames[due.getDay()]
+      const mm = String(due.getMonth() + 1).padStart(2, '0')
+      const dd = String(due.getDate()).padStart(2, '0')
+      const dateFmt = `${mm}/${dd}`
+      if (diffDays <= 6) return `Due this ${dayName} (${dateFmt})`
+      if (diffDays <= 13) return `Due next ${dayName} (${dateFmt})`
+      return `Due ${dateStr}`
+    }
+    const matchesText = (value) => String(value || '').toLowerCase().includes(query)
+
+    const shouldIncludeStatus = (item, type) => {
+      if (searchStatus === 'all') return true
+      if (type === 'todo') {
+        if (searchStatus === 'done') return item.completed === true
+        if (searchStatus === 'upcoming') return item.dueDate && new Date(item.dueDate + 'T23:59:59') >= now
+        return true
+      }
+      if (type === 'canvas') {
+        if (searchStatus === 'done') return item.done || item.submissionState === 'graded' || item.submissionState === 'submitted'
+        if (searchStatus === 'upcoming') return !item.done && (!item.dueAt || new Date(item.dueAt) >= now)
+        return true
+      }
+      if (type === 'event' || type === 'google') {
+        if (searchStatus === 'done') return false
+        if (searchStatus === 'upcoming') return item.start && new Date(item.start) >= now
+        return true
+      }
+      return true
+    }
+
+    const result = {
+      events: [],
+      googleEvents: [],
+      canvasAssignments: [],
+      todos: [],
+    }
+
+    const categoryColor = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.color || 'var(--blue)'
+    const categoryLabel = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.label || categoryId || 'Event'
+
+    const eventFilter = (e) => {
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.notes || e.description || ''
+      const category = e.extendedProps?.category || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category)) && shouldIncludeStatus(e, 'event')
+    }
+
+    const googleFilter = (e) => {
+      // Google events use `title` (set by API route), not `summary`
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.description || e.description || ''
+      return (matchesText(title) || matchesText(notes)) && shouldIncludeStatus(e, 'google')
+    }
+
+    const canvasFilter = (a) => {
+      const title = a.title || ''
+      const course = a.courseName || ''
+      const status = a.submissionState || ''
+      return (matchesText(title) || matchesText(course) || matchesText(status) || matchesText(a.htmlUrl)) && shouldIncludeStatus(a, 'canvas')
+    }
+
+    const todoFilter = (t) => {
+      const title = t.title || ''
+      const notes = t.notes || ''
+      const category = todoCategories.find(c => c.id === t.category)?.label || t.category || ''
+      const linked = events.find(e => e.id === t.linkedEventId)?.title || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category) || matchesText(linked)) && shouldIncludeStatus(t, 'todo')
+    }
+
+    if (!query) {
+      const weekFromNow = new Date(now.getTime() + 7 * 24 * 3600_000)
+      if (searchScope === 'all' || searchScope === 'events') {
+        result.events = events
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 5)
+          .map(event => ({
+            kind: 'event',
+            label: event.title || event.summary || 'Untitled event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Event',
+            item: event,
+            tagLabel: categoryLabel(event.extendedProps?.category),
+            tagColor: categoryColor(event.extendedProps?.category),
+          }))
+        result.googleEvents = googleEvents
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 5)
+          .map(event => ({
+            kind: 'google',
+            label: event.title || event.summary || 'Untitled event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Google Calendar',
+            item: event,
+            tagLabel: 'Google',
+            tagColor: eventPrefs[event.id]?.color || event.color || event.backgroundColor || '#4285f4',
+          }))
+      }
+      if (searchScope === 'all' || searchScope === 'tasks') {
+        result.todos = todos.filter(todoFilter).map(todo => ({
+          kind: 'todo',
+          label: todo.title,
+          subtitle: smartDueLabel(todo.dueDate),
+          source: 'Task',
+          item: todo,
+          tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+          tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+        }))
+      }
+      if (searchScope === 'all' || searchScope === 'canvas') {
+        const nowIso = now.toISOString()
+        result.canvasAssignments = canvasAssignments
+          .filter(a => !a.done && !a.hidden && a.dueAt && a.dueAt >= nowIso)
+          .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+          .slice(0, 5)
+          .map(a => ({
+            kind: 'canvas',
+            label: a.title,
+            subtitle: a.courseName || 'Canvas assignment',
+            source: 'Canvas',
+            item: a,
+            tagLabel: a.courseName || 'Canvas',
+            tagColor: '#E8751A',
+          }))
+      }
+      return result
+    }
+
+    if (searchScope === 'all' || searchScope === 'events') {
+      result.events = events
+        .filter(eventFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'event',
+          label: event.title || event.summary || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Event',
+          item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
+          tagLabel: categoryLabel(event.extendedProps?.category),
+          tagColor: categoryColor(event.extendedProps?.category),
+        }))
+      result.googleEvents = googleEvents
+        .filter(googleFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'google',
+          label: event.summary || event.title || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Google Calendar',
+          item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
+          tagLabel: 'Google',
+          tagColor: event.color || event.backgroundColor || '#4285f4',
+        }))
+    }
+    if (searchScope === 'all' || searchScope === 'canvas') {
+      result.canvasAssignments = canvasAssignments.filter(canvasFilter).map(assignment => ({
+        kind: 'canvas',
+        label: assignment.title,
+        subtitle: assignment.courseName || 'Canvas assignment',
+        source: 'Canvas',
+        item: assignment,
+        tagLabel: assignment.courseName || 'Canvas',
+        tagColor: assignment.color || '#E8751A',
+      }))
+    }
+    if (searchScope === 'all' || searchScope === 'tasks') {
+      result.todos = todos.filter(todoFilter).map(todo => ({
+        kind: 'todo',
+        label: todo.title,
+        subtitle: smartDueLabel(todo.dueDate),
+        source: 'Task',
+        item: todo,
+        tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+        tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+      }))
+    }
+    return result
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs])
+
+  const openSearchResult = useCallback((result) => {
+    closeSearchPopup()
+    if (result.kind === 'event' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      const evDate = result.item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      setEventModal({ open: true, event: result.item, date: null })
+      return
+    }
+    if (result.kind === 'google' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      const evDate = (result.item.start?.dateTime || result.item.start?.date || result.item.start)?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      return
+    }
+    if (result.kind === 'canvas') {
+      setActiveNav('courses')
+      return
+    }
+    if (result.kind === 'todo' && result.item) {
+      setActiveNav('todos')
+      setEditingTodo(result.item)
+      setShowTodoModal(true)
+      return
+    }
+  }, [closeSearchPopup, setToasts])
+
+  const navigateToItem = useCallback((item, type) => {
+    if (type === 'event') {
+      setActiveNav('calendar')
+      setSearchHighlightId(item.id)
+      const evDate = item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      setEventModal({ open: true, event: item, date: null })
+    } else if (type === 'task') {
+      setActiveNav('todos')
+      setEditingTodo(item)
+      setShowTodoModal(true)
+    }
+  }, [])
+
   const nextEventToday = useMemo(() => {
     if (!mounted) return null
-    const todayStr = clockTime.toISOString().slice(0, 10)
-    return visibleEvents
+    const todayStr    = clockTime.toISOString().slice(0, 10)
+    const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
+    const tomorrowStr = tomorrowDt.toISOString().slice(0, 10)
+    // First: soonest remaining event today
+    const todayNext = visibleEvents
       .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
+      .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
+    if (todayNext) return todayNext
+    // Fallback: first event tomorrow
+    return visibleEvents
+      .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
   }, [visibleEvents, clockTime, mounted])
 
@@ -953,6 +1231,7 @@ export default function Home() {
   const NAV_ITEMS = [
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
+    { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
     ...(canvasConnected
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
@@ -982,24 +1261,27 @@ export default function Home() {
 
         {/* Nav */}
         <nav style={{ padding: '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV_ITEMS.map(item => (
-            <button key={item.id} onClick={() => setActiveNav(item.id)}
-                    style={{
+          {NAV_ITEMS.filter(item => item.id !== 'search').map(item => {
+            const isActive = activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => setActiveNav(item.id)}
+                      style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
                       gap: 10, padding: '9px 12px',
                       borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                       fontSize: isTablet ? '0.78rem' : '0.82rem', fontWeight: 600, width: '100%', textAlign: 'left', transition: 'all .13s',
-                      background: activeNav === item.id ? 'rgba(255,255,255,.12)' : 'transparent',
-                      color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.6)',
+                      background: isActive ? 'rgba(255,255,255,.12)' : 'transparent',
+                      color: isActive ? '#fff' : 'rgba(147,197,253,.6)',
                     }}
-                    onMouseEnter={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
-                    onMouseLeave={e => { if (activeNav !== item.id) e.currentTarget.style.background = 'transparent' }}>
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}>
               {item.icon}
               <span style={{ flex: 1 }}>{item.label}</span>
               {item.soon && <span style={{ fontSize: '0.62rem', fontWeight: 700, background: 'rgba(147,197,253,.2)', color: '#93c5fd', padding: '2px 6px', borderRadius: 999 }}>soon</span>}
-              {activeNav === item.id && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
+              {isActive && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
             </button>
-          ))}
+            )
+          })}
         </nav>
 
         {/* Live info panel */}
@@ -1035,11 +1317,14 @@ export default function Home() {
           )}
 
           {nextEventToday && (() => {
-            const until = timeUntil(nextEventToday.start)
-            return until ? (
+            const todayStr   = clockTime.toISOString().slice(0, 10)
+            const isTomorrow = !nextEventToday.start?.startsWith(todayStr)
+            const until      = isTomorrow ? null : timeUntil(nextEventToday.start)
+            const label      = isTomorrow ? 'Tomorrow' : until ? `In ${until}` : null
+            return label ? (
               <div style={{ marginTop: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(96,165,250,.14)', borderLeft: '2.5px solid rgba(96,165,250,.5)' }}>
                 <div style={{ fontSize: '0.6rem', color: 'rgba(147,197,253,.6)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  In {until}
+                  {label}
                 </div>
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {nextEventToday.title}
@@ -1072,22 +1357,6 @@ export default function Home() {
           onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
           onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
         />
-
-        {/* Drag card — desktop only, not enough space on tablet */}
-        {!isTablet && (
-          <div ref={dragCardRef} title="Drag onto the calendar to create an event"
-               style={{
-                 margin: '0 12px 8px', padding: '9px 12px', borderRadius: 10, cursor: 'grab',
-                 background: 'rgba(255,255,255,.07)', border: '1px dashed rgba(147,197,253,.3)',
-                 color: 'rgba(147,197,253,.6)', fontSize: '0.78rem', fontWeight: 600,
-                 display: 'flex', alignItems: 'center', gap: 7, transition: 'all .15s', userSelect: 'none',
-               }}
-               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,.12)'; e.currentTarget.style.borderColor = 'rgba(147,197,253,.6)'; e.currentTarget.style.color = '#fff' }}
-               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,.07)'; e.currentTarget.style.borderColor = 'rgba(147,197,253,.3)'; e.currentTarget.style.color = 'rgba(147,197,253,.6)' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="3"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
-            Drag to create
-          </div>
-        )}
 
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1122,19 +1391,40 @@ export default function Home() {
               <GoogleLogo size={13} /> Sign in to sync
             </a>
           )}
-          <button onClick={() => setEventModal({ open: true, event: null, date: null })}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
-                  onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}
-                  onMouseLeave={e => e.currentTarget.style.filter = 'none'}>
-            <Plus size={14}/> Add Event
-          </button>
-          <button onClick={() => setShowTodoModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.25)'; e.currentTarget.style.color = '#fff' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.12)'; e.currentTarget.style.color = 'rgba(147,197,253,.7)' }}>
-            <Plus size={14}/> Add Task
-          </button>
+
+          {/* + New button with Event / Task popup */}
+          <div ref={addMenuRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowAddMenu(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: showAddMenu ? 'var(--blue-hover)' : 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
+              onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+              onMouseLeave={e => e.currentTarget.style.filter = 'none'}>
+              <Plus size={14}/> New
+            </button>
+            {showAddMenu && (
+              <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--shadow-modal)', animation: 'modal-in .16s cubic-bezier(.22,1,.36,1)', zIndex: 300 }}>
+                <button
+                  onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <CalendarDays size={13}/> Event
+                </button>
+                <div style={{ height: 1, background: 'var(--border)' }}/>
+                <button
+                  onClick={() => { setShowTodoModal(true); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <ListTodo size={13}/> Task
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Dark mode toggle */}
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
                   onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
@@ -1183,8 +1473,10 @@ export default function Home() {
               )}
               <WeeklyCalendar events={allCalendarEvents} todos={todos}
                               onDateClick={handleDateClick} onEventClick={handleEventClick}
-                              onViewChange={handleViewChange} onEventReceive={handleEventReceive}
-                              isMobile={isMobile} />
+                              onViewChange={handleViewChange}
+                              isMobile={isMobile}
+                              highlightEventId={searchHighlightId}
+                              targetDate={calendarTargetDate} />
             </main>
 
             {/* Resize handle — desktop only */}
@@ -1235,6 +1527,7 @@ export default function Home() {
           </>
         )}
 
+
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
             <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
@@ -1271,6 +1564,7 @@ export default function Home() {
               onAddTodo={addTodo}
               onSaveEvent={saveEvent}
               onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
             />
           </main>
         )}
@@ -1392,20 +1686,23 @@ export default function Home() {
           // Respect iOS home-indicator and Android navigation bar
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
-          {NAV_ITEMS.map(item => (
-            <button key={item.id} onClick={() => setActiveNav(item.id)}
-                    style={{
-                      flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                      gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
-                      color: activeNav === item.id ? '#fff' : 'rgba(147,197,253,.5)',
-                      fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
-                      borderTop: activeNav === item.id ? '2px solid var(--blue)' : '2px solid transparent',
-                      transition: 'all .15s',
-                    }}>
-              {item.icon}
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {NAV_ITEMS.map(item => {
+            const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+                      style={{
+                        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
+                        color: isActive ? '#fff' : 'rgba(147,197,253,.5)',
+                        fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
+                        borderTop: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+                        transition: 'all .15s',
+                      }}>
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </nav>
       )}
 
@@ -1469,6 +1766,69 @@ export default function Home() {
         />
       )}
 
+      {showSearchPopup && (
+        <div
+          onClick={closeSearchPopup}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 2000,
+            background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+            animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
+          }}>
+          <div onClick={e => e.stopPropagation()}
+               style={{
+                 width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
+                 background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+                 animation: searchClosing ? 'lv-modal-out .18s ease forwards' : 'lv-modal-in .22s cubic-bezier(.22,1,.36,1)',
+               }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+              <div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 3 }}>Upcoming shown by default · Ctrl+K to open · Esc to close</div>
+              </div>
+              <button type="button" onClick={closeSearchPopup}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700, padding: '10px 14px' }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: '18px 20px' }}>
+              <SearchPanel
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                scope={searchScope}
+                onScopeChange={setSearchScope}
+                status={searchStatus}
+                onStatusChange={setSearchStatus}
+                results={searchResults}
+                onSelect={openSearchResult}
+                onToggleTodo={toggleTodo}
+                isMobile={isMobile}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Search FAB (desktop only — mobile keeps search in bottom tab bar) ── */}
+      {!isMobile && (
+        <button
+          onClick={showSearchPopup ? closeSearchPopup : openSearchPopup}
+          title="Search (Ctrl+K)"
+          style={{
+            position: 'fixed', bottom: 24, right: 144,
+            width: 50, height: 50, borderRadius: '50%', border: '1px solid var(--border)',
+            background: showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)',
+            color:      showSearchPopup ? 'var(--blue)'    : 'var(--text-2)',
+            cursor: 'pointer', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-md)', transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.color = 'var(--blue)'; e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)'; e.currentTarget.style.color = showSearchPopup ? 'var(--blue)' : 'var(--text-2)'; e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)' }}
+        >
+          <Search size={20} />
+        </button>
+      )}
+
       {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
       {!isMobile && (
         <ImportExportButton
@@ -1496,6 +1856,7 @@ export default function Home() {
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
               compact={true}
               onExpand={() => { setCorvusFloat(false); setActiveNav('corvus') }}
               onClose={() => setCorvusFloat(false)}

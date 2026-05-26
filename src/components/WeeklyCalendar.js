@@ -1,21 +1,31 @@
 'use client'
 
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useState, useEffect } from 'react'
 import FullCalendar from '@fullcalendar/react'
 
 import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
-export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, onEventReceive, isMobile }) {
+export default function WeeklyCalendar({ events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate }) {
   const calendarRef = useRef(null)
   const touchStart     = useRef(null)
   const swipedRef      = useRef(false)
   const swipeResetRef  = useRef(null)
   const wheelTimer     = useRef(null)
   const wheelLocked    = useRef(false)
-  const animTimer   = useRef(null)
-  const [navAnim,   setNavAnim] = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+  const animTimer      = useRef(null)
+  const viewSwitchTimer = useRef(null)
+  const prevViewType   = useRef(null)
+  const [navAnim,      setNavAnim]      = useState(null)   // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
+  const [viewSwitching, setViewSwitching] = useState(false) // true while view-switch animation plays
+
+  useEffect(() => {
+    if (!targetDate) return
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    api.gotoDate(targetDate)
+  }, [targetDate])
 
   function timedRange(ev) {
     if (ev.allDay || !ev.start) return null
@@ -69,6 +79,13 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
     const role = overlapRole(info.event, info.view.calendar.getEvents())
     if (role === 'later') harness.classList.add('lv-overlap-later-harness')
     if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+
+    if (highlightEventId && info.event.id === highlightEventId) {
+      info.el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.35)'
+      info.el.style.border = '1px solid rgba(59,130,246,0.9)'
+      info.el.style.zIndex = '3'
+      info.el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })
+    }
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
   }
@@ -202,10 +219,20 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
-    onViewChange?.(info.view.type)
+    const newType = info.view.type
+    onViewChange?.(newType)
+    // Animate only when the view TYPE changes (week→month, month→day, etc.), not on prev/next
+    if (prevViewType.current && prevViewType.current !== newType) {
+      clearTimeout(viewSwitchTimer.current)
+      setViewSwitching(true)
+      viewSwitchTimer.current = setTimeout(() => setViewSwitching(false), 300)
+    }
+    prevViewType.current = newType
   }
 
-  const animClass = navAnim ? `cal-nav-${navAnim}` : ''
+  const animClass = viewSwitching
+    ? 'cal-view-switch'
+    : navAnim ? `cal-nav-${navAnim}` : ''
 
   return (
     <div className="flex flex-col h-full"
@@ -286,11 +313,6 @@ export default function WeeklyCalendar({ events, todos, onDateClick, onEventClic
           eventMinHeight={isMobile ? 32 : 28}
           eventDisplay="block"
           businessHours={{ daysOfWeek: [1,2,3,4,5], startTime: '08:00', endTime: '20:00' }}
-          droppable={true}
-          eventReceive={info => {
-            info.event.remove()
-            onEventReceive?.(info.event.start, info.event.end)
-          }}
         />
       </div>
     </div>
