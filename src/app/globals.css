@@ -693,6 +693,8 @@ select option {
 .fc-event.lv-drag-unlocking {
   cursor: grabbing !important;
   user-select: none;
+  position: relative;
+  overflow: visible !important;
 }
 
 .fc-event.lv-drag-unlocking::after {

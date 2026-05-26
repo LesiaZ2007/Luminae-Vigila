@@ -97,65 +97,73 @@ export default function WeeklyCalendar({
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
 
     // ── Hold-to-unlock drag (user events only) ─────────────────────────────
+    // FullCalendar's interaction plugin uses mousedown (not pointerdown) to
+    // start drag. We intercept mousedown in capture phase so FC never sees it,
+    // play the border-fill animation for 600 ms, then re-dispatch a real
+    // MouseEvent so FC picks it up while the button is still held.
     const isUserEvent = !info.event.extendedProps?.source
     if (isUserEvent) {
       const el = info.el
       let holdTimer = null
+      let startX = 0, startY = 0
 
-      function onPointerDown(e) {
-        if (e.button !== 0 && e.pointerType !== 'touch') return
-        // Intercept before FullCalendar's drag listener
+      function onMouseDown(e) {
+        if (e.button !== 0) return
+        // Block FullCalendar's own mousedown drag handler from firing
         e.stopImmediatePropagation()
+        startX = e.clientX; startY = e.clientY
         el.classList.add('lv-drag-unlocking')
 
         holdTimer = setTimeout(() => {
+          holdTimer = null
           el.classList.remove('lv-drag-unlocking')
           el.classList.add('lv-drag-ready')
 
-          // Re-dispatch so FullCalendar picks up the drag
+          // Re-dispatch so FullCalendar initiates drag naturally
           try {
-            el.dispatchEvent(new PointerEvent('pointerdown', {
+            el.dispatchEvent(new MouseEvent('mousedown', {
               bubbles: true, cancelable: true,
-              pointerId: e.pointerId,
-              pointerType: e.pointerType,
-              clientX: e.clientX, clientY: e.clientY,
+              clientX: startX, clientY: startY,
               button: 0, buttons: 1,
+              view: window,
             }))
           } catch (_) {}
 
-          // Clean up on release
+          // Remove ready class when mouse releases
           const cleanup = () => {
             el.classList.remove('lv-drag-ready')
-            el.removeEventListener('pointerup', cleanup)
-            el.removeEventListener('pointercancel', cleanup)
+            document.removeEventListener('mouseup', cleanup)
           }
-          el.addEventListener('pointerup', cleanup)
-          el.addEventListener('pointercancel', cleanup)
+          document.addEventListener('mouseup', cleanup)
         }, 600)
       }
 
       function cancelHold() {
+        if (holdTimer === null) return  // already fired — drag in progress
         clearTimeout(holdTimer); holdTimer = null
         el.classList.remove('lv-drag-unlocking')
       }
 
-      function onPointerMoveCancel(e) {
-        // If user moves significantly before hold completes, cancel
-        if (!el.classList.contains('lv-drag-ready') && e.buttons === 1) cancelHold()
+      function onMouseMove(e) {
+        // Cancel if user moves more than ~5 px before hold completes
+        if (holdTimer !== null && e.buttons === 1) {
+          const dx = e.clientX - startX, dy = e.clientY - startY
+          if (Math.sqrt(dx * dx + dy * dy) > 5) cancelHold()
+        }
       }
 
-      el.addEventListener('pointerdown', onPointerDown, { capture: true })
-      el.addEventListener('pointerup', cancelHold, { capture: true })
-      el.addEventListener('pointercancel', cancelHold, { capture: true })
-      el.addEventListener('pointermove', onPointerMoveCancel, { capture: true })
+      el.addEventListener('mousedown', onMouseDown, { capture: true })
+      el.addEventListener('mouseup',   cancelHold,  { capture: true })
+      el.addEventListener('mouseleave', cancelHold)
+      document.addEventListener('mousemove', onMouseMove)
 
       // Store cleanup fn
       el._lvDragCleanup = () => {
         cancelHold()
-        el.removeEventListener('pointerdown', onPointerDown, { capture: true })
-        el.removeEventListener('pointerup', cancelHold, { capture: true })
-        el.removeEventListener('pointercancel', cancelHold, { capture: true })
-        el.removeEventListener('pointermove', onPointerMoveCancel, { capture: true })
+        el.removeEventListener('mousedown', onMouseDown, { capture: true })
+        el.removeEventListener('mouseup',   cancelHold,  { capture: true })
+        el.removeEventListener('mouseleave', cancelHold)
+        document.removeEventListener('mousemove', onMouseMove)
       }
     }
 
