@@ -14,7 +14,7 @@ const FILTERS = [
 
 export default function TodoPanel({
   todos, events, todoCategories,
-  onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage,
+  onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, onToggleSubtask, fullPage,
   isMobile,
   // Canvas props (all optional)
   canvasAssignments = [],
@@ -87,7 +87,8 @@ export default function TodoPanel({
                 {filtered.map(todo => (
                   <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                             todoCategories={todoCategories} todayStr={todayStr}
-                            onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+                            onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                            onToggleSubtask={onToggleSubtask} />
                 ))}
               </ul>
             ) : (
@@ -97,6 +98,7 @@ export default function TodoPanel({
                 todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
                 canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
                 onToggleCanvas={onToggleCanvas}
+                onToggleSubtask={onToggleSubtask}
               />
             )
           )}
@@ -228,6 +230,7 @@ export default function TodoPanel({
                     todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
                     canvasAssignments={[]}
                     onToggleCanvas={onToggleCanvas}
+                    onToggleSubtask={onToggleSubtask}
                   />
                 )}
               </div>
@@ -339,9 +342,10 @@ export default function TodoPanel({
   )
 }
 
-function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, onToggle, onDelete, onEdit }) {
-  const [hovered,   setHovered]   = useState(false)
-  const [justDone,  setJustDone]  = useState(false)
+function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, onToggle, onDelete, onEdit, onToggleSubtask }) {
+  const [hovered,          setHovered]          = useState(false)
+  const [justDone,         setJustDone]         = useState(false)
+  const [subtasksExpanded, setSubtasksExpanded] = useState(false)
   const cat        = todoCategories.find(c => c.id === todo.category)
   const linkedEv   = todo.linkedEventId ? events.find(e => e.id === todo.linkedEventId) : null
   const linkedClass = todo.linkedClassId ? canvasClasses.find(c => c.id === todo.linkedClassId) : null
@@ -410,7 +414,59 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
               <Bell size={9} /> {todo.reminder.label}
             </span>
           )}
+          {/* Subtask progress chip */}
+          {todo.subtasks?.length > 0 && (() => {
+            const doneCount = todo.subtasks.filter(s => s.completed).length
+            const total = todo.subtasks.length
+            return (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setSubtasksExpanded(v => !v) }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                  background: cat ? cat.color + '18' : 'var(--surface2)',
+                  color: cat ? cat.color : 'var(--text-3)',
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                {doneCount}/{total} step{total !== 1 ? 's' : ''}
+                <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor" style={{ transform: subtasksExpanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }}>
+                  <path d="M1 3l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                </svg>
+              </button>
+            )
+          })()}
         </div>
+
+        {/* Expandable subtask checklist */}
+        {subtasksExpanded && todo.subtasks?.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}
+               onClick={e => e.stopPropagation()}>
+            {todo.subtasks.map(st => (
+              <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <button
+                  type="button"
+                  onClick={() => onToggleSubtask?.(todo.id, st.id)}
+                  style={{
+                    width: 14, height: 14, borderRadius: '50%', flexShrink: 0, cursor: 'pointer', padding: 0,
+                    border: `1.5px solid ${st.completed ? 'var(--blue)' : 'var(--border)'}`,
+                    background: st.completed ? 'var(--blue)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                  {st.completed && (
+                    <svg width="7" height="7" viewBox="0 0 10 10" fill="none">
+                      <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </button>
+                <span style={{ fontSize: '0.78rem', color: st.completed ? 'var(--text-3)' : 'var(--text)', textDecoration: st.completed ? 'line-through' : 'none', opacity: st.completed ? 0.6 : 1 }}>
+                  {st.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Priority dot */}
@@ -467,7 +523,7 @@ function CanvasMiniItem({ a, onToggle }) {
 
 function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit,
                        // optional: merge Canvas assignments inline
-                       canvasAssignments = [], onToggleCanvas }) {
+                       canvasAssignments = [], onToggleCanvas, onToggleSubtask }) {
   const [showFuture, setShowFuture] = useState(false)
 
   const weekStr = (() => {
@@ -543,7 +599,8 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
                 {bucket.todos.map(todo => (
                   <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                             todoCategories={todoCategories} todayStr={todayStr}
-                            onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />
+                            onToggle={onToggle} onDelete={onDelete} onEdit={onEdit}
+                            onToggleSubtask={onToggleSubtask} />
                 ))}
                 {bucket.canvas.map(a => (
                   <CanvasMiniItem key={a.id} a={a} onToggle={onToggleCanvas} />

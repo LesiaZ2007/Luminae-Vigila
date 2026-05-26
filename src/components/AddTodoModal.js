@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, Link2, BookOpen, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, Link2, BookOpen, RefreshCw, Plus, Trash2 } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 
@@ -36,8 +36,11 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
   const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
   const [repeatUntil,   setRepeatUntil]   = useState(editTodo?.recurrence?.until || '')
+  const [subtasks,      setSubtasks]      = useState(editTodo?.subtasks ?? [])
+  const [newSubtask,    setNewSubtask]    = useState('')
   const [error,         setError]         = useState('')
   const [closing,       setClosing]       = useState(false)
+  const subtaskInputRef = useRef(null)
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
@@ -71,6 +74,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
         days:  repeatType === 'custom' ? repeatDays : [],
         until: repeatUntil || null,
       } : null,
+      subtasks:      subtasks.length > 0 ? subtasks : [],
     }
     if (isCanvas) {
       // Canvas assignments: call onEditCanvas with local-override fields only
@@ -310,6 +314,88 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
             <textarea value={notes} onChange={e => setNotes(e.target.value)}
                       placeholder="Any extra details..." rows={2} className="field" />
           </div>
+
+          {/* Subtasks — hidden for canvas assignments */}
+          {!isCanvas && (
+            <div>
+              <label className="field-label">Subtasks <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+
+              {subtasks.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+                  {subtasks.map((st, i) => (
+                    <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+                      <button type="button"
+                              onClick={() => setSubtasks(p => p.map((s, j) => j === i ? { ...s, completed: !s.completed } : s))}
+                              style={{
+                                width: 16, height: 16, borderRadius: '50%', flexShrink: 0, cursor: 'pointer',
+                                border: `2px solid ${st.completed ? 'var(--blue)' : 'var(--border)'}`,
+                                background: st.completed ? 'var(--blue)' : 'transparent',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                              }}>
+                        {st.completed && (
+                          <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+                            <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </button>
+                      <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--text)', textDecoration: st.completed ? 'line-through' : 'none', opacity: st.completed ? 0.55 : 1 }}>
+                        {st.title}
+                      </span>
+                      <button type="button"
+                              onClick={() => setSubtasks(p => p.filter((_, j) => j !== i))}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, display: 'flex', alignItems: 'center' }}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 7 }}>
+                <input
+                  ref={subtaskInputRef}
+                  type="text"
+                  value={newSubtask}
+                  onChange={e => setNewSubtask(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const t = newSubtask.trim()
+                      if (t && subtasks.length < 20) {
+                        setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
+                        setNewSubtask('')
+                      }
+                    }
+                  }}
+                  placeholder="Add a step…"
+                  className="field"
+                  style={{ flex: 1, padding: '7px 10px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const t = newSubtask.trim()
+                    if (t && subtasks.length < 20) {
+                      setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
+                      setNewSubtask('')
+                      subtaskInputRef.current?.focus()
+                    }
+                  }}
+                  style={{
+                    padding: '7px 12px', borderRadius: 9, border: 'none',
+                    background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                    fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+              {subtasks.length >= 20 && (
+                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-3)' }}>Maximum 20 subtasks reached.</p>
+              )}
+            </div>
+          )}
 
           {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
 
