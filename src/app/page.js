@@ -655,6 +655,28 @@ export default function Home() {
     if (!res.ok) return
     const { assignments: fresh } = await res.json()
 
+    // ── New-assignment notification ───────────────────────────────────────
+    try {
+      const seenRaw  = localStorage.getItem('lv-canvas-seen-ids')
+      const seenIds  = new Set(seenRaw ? JSON.parse(seenRaw) : [])
+      const freshIds = (fresh ?? []).map(a => a.id)
+
+      if (seenRaw !== null) {
+        // Not the first sync — diff for genuinely new items
+        const newOnes = (fresh ?? []).filter(a => !seenIds.has(a.id))
+        if (newOnes.length > 0) {
+          const names  = newOnes.slice(0, 3).map(a => a.title).join(', ')
+          const suffix = newOnes.length > 3 ? ` +${newOnes.length - 3} more` : ''
+          pushToast(`${newOnes.length} new Canvas assignment${newOnes.length > 1 ? 's' : ''}`, names + suffix)
+          if (typeof window !== 'undefined' && Notification?.permission === 'granted') {
+            new Notification('New Canvas Assignments', { body: names + suffix })
+          }
+        }
+      }
+      // Always update seen set (first sync seeds it silently)
+      localStorage.setItem('lv-canvas-seen-ids', JSON.stringify(freshIds))
+    } catch (_) { /* non-fatal */ }
+
     setCanvasAssignments(prev => {
       const prevMap = Object.fromEntries(prev.map(a => [a.id, a]))
       return (fresh ?? []).map(a => ({
