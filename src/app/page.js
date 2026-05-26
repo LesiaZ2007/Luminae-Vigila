@@ -441,6 +441,14 @@ export default function Home() {
           pushToast(`Reminder: ${title}`, item.reminder.label)
           if (typeof window !== 'undefined' && Notification?.permission === 'granted')
             new Notification(`Reminder: ${title}`, { body: item.reminder.label })
+          // Also send via service worker push so it works when the tab is backgrounded
+          if (typeof navigator !== 'undefined' && navigator.serviceWorker?.controller) {
+            fetch('/api/push/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: `Reminder: ${title}`, body: item.reminder.label }),
+            }).catch(() => {})
+          }
         }
       })
     }
