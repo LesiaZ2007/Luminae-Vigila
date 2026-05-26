@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { X, Link2, BookOpen, RefreshCw, Plus, Trash2 } from 'lucide-react'
+import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 
@@ -38,9 +38,13 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [repeatUntil,   setRepeatUntil]   = useState(editTodo?.recurrence?.until || '')
   const [subtasks,      setSubtasks]      = useState(editTodo?.subtasks ?? [])
   const [newSubtask,    setNewSubtask]    = useState('')
+  const [editingIdx,    setEditingIdx]    = useState(-1)
+  const [editingVal,    setEditingVal]    = useState('')
+  const [dragOverIdx,   setDragOverIdx]   = useState(-1)
   const [error,         setError]         = useState('')
   const [closing,       setClosing]       = useState(false)
   const subtaskInputRef = useRef(null)
+  const dragIdxRef      = useRef(null)
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
@@ -321,17 +325,47 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
               <label className="field-label">Subtasks <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
 
               {subtasks.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
                   {subtasks.map((st, i) => (
-                    <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+                    <div
+                      key={st.id}
+                      draggable
+                      onDragStart={e => { dragIdxRef.current = i; e.dataTransfer.effectAllowed = 'move' }}
+                      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIdx(i) }}
+                      onDrop={e => {
+                        e.preventDefault()
+                        const from = dragIdxRef.current
+                        if (from == null || from === i) { setDragOverIdx(-1); return }
+                        setSubtasks(p => {
+                          const next = [...p]
+                          const [moved] = next.splice(from, 1)
+                          next.splice(i, 0, moved)
+                          return next
+                        })
+                        dragIdxRef.current = null; setDragOverIdx(-1)
+                      }}
+                      onDragEnd={() => { dragIdxRef.current = null; setDragOverIdx(-1) }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        padding: '7px 10px', borderRadius: 9,
+                        background: dragOverIdx === i ? 'var(--blue-bg)' : 'var(--surface2)',
+                        border: dragOverIdx === i ? '1px solid var(--blue)' : '1px solid var(--border)',
+                        transition: 'background .1s, border-color .1s',
+                      }}
+                    >
+                      {/* Drag handle */}
+                      <span style={{ color: 'var(--text-3)', cursor: 'grab', display: 'flex', flexShrink: 0, touchAction: 'none' }}>
+                        <GripVertical size={13} />
+                      </span>
+
+                      {/* Check / uncheck */}
                       <button type="button"
                               onClick={() => setSubtasks(p => p.map((s, j) => j === i ? { ...s, completed: !s.completed } : s))}
                               style={{
                                 flexShrink: 0, width: 17, height: 17, borderRadius: '50%',
                                 border: 'none', background: 'none', cursor: 'pointer', padding: 0,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                color: st.completed ? 'var(--blue)' : 'var(--text-3)',
-                                transition: 'color .15s',
+                                color: st.completed ? 'var(--blue)' : 'var(--text-3)', transition: 'color .15s',
                               }}
                               onMouseEnter={e => { e.currentTarget.style.color = 'var(--blue)' }}
                               onMouseLeave={e => { e.currentTarget.style.color = st.completed ? 'var(--blue)' : 'var(--text-3)' }}>
@@ -339,12 +373,46 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                           ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                           : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/></svg>}
                       </button>
-                      <span style={{ flex: 1, fontSize: '0.82rem', color: st.completed ? 'var(--text-3)' : 'var(--text)', textDecoration: st.completed ? 'line-through' : 'none' }}>
-                        {st.title}
-                      </span>
+
+                      {/* Title — click to edit inline */}
+                      {editingIdx === i ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingVal}
+                          onChange={e => setEditingVal(e.target.value)}
+                          onBlur={() => {
+                            if (editingVal.trim())
+                              setSubtasks(p => p.map((s, j) => j === i ? { ...s, title: editingVal.trim() } : s))
+                            setEditingIdx(-1)
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') e.currentTarget.blur()
+                            if (e.key === 'Escape') { setEditingIdx(-1) }
+                          }}
+                          style={{
+                            flex: 1, fontSize: '0.82rem', border: 'none', outline: 'none',
+                            background: 'transparent', color: 'var(--text)', fontFamily: 'inherit',
+                            padding: 0,
+                          }}
+                        />
+                      ) : (
+                        <span
+                          title="Click to edit"
+                          onClick={() => { setEditingIdx(i); setEditingVal(st.title) }}
+                          style={{
+                            flex: 1, fontSize: '0.82rem', cursor: 'text',
+                            color: st.completed ? 'var(--text-3)' : 'var(--text)',
+                            textDecoration: st.completed ? 'line-through' : 'none',
+                          }}>
+                          {st.title}
+                        </span>
+                      )}
+
+                      {/* Delete */}
                       <button type="button"
                               onClick={() => setSubtasks(p => p.filter((_, j) => j !== i))}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, display: 'flex', alignItems: 'center' }}>
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                         <Trash2 size={12} />
                       </button>
                     </div>
