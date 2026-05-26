@@ -1148,11 +1148,8 @@ export default function Home() {
       if (evDate) setCalendarTargetDate(evDate)
       return
     }
-    if (result.kind === 'canvas' && result.item) {
-      setActiveNav('calendar')
-      const dueDate = result.item.dueAt?.slice(0, 10)
-      if (dueDate) setCalendarTargetDate(dueDate)
-      setSearchHighlightId(result.item.id)
+    if (result.kind === 'canvas') {
+      setActiveNav('courses')
       return
     }
     if (result.kind === 'todo' && result.item) {
