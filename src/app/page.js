@@ -1549,7 +1549,7 @@ export default function Home() {
 
 
         {activeNav === 'todos' && (
-          <main className="dot-grid" style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}

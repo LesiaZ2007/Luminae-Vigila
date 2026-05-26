@@ -64,13 +64,13 @@ export default function TodoPanel({
   const twoColumn = !!fullPage && canvasAssignments.length > 0
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', maxWidth: fullPage ? 640 : undefined, width: '100%', margin: fullPage ? '0 auto' : undefined }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', width: '100%' }}>
 
       {/* ── Left column: todos ── */}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
 
         {/* Header */}
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ padding: fullPage ? '16px 28px 14px' : '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text)' }}>To-Do</span>
             {pendingCount > 0 && (
@@ -94,7 +94,7 @@ export default function TodoPanel({
         </div>
 
         {/* Status filters */}
-        <div style={{ display: 'flex', padding: '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
+        <div style={{ display: 'flex', padding: fullPage ? '8px 24px' : '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
           {FILTERS.map(f => (
             <button key={f.id} onClick={() => setFilter(f.id)}
                     style={{
@@ -110,7 +110,7 @@ export default function TodoPanel({
 
         {/* Category filter chips */}
         {todoCategories.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             {todoCategories.map(cat => {
               const active = activeCategories.includes(cat.id)
               return (
@@ -134,7 +134,7 @@ export default function TodoPanel({
         )}
 
         {/* List — grouped by date bucket */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 16px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: fullPage ? '16px 28px 40px' : '8px 8px 16px' }}>
           {filtered.length === 0 && (twoColumn || canvasAssignments.filter(a => !a.hidden).length === 0) ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
@@ -187,13 +187,13 @@ export default function TodoPanel({
           <div style={{ width: 1, background: 'var(--border)', flexShrink: 0 }} />
 
           {/* Canvas panel */}
-          <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: '0 0 38%', minWidth: 300, maxWidth: 560, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {/* Column header */}
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            <div style={{ padding: '16px 28px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
               <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text)' }}>Canvas</span>
             </div>
             {/* Canvas list */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0 16px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px 32px' }}>
               <CanvasAssignmentsSection
                 assignments={canvasAssignments}
                 events={events}
