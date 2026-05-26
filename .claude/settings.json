@@ -21,7 +21,11 @@
       "Bash(git reset *)",
       "Bash(git commit -m 'feat\\(courses\\): redesign Courses tab + Todo two-column layout *)",
       "Bash(git commit -m 'feat\\(courses+todos\\): Coming Up section, correct two-column layout, merged sidebar list *)",
-      "Bash(git commit -m 'fix\\(courses\\): always show strikethrough on done assignments; remove crossedOut prop *)"
+      "Bash(git commit -m 'fix\\(courses\\): always show strikethrough on done assignments; remove crossedOut prop *)",
+      "Bash(Select-Object Name, FullName, Mode)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\\\\src\" -Recurse -Force | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName | Format-List)",
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(p.get\\('scripts',{}\\)\\)\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\KBITK\\\\OneDrive\\\\Documents\\\\GitHub\\\\Luminae-Vigila\"; Start-Process powershell -ArgumentList '-NoProfile -Command \"npm run dev 2>&1 | Tee-Object -FilePath dev-server.log\"' -WindowStyle Hidden; Start-Sleep -Seconds 8; Get-Content dev-server.log -Tail 20)"
     ]
   }
 }
