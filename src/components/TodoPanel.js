@@ -15,6 +15,7 @@ const FILTERS = [
 export default function TodoPanel({
   todos, events, todoCategories,
   onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, fullPage,
+  isMobile,
   // Canvas props (all optional)
   canvasAssignments = [],
   canvasClasses     = [],
@@ -26,6 +27,8 @@ export default function TodoPanel({
   const [activeCategories, setActiveCategories] = useState([]) // empty = all
   const [showCatMgr,       setShowCatMgr]       = useState(false)
   const [confetti,         setConfetti]         = useState(null) // { key, priority }
+  // Mobile-only: which section to show ('both' | 'todos' | 'canvas')
+  const [mobileView,       setMobileView]       = useState('both')
 
   function handleToggle(id, e) {
     const todo = todos.find(t => t.id === id)
@@ -60,9 +63,210 @@ export default function TodoPanel({
                      + canvasAssignments.filter(a => !a.done && !a.hidden).length
 
   // In the full-page todos view, show two-column layout (tasks left, Canvas right)
+  // On mobile full-page: stacked layout with toggle bubbles instead
   // In the calendar sidebar (!fullPage), merge Canvas into the chronological list instead
-  const twoColumn = !!fullPage && canvasAssignments.length > 0
+  const hasCanvas  = canvasAssignments.length > 0
+  const twoColumn  = !!fullPage && hasCanvas && !isMobile
+  const mobileStack = !!fullPage && hasCanvas && !!isMobile
 
+  // ── Shared sub-renders ──────────────────────────────────────────────────
+
+  const todoListContent = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: fullPage ? '16px 28px 40px' : '8px 8px 16px' }}>
+      {filtered.length === 0 && (twoColumn || canvasAssignments.filter(a => !a.hidden).length === 0) ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
+            {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
+          </p>
+        </div>
+      ) : (
+        <>
+          {filtered.length > 0 && (
+            filter === 'done' ? (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {filtered.map(todo => (
+                  <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
+                            todoCategories={todoCategories} todayStr={todayStr}
+                            onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+                ))}
+              </ul>
+            ) : (
+              /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
+              <GroupedList
+                todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
+                todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
+                onToggleCanvas={onToggleCanvas}
+              />
+            )
+          )}
+
+          {/* Canvas section: only in fullPage single-column mode (not sidebar, not two-column desktop, not mobile stack) */}
+          {!twoColumn && !mobileStack && !!fullPage && canvasAssignments.length > 0 && (
+            <CanvasAssignmentsSection
+              assignments={canvasAssignments}
+              events={events}
+              filter={filter}
+              todayStr={todayStr}
+              onToggle={onToggleCanvas}
+              onEdit={onEditCanvas}
+              onHide={onHideCanvas}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+
+  const statusFilters = (
+    <div style={{ display: 'flex', padding: fullPage ? '8px 24px' : '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
+      {FILTERS.map(f => (
+        <button key={f.id} onClick={() => setFilter(f.id)}
+                style={{
+                  flex: 1, padding: '6px 4px', borderRadius: 8, border: 'none',
+                  fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .13s',
+                  background: filter === f.id ? 'var(--blue-bg)' : 'transparent',
+                  color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
+                }}>
+          {f.label}
+        </button>
+      ))}
+    </div>
+  )
+
+  const categoryChips = todoCategories.length > 0 && (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      {todoCategories.map(cat => {
+        const active = activeCategories.includes(cat.id)
+        return (
+          <button key={cat.id} onClick={() => setActiveCategories(prev =>
+            prev.includes(cat.id) ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
+          )}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                    borderRadius: 999, border: active ? `1.5px solid ${cat.color}` : '1.5px solid transparent',
+                    background: active ? cat.color + '18' : 'var(--surface2)',
+                    color: active ? cat.color : 'var(--text-3)',
+                    fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                    transition: 'all .13s', whiteSpace: 'nowrap',
+                  }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
+            {cat.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  // ── Mobile stacked layout ────────────────────────────────────────────────
+  if (mobileStack) {
+    const MOBILE_VIEWS = [
+      { id: 'todos',  label: 'To-Do'  },
+      { id: 'canvas', label: 'Canvas' },
+      { id: 'both',   label: 'Both'   },
+    ]
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', width: '100%' }}>
+
+        {/* Header with toggle pills */}
+        <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            {/* View toggle pills */}
+            <div style={{ display: 'flex', gap: 6, background: 'var(--surface)', borderRadius: 999, padding: 3 }}>
+              {MOBILE_VIEWS.map(v => (
+                <button key={v.id} onClick={() => setMobileView(v.id)}
+                        style={{
+                          padding: '5px 14px', borderRadius: 999, border: 'none',
+                          fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s',
+                          background: mobileView === v.id ? 'var(--blue)' : 'transparent',
+                          color:      mobileView === v.id ? '#fff'        : 'var(--text-3)',
+                        }}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={() => setShowCatMgr(true)} title="Manage categories"
+                      style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
+                <Settings2 size={14} />
+              </button>
+              <button onClick={onAddClick}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600 }}>
+                <Plus size={13} /> Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable content area */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+
+          {/* To-Do section */}
+          {(mobileView === 'todos' || mobileView === 'both') && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {statusFilters}
+              {categoryChips}
+              <div style={{ padding: '12px 16px 24px' }}>
+                {filtered.length === 0 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 80 }}>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
+                      {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
+                    </p>
+                  </div>
+                ) : filter === 'done' ? (
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filtered.map(todo => (
+                      <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
+                                todoCategories={todoCategories} todayStr={todayStr}
+                                onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
+                    ))}
+                  </ul>
+                ) : (
+                  <GroupedList
+                    todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
+                    todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                    canvasAssignments={[]}
+                    onToggleCanvas={onToggleCanvas}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Divider between sections when showing both */}
+          {mobileView === 'both' && (
+            <div style={{ height: 1, background: 'var(--border)', margin: '0 16px' }} />
+          )}
+
+          {/* Canvas section */}
+          {(mobileView === 'canvas' || mobileView === 'both') && (
+            <div style={{ padding: mobileView === 'both' ? '20px 16px 32px' : '0 0 32px' }}>
+              {mobileView === 'both' && (
+                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Canvas</div>
+              )}
+              <CanvasAssignmentsSection
+                assignments={canvasAssignments}
+                events={events}
+                filter={filter}
+                todayStr={todayStr}
+                onToggle={onToggleCanvas}
+                onEdit={onEditCanvas}
+                onHide={onHideCanvas}
+              />
+            </div>
+          )}
+        </div>
+
+        {showCatMgr && (
+          <CategoryManager categories={todoCategories} onChange={onCategoriesChange} onClose={() => setShowCatMgr(false)} />
+        )}
+        {confetti && <Confetti key={confetti.key} priority={confetti.priority} x={confetti.x} y={confetti.y} />}
+      </div>
+    )
+  }
+
+  // ── Desktop / sidebar layout ─────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden', width: '100%' }}>
 
@@ -93,91 +297,9 @@ export default function TodoPanel({
           </div>
         </div>
 
-        {/* Status filters */}
-        <div style={{ display: 'flex', padding: fullPage ? '8px 24px' : '6px 8px', borderBottom: '1px solid var(--border)', gap: 2, flexShrink: 0 }}>
-          {FILTERS.map(f => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
-                    style={{
-                      flex: 1, padding: '6px 4px', borderRadius: 8, border: 'none',
-                      fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .13s',
-                      background: filter === f.id ? 'var(--blue-bg)' : 'transparent',
-                      color: filter === f.id ? 'var(--blue-text)' : 'var(--text-3)',
-                    }}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Category filter chips */}
-        {todoCategories.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            {todoCategories.map(cat => {
-              const active = activeCategories.includes(cat.id)
-              return (
-                <button key={cat.id} onClick={() => setActiveCategories(prev =>
-                  prev.includes(cat.id) ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
-                )}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-                          borderRadius: 999, border: active ? `1.5px solid ${cat.color}` : '1.5px solid transparent',
-                          background: active ? cat.color + '18' : 'var(--surface2)',
-                          color: active ? cat.color : 'var(--text-3)',
-                          fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                          transition: 'all .13s', whiteSpace: 'nowrap',
-                        }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
-                  {cat.label}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {/* List — grouped by date bucket */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: fullPage ? '16px 28px 40px' : '8px 8px 16px' }}>
-          {filtered.length === 0 && (twoColumn || canvasAssignments.filter(a => !a.hidden).length === 0) ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100 }}>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>
-                {filter === 'done' ? 'No completed tasks yet.' : 'Nothing here — you\'re all clear!'}
-              </p>
-            </div>
-          ) : (
-            <>
-              {filtered.length > 0 && (
-                filter === 'done' ? (
-                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {filtered.map(todo => (
-                      <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
-                                todoCategories={todoCategories} todayStr={todayStr}
-                                onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} />
-                    ))}
-                  </ul>
-                ) : (
-                  /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
-                  <GroupedList
-                    todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
-                    todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
-                    canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
-                    onToggleCanvas={onToggleCanvas}
-                  />
-                )
-              )}
-
-              {/* Canvas section: only in mobile/fullPage single-column mode (not sidebar, not two-column desktop) */}
-              {!twoColumn && !!fullPage && canvasAssignments.length > 0 && (
-                <CanvasAssignmentsSection
-                  assignments={canvasAssignments}
-                  events={events}
-                  filter={filter}
-                  todayStr={todayStr}
-                  onToggle={onToggleCanvas}
-                  onEdit={onEditCanvas}
-                  onHide={onHideCanvas}
-                />
-              )}
-            </>
-          )}
-        </div>
+        {statusFilters}
+        {categoryChips}
+        {todoListContent}
       </div>{/* end left column */}
 
       {/* ── Right column: Canvas assignments (desktop two-column only) ── */}

@@ -1553,7 +1553,7 @@ export default function Home() {
             <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
                        onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                        onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                       onCategoriesChange={setTodoCategories} fullPage
+                       onCategoriesChange={setTodoCategories} fullPage isMobile={isMobile}
                        canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                        onToggleCanvas={toggleCanvasAssignment}
                        onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
@@ -1579,6 +1579,7 @@ export default function Home() {
           <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <Corvus
               events={events}
+              canvasClassEvents={canvasClassEvents}
               todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories}
@@ -1711,7 +1712,7 @@ export default function Home() {
           {NAV_ITEMS.map(item => {
             const isActive = item.id === 'search' ? showSearchPopup : activeNav === item.id
             return (
-              <button key={item.id} onClick={() => item.id === 'search' ? openSearchPopup() : setActiveNav(item.id)}
+              <button key={item.id} onClick={() => { if (item.id === 'search') { showSearchPopup ? closeSearchPopup() : openSearchPopup() } else { if (showSearchPopup) closeSearchPopup(); setActiveNav(item.id) } }}
                       style={{
                         flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                         gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
@@ -1793,7 +1794,11 @@ export default function Home() {
         <div
           onClick={closeSearchPopup}
           style={{
-            position: 'fixed', inset: 0, zIndex: 2000,
+            position: 'fixed',
+            top: 0, left: 0, right: 0,
+            // On mobile, leave the bottom tab bar (≈56px + safe area) uncovered so the user can tap it to close
+            bottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : 0,
+            zIndex: 2000,
             background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
             animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
           }}>
@@ -1875,7 +1880,7 @@ export default function Home() {
             animation: 'corvus-panel-in .22s cubic-bezier(.22,1,.36,1)',
           }}>
             <Corvus
-              events={events} todos={todos}
+              events={events} canvasClassEvents={canvasClassEvents} todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
