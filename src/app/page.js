@@ -6,8 +6,9 @@ import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search } from 'lucide-react'
 
 function useWindowWidth() {
-  const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1280)
+  const [w, setW] = useState(1280)
   useEffect(() => {
+    setW(window.innerWidth)
     function onResize() { setW(window.innerWidth) }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -221,6 +222,12 @@ export default function Home() {
   )
 
   useEffect(() => { setMounted(true) }, [])
+
+  // If the user was on the mobile-only 'settings' tab and the window grows past mobile breakpoint,
+  // redirect them to calendar so they don't land on a blank screen.
+  useEffect(() => {
+    if (!isMobile && activeNav === 'settings') setActiveNav('calendar')
+  }, [isMobile]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch current user for display / logout
   useEffect(() => {
@@ -1722,7 +1729,7 @@ export default function Home() {
 
         {/* ── Mobile Settings tab ── Shows all the sidebar features on small screens */}
         {activeNav === 'settings' && isMobile && (
-          <main style={{ flex: 1, overflowY: 'auto', background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          <main className="lv-mobile-settings" style={{ flex: 1, overflowY: 'auto', background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', position: 'relative', minHeight: 0 }}>
             {/* Decorative blobs (match sidebar) */}
             <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'radial-gradient(circle, rgba(147,197,253,.1), transparent)', pointerEvents: 'none' }} />
 
@@ -1806,7 +1813,7 @@ export default function Home() {
             />
 
             {/* Quick actions + theme */}
-            <div style={{ padding: '10px 12px', marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
               <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
                 <Plus size={14}/> Add Event
@@ -1831,11 +1838,13 @@ export default function Home() {
 
       {/* ── Mobile bottom tab bar ── */}
       {isMobile && (
-        <nav style={{
+        <nav className="lv-bottom-nav" style={{
           display: 'flex', background: 'var(--sidebar)', borderTop: '1px solid rgba(255,255,255,.08)',
           flexShrink: 0, zIndex: 20,
           // Respect iOS home-indicator and Android navigation bar
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
         }}>
           {NAV_ITEMS.map(item => {
             const isActive = activeNav === item.id
@@ -1848,14 +1857,14 @@ export default function Home() {
               }}
                       style={{
                         flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                        gap: 4, padding: '12px 0', border: 'none', background: 'transparent',
+                        gap: 3, padding: '10px 4px', border: 'none', background: 'transparent',
                         color: isActive ? '#fff' : 'rgba(147,197,253,.5)',
-                        fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
+                        fontFamily: 'inherit', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer',
                         borderTop: isActive ? '2px solid var(--blue)' : '2px solid transparent',
-                        transition: 'all .15s',
+                        transition: 'all .15s', minHeight: 52,
                       }}>
                 {item.icon}
-                <span>{item.label}</span>
+                <span style={{ lineHeight: 1, marginTop: 1 }}>{item.label}</span>
               </button>
             )
           })}

@@ -37,6 +37,16 @@ export default function WeeklyCalendar({
     api.gotoDate(targetDate)
   }, [targetDate])
 
+  // When isMobile first resolves to true (SSR defaults to desktop), switch to day view
+  useEffect(() => {
+    if (!isMobile) return
+    const api = calendarRef.current?.getApi()
+    if (api && api.view.type !== 'timeGridDay') {
+      api.changeView('timeGridDay')
+      setCurrentView('timeGridDay')
+    }
+  }, [isMobile])
+
   function timedRange(ev) {
     if (ev.allDay || !ev.start) return null
     const start = new Date(ev.start)
