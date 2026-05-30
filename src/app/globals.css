@@ -682,3 +682,32 @@ select option {
   }
 }
 
+/* ══════════════════════════════════════════════
+   MOBILE — MODAL & OVERLAY FIXES (< 640 px)
+══════════════════════════════════════════════ */
+@media (max-width: 639px) {
+  /* Modals: full-width with smaller radius and less padding so they fit */
+  .modal-surface {
+    border-radius: 16px !important;
+    max-height: calc(100dvh - 48px) !important;
+  }
+  .modal-header {
+    padding: 14px 16px 12px !important;
+  }
+  .modal-body {
+    padding: 16px 16px 20px !important;
+    max-height: calc(100dvh - 120px) !important;
+    gap: 14px !important;
+  }
+
+  /* Mobile settings tab: prevent horizontal overflow */
+  .lv-mobile-settings {
+    overflow-x: hidden;
+  }
+
+  /* Ensure bottom-nav tap targets are tall enough */
+  .lv-bottom-nav button {
+    min-height: 52px;
+  }
+}
+

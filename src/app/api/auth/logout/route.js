@@ -1,6 +1,6 @@
 import { deleteSession } from '@/lib/session'
 
-export async function POST() {
+export async function POST(request) {
   await deleteSession()
-  return Response.redirect(new URL('/login', process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'))
+  return Response.redirect(new URL('/login', request.url))
 }
