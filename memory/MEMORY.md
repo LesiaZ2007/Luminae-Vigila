@@ -1,2 +1,0 @@
-- [Luminae Vigila orchestration](luminae-vigila-orchestration.md) — parallel Sonnet agents in Temp worktrees, merged into integration/all-features; Windows worktree gotchas; FocusTimer hooks trap
-- [Wave 3 custom lists plan](wave3-custom-lists-plan.md) — approved lightweight-checklists feature; branch only after wave 2 merges
