@@ -56,10 +56,13 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 A collapsible **GPA / Grades** card appears at the top of the Courses tab whenever Canvas is connected and at least one assignment has been graded.
 
+- **Canvas grade auto-import** — live official grades are fetched from `/api/canvas/grades` automatically whenever assignments sync (same 15-minute cadence); no separate polling loop added. The official Canvas score overrides the assignment-computed estimate, giving a more accurate GPA.
+- **Manual grade override** — click any percentage to type in your own value. The override is stored separately in `localStorage` under `lv-gpa.overrides` and always wins over the auto-imported value.
+- **Source badge** — each course row shows a green `Canvas live` badge when using the official grade, or an amber `manual` badge when overriding. The manual badge has a one-click `↺` to reset back to Canvas.
 - **Per-course letter grade and percentage** — computed from the sum of earned points divided by graded points possible (e.g. 87 / 100 → B+)
 - **Grading scale** — A 93–100 = 4.0, A– 90–92 = 3.7, B+ 87–89 = 3.3, … F < 60 = 0.0
 - **Credit hours** — editable per course (default 3), persisted to `localStorage` under `lv-gpa`
-- **Credit-weighted projected GPA** — displayed prominently at the top of the expanded card
+- **Credit-weighted projected GPA** — uses whichever grade source is active per course
 - **"What do I need?" helper** — enter a target percentage per course to see the required average score on remaining (ungraded) points
 - Mobile-responsive stacked layout; matches the existing Courses tab visual style
 - Empty state shown when no graded assignments exist yet
@@ -112,13 +115,24 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Pomodoro-style timer** tied to your tasks — open it from the timer FAB (desktop) or the Settings tab (mobile)
 - **Focus → break → repeat:** a short break after each focus session and a **long break every 4 sessions** (all lengths configurable)
 - **Pick a task or Canvas assignment to focus on** — completed sessions accumulate focus time on it (`X focused so far`)
+- **Course tag** — optionally tag each focus session with a Canvas course (dropdown shows your enrolled courses; default: None). The tag is persisted so the same course is pre-selected next time you open the timer.
 - **Configurable durations** — set Focus / Short / Long lengths; one click resets to the factory `25 / 5 / 15`, or save your own values as your personal default
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
 - **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
 - **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, or a slow **Aurora** (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
-- Fully optional and self-contained — it adds one `localStorage` key (`lv-focus`) and never alters existing events or tasks
+- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel
+- Self-contained — adds `lv-focus` and `lv-study-sessions` localStorage keys; never alters existing events or tasks
+
+### ⏱ Study Time Tracking
+
+A collapsible **Study Time** card appears in the Courses tab below the GPA panel once at least one tagged focus session exists.
+
+- **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
+- **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
+- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` (localStorage-only — no schema/sync changes needed)
+- Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
 - When Canvas syncs and finds new assignments that weren't seen before, a toast fires in-app
@@ -459,8 +473,9 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
+| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
-| GPA credit-hours per course | Browser `localStorage` (`lv-gpa`) |
+| GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
