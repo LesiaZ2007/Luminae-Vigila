@@ -290,13 +290,13 @@ DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
 VAPID_PRIVATE_KEY=your_vapid_private_key
 VAPID_SUBJECT=mailto:your@email.com
-
-# Error tracking (optional) — Sentry
-# Run `npm install` after adding @sentry/nextjs, then set both DSNs to enable.
-# If either var is absent the package is never loaded and has zero runtime impact.
-# SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
-# NEXT_PUBLIC_SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
 ```
+
+> **Error tracking (optional):** A guarded Sentry scaffold lives on the `chore/error-tracking`
+> branch. It's kept out of the main build for now because `@sentry/nextjs@8` doesn't yet
+> declare Next.js 16 peer support. To enable it, install a Next-16-compatible `@sentry/nextjs`
+> and re-add the `instrumentation.js` / `src/instrumentation-client.js` hooks, then set
+> `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`.
 
 ### Database Setup
 
