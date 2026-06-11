@@ -830,8 +830,8 @@ export default function Home() {
   }, [])
 
   /* ── Custom Lists CRUD ── */
-  const createCustomList = useCallback((name, emoji) => {
-    const list = makeList(name, emoji)
+  const createCustomList = useCallback((name, icon, color) => {
+    const list = makeList(name, icon, color)
     setCustomLists(prev => [...prev, list])
   }, [])
 
