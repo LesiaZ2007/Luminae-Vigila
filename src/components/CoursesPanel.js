@@ -286,13 +286,14 @@ function fmtHours(sec) {
   return `${m}m`
 }
 
-function StudyTimeCard({ courseColors }) {
-  const [sessions, setSessions] = useState([])
-
-  // Load from localStorage on mount
+function StudyTimeCard({ courseColors, studySessions }) {
+  // Use prop when provided (synced state from page.js); fall back to localStorage
+  // for backwards compat and for the case where the component is used standalone.
+  const [localSessions, setLocalSessions] = useState([])
   useEffect(() => {
-    setSessions(loadStudySessions())
-  }, [])
+    if (!studySessions) setLocalSessions(loadStudySessions())
+  }, [studySessions])
+  const sessions = studySessions ?? localSessions
 
   const { thisWeek, lastWeekTotal, maxSec } = useMemo(() => {
     const { mon: thisMonday, sun: thisSunday } = getWeekStr(0)
@@ -624,6 +625,7 @@ function ComingUpSection({ courses, courseColors, onToggle, onClickDetail, selec
 export default function CoursesPanel({
   canvasAssignments = [],
   courseColors = {},
+  studySessions,
   onToggleCanvas,
   onUpdateCanvasNotes,
   onOpenSettings,
@@ -878,7 +880,7 @@ export default function CoursesPanel({
               />
 
               {/* Study Time card */}
-              <StudyTimeCard courseColors={courseColors} />
+              <StudyTimeCard courseColors={courseColors} studySessions={studySessions} />
 
               {filteredByCourse.length === 0 && futureByCourse.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-3)', fontSize: '0.82rem' }}>

@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS event_prefs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ── Study Sessions ─────────────────────────────────────────────────────────
+-- Completed Pomodoro focus sessions logged by the Focus Timer.
+-- Mirrors the client shape: { id, courseId, courseName, durationSec, date }
+CREATE TABLE IF NOT EXISTS study_sessions (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data       JSONB       NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, user_id)
+);
+
 -- ── Push Subscriptions ──────────────────────────────────────────────────────
 -- Web Push API subscription objects, one row per browser/device per user.
 CREATE TABLE IF NOT EXISTS push_subscriptions (
