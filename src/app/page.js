@@ -72,6 +72,7 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
+  const [nudgeCluster,  setNudgeCluster]  = useState(null)
   const [focusOpen,     setFocusOpen]     = useState(false)
   const [showAddMenu,   setShowAddMenu]   = useState(false)
   const [showSearchPopup,   setShowSearchPopup]   = useState(false)
@@ -364,6 +365,47 @@ export default function Home() {
     setToasts(p => [...p, { id, title, subtitle }])
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000)
   }, [])
+
+  // ── Proactive nudge: detect deadline cluster on load (client-side, no AI cost) ──
+  useEffect(() => {
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const dismissed = localStorage.getItem('corvus-nudge-dismissed')
+      if (dismissed === today) return   // already dismissed today
+
+      const now    = new Date()
+      const cutoff = new Date(now.getTime() + 72 * 60 * 60 * 1000)
+      const items  = []
+
+      todos.forEach(t => {
+        if (!t.completed && t.dueDate) {
+          const d = new Date(t.dueDate + 'T23:59:00')
+          if (d >= now && d <= cutoff) items.push({ label: t.title, due: t.dueDate, type: 'task' })
+        }
+      })
+      canvasAssignments.forEach(a => {
+        if (!a.done && !a.hidden && a.dueAt) {
+          const d = new Date(a.dueAt)
+          if (d >= now && d <= cutoff) items.push({ label: `[${a.courseName}] ${a.title}`, due: a.dueAt, type: 'assignment' })
+        }
+      })
+
+      if (items.length < 3) { setNudgeCluster(null); return }
+
+      // Check for existing study blocks in that window
+      const studyKws = ['study', 'review', 'work on', 'prep', 'prepare', 'homework', 'hw', 'read', 'practice']
+      const hasStudy = events.some(e => {
+        if (!e.start) return false
+        const d = new Date(e.start)
+        if (d < now || d > cutoff) return false
+        return studyKws.some(kw => (e.title || '').toLowerCase().includes(kw))
+      })
+
+      setNudgeCluster(hasStudy ? null : { items })
+    } catch (_) {}
+  // Run once on mount after data is available; re-run if todos/assignments change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todos, canvasAssignments, events])
 
   // ── Manual cloud refresh ─────────────────────────────────────────────────────
   // Pulls the latest cloud state and merges it into local — cloud wins on conflicts,
@@ -1734,6 +1776,8 @@ export default function Home() {
               onSaveEvent={saveEvent}
               onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
+              nudgeCluster={nudgeCluster}
+              onNudgeDismiss={() => setNudgeCluster(null)}
             />
             </ErrorBoundary>
           </main>
@@ -2114,25 +2158,71 @@ export default function Home() {
               compact={true}
               onExpand={() => { setCorvusFloat(false); setActiveNav('corvus') }}
               onClose={() => setCorvusFloat(false)}
+              nudgeCluster={nudgeCluster}
+              onNudgeDismiss={() => setNudgeCluster(null)}
             />
           </div>
         ) : (
-          <button
-            onClick={() => setCorvusFloat(true)}
-            title="Open Corvus"
-            style={{
-              position: 'fixed', bottom: 24, right: 20,
-              width: 50, height: 50, borderRadius: '50%', border: 'none',
-              background: 'var(--blue)', color: '#fff', cursor: 'pointer',
-              zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-              transition: 'transform .15s, box-shadow .15s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 6px 28px rgba(0,0,0,0.4)' }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)';    e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)' }}
-          >
-            <CrowIcon size={22} />
-          </button>
+          <div style={{ position: 'fixed', bottom: 24, right: 20, zIndex: 200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+            {/* Proactive nudge chip — only shown when cluster detected and not dismissed today */}
+            {nudgeCluster && activeNav !== 'corvus' && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'var(--surface)', border: '1px solid rgba(239,68,68,0.35)',
+                borderRadius: 16, padding: '8px 12px 8px 10px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+                animation: 'corvus-panel-in .3s cubic-bezier(.22,1,.36,1)',
+                maxWidth: 260,
+              }}>
+                <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚦</span>
+                <button
+                  onClick={() => { setCorvusFloat(true) }}
+                  style={{
+                    flex: 1, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    textAlign: 'left', fontFamily: 'inherit',
+                  }}
+                >
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.3 }}>Busy stretch ahead</div>
+                  <div style={{ fontSize: '0.67rem', color: 'var(--text-2)', lineHeight: 1.3 }}>Want help planning it?</div>
+                </button>
+                <button
+                  onClick={() => {
+                    const today = new Date().toISOString().slice(0, 10)
+                    try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
+                    setNudgeCluster(null)
+                  }}
+                  style={{ flexShrink: 0, background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center' }}
+                  title="Dismiss"
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => setCorvusFloat(true)}
+              title="Open Corvus"
+              style={{
+                width: 50, height: 50, borderRadius: '50%', border: 'none',
+                background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                transition: 'transform .15s, box-shadow .15s',
+                position: 'relative',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 6px 28px rgba(0,0,0,0.4)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)';    e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)' }}
+            >
+              <CrowIcon size={22} />
+              {/* Red dot badge when nudge cluster active */}
+              {nudgeCluster && (
+                <span style={{
+                  position: 'absolute', top: 4, right: 4,
+                  width: 9, height: 9, borderRadius: '50%',
+                  background: '#ef4444', border: '2px solid var(--blue)',
+                }} />
+              )}
+            </button>
+          </div>
         )
       )}
     </div>
