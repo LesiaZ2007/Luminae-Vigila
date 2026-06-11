@@ -182,6 +182,12 @@ luminaeVigila is a fully installable **Progressive Web App (PWA)** — Android-f
 2. When the *"Add to Home screen"* banner appears, tap **Add** — or open the Chrome menu (⋮) and choose **Add to Home screen** / **Install app** at any time.
 3. The app installs as a standalone icon on your home screen and launcher with no browser chrome, just like a native app.
 4. Background push notifications (event and task reminders) work out of the box once you grant notification permission at sign-in.
+luminaeVigila is a fully installable **Progressive Web App (PWA)**. On mobile, browsers will prompt to "Add to Home Screen"; on desktop Chrome/Edge, an install icon appears in the address bar.
+
+### Adding to Home Screen (iOS / Android)
+
+- **iOS Safari** — tap the Share button → *Add to Home Screen*. The app then runs in standalone mode (no browser chrome) and supports background push notifications (iOS 16.4+).
+- **Android Chrome** — tap the browser menu → *Add to Home Screen* (or accept the native install banner when it appears).
 
 ### Publishing to Google Play (Trusted Web Activity / TWA)
 
@@ -200,6 +206,15 @@ To distribute on the Play Store via a TWA (e.g. using [PWABuilder](https://www.p
 ### Install on iOS (secondary)
 
 On iOS Safari, tap the Share button → *Add to Home Screen*. The app runs in standalone mode and supports background push notifications on iOS 16.4+. iOS is not the primary target; Android Chrome covers the main use case.
+1. **Generate the APK / AAB** — use PWABuilder (easiest) or Bubblewrap CLI with your app's URL.
+2. **Fill in Digital Asset Links** — replace the placeholder values in `public/.well-known/assetlinks.json` with your app's:
+   - `package_name` — e.g. `org.luminae.vigila`
+   - `sha256_cert_fingerprints` — the SHA-256 of your signing keystore (shown by PWABuilder / Bubblewrap during build, or via `keytool -list -v -keystore release.jks`)
+3. **Deploy** — ensure `https://your-domain/.well-known/assetlinks.json` is publicly accessible (no redirect, correct `Content-Type: application/json`).
+4. **Add real PNG icons** — before Play Store submission replace the SVG-only icon entries in `public/manifest.webmanifest` with proper `192×192` and `512×512` PNG icons (Play Store requires at least a 512 px PNG). The SVG entry is fine for browser installs.
+5. **Play Console requirements** — you will need a privacy policy URL and a completed data-safety form before your listing can go live.
+
+> The SVG icon at `/icon.svg` works for browser-based installs (Chrome, Safari, Edge). Real 192 px and 512 px PNG files are required before submitting to the Google Play Store.
 
 ---
 
