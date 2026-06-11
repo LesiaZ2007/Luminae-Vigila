@@ -10,6 +10,7 @@ const SESSION_KEY       = 'corvus-session'
 const SESSION_TTL       = 30 * 60 * 1000   // 30 min
 const NUDGE_DISMISS_KEY = 'corvus-nudge-dismissed'   // value = YYYY-MM-DD
 const MAX_HISTORY       = 50   // max messages kept in localStorage
+const MAX_CONTEXT       = 16   // max messages sent per request (keeps Groq token usage sane)
 
 function CrowIcon({ size = 18, color = 'currentColor' }) {
   return (
@@ -453,12 +454,12 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     onNudgeDismiss?.()
   }
 
-  // ── API call — sends last MAX_HISTORY messages as context ──
+  // ── API call — sends last MAX_CONTEXT messages as context ──
   async function callApi(msgs) {
     const res = await fetch('/api/corvus', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: msgs.slice(-MAX_HISTORY),
+        messages: msgs.slice(-MAX_CONTEXT),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         events: [...events, ...canvasClassEvents]
           .filter(e => !e.start || new Date(e.start) >= new Date(Date.now() - 86400_000))
