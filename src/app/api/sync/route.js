@@ -44,48 +44,55 @@ export async function POST(request) {
   const { userId } = session
   const { events, todos, todoCategories, classSchedule, eventPrefs } = await request.json()
 
-  // Replace all list data: DELETE existing rows, INSERT the new set.
-  // This correctly handles deletions — a removed item won't be re-inserted.
+  // Build an array of tagged-template query objects and run them all in ONE atomic
+  // transaction. If anything fails mid-way, the entire write is rolled back — no
+  // partial data wipes. Only categories present in the request body are included.
+  const queries = []
 
   if (Array.isArray(events)) {
-    await sql`DELETE FROM events WHERE user_id = ${userId}`
+    queries.push(sql`DELETE FROM events WHERE user_id = ${userId}`)
     for (const ev of events) {
       if (!ev?.id) continue
-      await sql`INSERT INTO events (id, user_id, data) VALUES (${ev.id}, ${userId}, ${JSON.stringify(ev)})`
+      queries.push(sql`INSERT INTO events (id, user_id, data) VALUES (${ev.id}, ${userId}, ${JSON.stringify(ev)})`)
     }
   }
 
   if (Array.isArray(todos)) {
-    await sql`DELETE FROM todos WHERE user_id = ${userId}`
+    queries.push(sql`DELETE FROM todos WHERE user_id = ${userId}`)
     for (const td of todos) {
       if (!td?.id) continue
-      await sql`INSERT INTO todos (id, user_id, data) VALUES (${td.id}, ${userId}, ${JSON.stringify(td)})`
+      queries.push(sql`INSERT INTO todos (id, user_id, data) VALUES (${td.id}, ${userId}, ${JSON.stringify(td)})`)
     }
   }
 
   if (Array.isArray(todoCategories)) {
-    await sql`DELETE FROM todo_categories WHERE user_id = ${userId}`
+    queries.push(sql`DELETE FROM todo_categories WHERE user_id = ${userId}`)
     for (const cat of todoCategories) {
       if (!cat?.id) continue
-      await sql`INSERT INTO todo_categories (id, user_id, data) VALUES (${cat.id}, ${userId}, ${JSON.stringify(cat)})`
+      queries.push(sql`INSERT INTO todo_categories (id, user_id, data) VALUES (${cat.id}, ${userId}, ${JSON.stringify(cat)})`)
     }
   }
 
   if (Array.isArray(classSchedule)) {
-    await sql`DELETE FROM class_schedule WHERE user_id = ${userId}`
+    queries.push(sql`DELETE FROM class_schedule WHERE user_id = ${userId}`)
     for (const cls of classSchedule) {
       if (!cls?.id) continue
-      await sql`INSERT INTO class_schedule (id, user_id, data) VALUES (${cls.id}, ${userId}, ${JSON.stringify(cls)})`
+      queries.push(sql`INSERT INTO class_schedule (id, user_id, data) VALUES (${cls.id}, ${userId}, ${JSON.stringify(cls)})`)
     }
   }
 
   // eventPrefs is a single JSON object per user — upsert the whole thing
   if (eventPrefs !== undefined && eventPrefs !== null && typeof eventPrefs === 'object') {
-    await sql`
+    queries.push(sql`
       INSERT INTO event_prefs (user_id, data)
       VALUES (${userId}, ${JSON.stringify(eventPrefs)})
       ON CONFLICT (user_id) DO UPDATE SET data = ${JSON.stringify(eventPrefs)}, updated_at = NOW()
-    `
+    `)
+  }
+
+  // Execute all writes atomically — all succeed or all roll back.
+  if (queries.length > 0) {
+    await sql.transaction(queries)
   }
 
   return Response.json({ ok: true })
