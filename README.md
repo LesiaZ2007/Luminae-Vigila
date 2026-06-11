@@ -93,7 +93,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 ### 🎯 Focus Timer *(optional)*
 - **Pomodoro-style timer** tied to your tasks — open it from the timer FAB (desktop) or the Settings tab (mobile)
 - **Focus → break → repeat:** a short break after each focus session and a **long break every 4 sessions** (all lengths configurable)
-- **Pick a task to focus on** — completed sessions accumulate focus time on that task (`X focused so far`)
+- **Pick a task or Canvas assignment to focus on** — completed sessions accumulate focus time on it (`X focused so far`)
 - **Configurable durations** — set Focus / Short / Long lengths; one click resets to the factory `25 / 5 / 15`, or save your own values as your personal default
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
 - **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance

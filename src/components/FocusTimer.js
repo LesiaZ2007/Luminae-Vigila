@@ -17,7 +17,8 @@
  *     calendar as a real timed event via the existing onSaveEvent pipeline.
  *
  * Props:
- *   open, onClose, isMobile, todos, onUpdateTodo, onSaveEvent, pushToast
+ *   open, onClose, isMobile, todos, canvasAssignments,
+ *   onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -78,7 +79,7 @@ function loadState() {
   }
 }
 
-export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpdateTodo, onSaveEvent, pushToast }) {
+export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
@@ -182,7 +183,11 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
     } catch {}
   }
 
-  const linkedTask = todos.find(t => t.id === taskId && !t.completed) || null
+  // "Focusing on" can target a local todo or a Canvas assignment (value prefixed "canvas:")
+  const isCanvas = typeof taskId === 'string' && taskId.startsWith('canvas:')
+  const linkedTarget = isCanvas
+    ? (canvasAssignments.find(a => `canvas:${a.id}` === taskId && !a.done) || null)
+    : (todos.find(t => t.id === taskId && !t.completed) || null)
 
   function handleComplete() {
     setRunning(false)
@@ -196,8 +201,10 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
       setFocusSecondsToday(s => s + elapsed)
 
       // Accumulate focus time on the task (additive field, ignored elsewhere)
-      if (linkedTask && onUpdateTodo) {
-        onUpdateTodo({ ...linkedTask, focusSeconds: (linkedTask.focusSeconds || 0) + elapsed })
+      if (linkedTarget) {
+        const updated = { ...linkedTarget, focusSeconds: (linkedTarget.focusSeconds || 0) + elapsed }
+        if (isCanvas) onUpdateCanvas?.(updated)
+        else          onUpdateTodo?.(updated)
       }
 
       // Log the session to the calendar as a real time-block.
@@ -208,7 +215,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
         const end   = toLocalISO(new Date(endMs))
         onSaveEvent({
           id:    `focus-${endMs}`,
-          title: linkedTask ? `🎯 Focus · ${linkedTask.title}` : '🎯 Focus session',
+          title: linkedTarget ? `🎯 Focus · ${linkedTarget.title}` : '🎯 Focus session',
           start, end,
           color: PHASES.focus.color,
           extendedProps: { category: 'personal', focusBlock: true },
@@ -220,7 +227,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
       setBurst({ id: endMs, x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2, y: rect ? rect.top + rect.height / 2 : 200 })
       setTimeout(() => setBurst(null), 1600)
       playChime()
-      notify('Focus session complete', linkedTask ? `Nice work on "${linkedTask.title}". Time for a break.` : 'Nice work. Time for a break.')
+      notify('Focus session complete', linkedTarget ? `Nice work on "${linkedTarget.title}". Time for a break.` : 'Nice work. Time for a break.')
 
       // Next phase: long break every N sessions, else short break
       const next = newCount % settings.longEvery === 0 ? 'long' : 'short'
@@ -414,9 +421,9 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
             <Tabs light />
             <Ring size={isMobile ? 260 : 320} />
-            {linkedTask && (
+            {linkedTarget && (
               <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)', maxWidth: 360, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {linkedTask.title}
+                {linkedTarget.title}
               </div>
             )}
             <Controls light />
@@ -461,8 +468,10 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
       <div style={{
         ...panelStyle,
         maxWidth: 'calc(100vw - 24px)',
+        maxHeight: isMobile ? 'calc(100dvh - 92px)' : 'calc(100dvh - 110px)',
+        overflowY: 'auto',
         background: 'var(--surface)', border: '1px solid var(--border)',
-        borderRadius: 20, boxShadow: 'var(--shadow-modal)', overflow: 'hidden',
+        borderRadius: 20, boxShadow: 'var(--shadow-modal)',
         animation: 'modal-in .18s cubic-bezier(.22,1,.36,1)',
       }}>
         {/* Header */}
@@ -505,13 +514,26 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], onUpda
           <select className="field" value={taskId ?? ''} onChange={e => setTaskId(e.target.value || null)}
             style={{ marginTop: 5, padding: '8px 12px', fontSize: '0.8rem' }}>
             <option value="">No specific task</option>
-            {todos.filter(t => !t.completed).map(t => (
-              <option key={t.id} value={t.id}>{t.title}</option>
-            ))}
+            {todos.some(t => !t.completed) && (
+              <optgroup label="Tasks">
+                {todos.filter(t => !t.completed).map(t => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </optgroup>
+            )}
+            {canvasAssignments.some(a => !a.done) && (
+              <optgroup label="Canvas assignments">
+                {canvasAssignments.filter(a => !a.done).map(a => (
+                  <option key={a.id} value={`canvas:${a.id}`}>
+                    {a.title}{a.courseName ? ` · ${a.courseName}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
-          {linkedTask?.focusSeconds > 0 && (
+          {linkedTarget?.focusSeconds > 0 && (
             <div style={{ fontSize: '0.66rem', color: 'var(--text-3)', marginTop: 5 }}>
-              {fmtDuration(linkedTask.focusSeconds)} focused on this task so far
+              {fmtDuration(linkedTarget.focusSeconds)} focused on this task so far
             </div>
           )}
         </div>
@@ -601,13 +623,13 @@ function BackgroundFX({ type, accent }) {
 
   // stars / snow — generated particle field
   const isSnow = type === 'snow'
-  const count = isSnow ? 70 : 90
+  const count = isSnow ? 70 : 55
   const particles = Array.from({ length: count }, (_, i) => ({
     id: i,
     left: Math.random() * 100,
     top: Math.random() * 100,
-    size: isSnow ? 2 + Math.random() * 4 : 1 + Math.random() * 2.4,
-    dur: isSnow ? 7 + Math.random() * 9 : 2.5 + Math.random() * 4,
+    size: isSnow ? 2 + Math.random() * 4 : 1.4 + Math.random() * 1.8,
+    dur: isSnow ? 7 + Math.random() * 9 : 3.5 + Math.random() * 5,
     delay: Math.random() * -12,
     drift: (Math.random() * 2 - 1) * 40,
   }))
@@ -619,7 +641,8 @@ function BackgroundFX({ type, accent }) {
           position: 'absolute', left: `${p.left}%`, top: isSnow ? '-5%' : `${p.top}%`,
           width: p.size, height: p.size, borderRadius: '50%',
           background: isSnow ? 'rgba(255,255,255,0.9)' : '#fff',
-          boxShadow: isSnow ? 'none' : `0 0 ${p.size * 2}px rgba(255,255,255,0.8)`,
+          boxShadow: isSnow ? 'none' : '0 0 3px rgba(255,255,255,0.5)',
+          willChange: 'opacity',
           ['--drift']: `${p.drift}px`,
           animation: isSnow
             ? `lv-snow ${p.dur}s linear ${p.delay}s infinite`
