@@ -1881,7 +1881,7 @@ export default function Home() {
           {/* Settings menu — dark mode, accent color, show tour */}
           <SettingsMenu
             theme={theme}
-            onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onSetTheme={setTheme}
             onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
             variant="sidebar"
           />
@@ -2246,7 +2246,7 @@ export default function Home() {
               {/* Settings menu — dark mode, accent color, show tour */}
               <SettingsMenu
                 theme={theme}
-                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onSetTheme={setTheme}
                 onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
                 variant="sidebar"
               />
