@@ -13,9 +13,6 @@ export default function WeeklyCalendar({
   onRecolorEvent, colorSwatches,
 }) {
   const calendarRef      = useRef(null)
-  const calendarRef2     = useRef(null)       // second calendar for 2-week stacked view
-  const is2WeekModeRef   = useRef(false)      // sync flag used inside callbacks
-  const secondCalInitDate = useRef(null)      // initial date for second calendar on mount
   const touchStart       = useRef(null)
   const swipedRef        = useRef(false)
   const swipeResetRef    = useRef(null)
@@ -26,8 +23,6 @@ export default function WeeklyCalendar({
   const [navAnim,        setNavAnim]       = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
   const [viewAnim,       setViewAnim]      = useState(null) // 'exit' | 'enter' | null
   const [currentView,    setCurrentView]   = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
-  const [is2WeekMode,    setIs2WeekMode]   = useState(false)
-  const [secondCalKey,   setSecondCalKey]  = useState(0)   // bump to force-remount second calendar
   const [colorPopover,   setColorPopover]  = useState(null) // { eventId, x, y }
 
   useEffect(() => {
@@ -202,25 +197,8 @@ export default function WeeklyCalendar({
     setViewAnim('exit')
 
     viewAnimTimer.current = setTimeout(() => {
-      if (viewName === 'timeGrid2Week') {
-        // ── Entering 2-week stacked mode ──────────────────────────────────
-        // Ensure main calendar is in weekly view so columns match
-        if (api.view.type !== 'timeGridWeek') api.changeView('timeGridWeek')
-        // Capture the start of the week that will be shown by the second calendar
-        const nextWeekStart = new Date(api.view.activeStart)
-        nextWeekStart.setDate(nextWeekStart.getDate() + 7)
-        secondCalInitDate.current = nextWeekStart
-        setSecondCalKey(k => k + 1)   // force remount so initialDate is picked up
-        is2WeekModeRef.current = true
-        setIs2WeekMode(true)
-        setCurrentView('timeGrid2Week')
-      } else {
-        // ── Leaving 2-week mode (or switching between other views) ─────────
-        is2WeekModeRef.current = false
-        setIs2WeekMode(false)
-        api.changeView(viewName)
-        // currentView will be updated via handleDatesSet once FC fires
-      }
+      api.changeView(viewName)
+      // currentView will be updated via handleDatesSet once FC fires
 
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -325,17 +303,6 @@ export default function WeeklyCalendar({
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
-    if (is2WeekModeRef.current) {
-      // Keep currentView as 'timeGrid2Week' — don't let FC's internal timeGridWeek overwrite it.
-      // Sync second calendar to always trail the first by exactly one week.
-      const api2 = calendarRef2.current?.getApi()
-      if (api2) {
-        const nextWeekStart = new Date(info.start)
-        nextWeekStart.setDate(nextWeekStart.getDate() + 7)
-        api2.gotoDate(nextWeekStart)
-      }
-      return
-    }
     setCurrentView(info.view.type)
     onViewChange?.(info.view.type)
   }
@@ -406,7 +373,6 @@ export default function WeeklyCalendar({
              display: 'flex', flexDirection: 'column',
            }}>
 
-        {/* ── Top half (or full height when not in 2-week mode) ── */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <FullCalendar
             ref={calendarRef}
@@ -415,7 +381,7 @@ export default function WeeklyCalendar({
             headerToolbar={{
               left:   'prev,next today',
               center: 'title',
-              right:  'viewMonth,viewWeek,view2Week,viewDay',
+              right:  'viewMonth,viewWeek,viewDay',
             }}
             buttonText={{ today: 'today' }}
             views={{
@@ -433,7 +399,6 @@ export default function WeeklyCalendar({
               next:      { click: () => navigate('next') },
               viewMonth: { text: isMobile ? 'M' : 'Month',  click: () => switchView('dayGridMonth')  },
               viewWeek:  { text: isMobile ? 'W' : 'Week',   click: () => switchView('timeGridWeek')  },
-              view2Week: { text: isMobile ? '2W' : '2 Wks', click: () => switchView('timeGrid2Week') },
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
             }}
             events={events}
@@ -477,65 +442,6 @@ export default function WeeklyCalendar({
             businessHours={{ daysOfWeek: [1,2,3,4,5], startTime: '08:00', endTime: '20:00' }}
           />
         </div>
-
-        {/* ── Bottom half: upcoming week (only in 2-week stacked mode) ── */}
-        {is2WeekMode && (
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', borderTop: '2px solid var(--border)' }}>
-            <FullCalendar
-              key={secondCalKey}
-              ref={calendarRef2}
-              plugins={[timeGridPlugin, interactionPlugin]}
-              initialView="timeGridWeek"
-              initialDate={secondCalInitDate.current || undefined}
-              headerToolbar={false}
-              views={{
-                timeGridWeek: {
-                  // Same header format as the top calendar — weekday + date, no month label
-                  dayHeaderFormat: isMobile
-                    ? { weekday: 'narrow', day: 'numeric' }
-                    : { weekday: 'short', day: 'numeric' },
-                },
-              }}
-              events={events}
-              eventContent={renderEventContent}
-              eventDidMount={handleEventDidMount}
-              eventWillUnmount={handleEventWillUnmount}
-              eventsSet={() => {
-                const api2 = calendarRef2.current?.getApi()
-                if (api2) requestAnimationFrame(() => updateOverlapClasses(api2))
-              }}
-              eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
-              dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
-              editable={false}
-              height="100%"
-              allDaySlot={true}
-              allDayContent={() => (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.7rem', fontWeight: 700, color: 'var(--blue-text)', letterSpacing: '0.04em', textTransform: 'uppercase', padding: '2px 0' }}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                  Tasks
-                </div>
-              )}
-              slotMinTime="00:00:00"
-              slotMaxTime="24:00:00"
-              slotDuration="00:30:00"
-              slotLabelInterval="01:00:00"
-              slotLabelFormat={isMobile
-                ? { hour: 'numeric', hour12: true }
-                : { hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}
-              eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short', hour12: true }}
-              nowIndicator={true}
-              firstDay={0}
-              weekends={true}
-              selectable={true}
-              dayMaxEvents={4}
-              expandRows={true}
-              scrollTime="08:00:00"
-              eventMinHeight={isMobile ? 32 : 28}
-              eventDisplay="block"
-              businessHours={{ daysOfWeek: [1,2,3,4,5], startTime: '08:00', endTime: '20:00' }}
-            />
-          </div>
-        )}
       </div>
     </div>
   )

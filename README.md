@@ -139,7 +139,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
 - **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Snow**, **Aurora**, **Rain** (diagonal streaks), or **Fireflies** (warm drifting glowing dots) — all pure CSS/JS animation, no assets (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
-- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel
+- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel; when signed in they are included in the cloud sync and will appear on all your devices
 - Self-contained — adds `lv-focus` and `lv-study-sessions` localStorage keys; never alters existing events or tasks
 
 ### ⏱ Study Time Tracking
@@ -148,7 +148,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 
 - **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
 - **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
-- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` (localStorage-only — no schema/sync changes needed)
+- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` and synced to Neon DB for signed-in users (cross-device)
 - Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
@@ -162,6 +162,33 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - Selected rows highlight with a color tint
 - A sticky bottom bar shows the count and "Mark done" / "Cancel" buttons
 - Only undone assignments are toggled — no double-toggle on already-done items
+
+### 📊 Weekly Recap + Streaks
+
+A compact **"Your week"** section lives inside the **Focus Timer** panel (open it from the desktop timer FAB or the mobile Settings tab), grouping your weekly stats with the rest of your timing tools:
+
+- **Tasks completed this week** — counts both to-do completions and Canvas mark-done actions
+- **Focus hours this week** — reads from the Focus Timer's `lv-study-sessions` localStorage key
+- **Day streak** — a flame icon shows consecutive days with at least one completed task or focus session; tracked in `localStorage` under `lv-streak` (`{streak, lastDate, bestStreak, completionDates, lastWeekCompleted}`)
+- **Week-over-week delta** — "+3 vs last wk" if you did more tasks than last Sunday–Saturday
+- **Personal-best confetti** — hitting a new longest streak triggers the existing confetti component
+- Streak is updated automatically when any task or Canvas assignment is marked done
+
+### 📛 PWA App Icon Badge
+
+When supported by the browser/OS (Android Chrome, desktop Chrome/Edge), the app icon shows a numeric badge equal to the count of **tasks + Canvas assignments due today** that are not yet completed. The badge clears when everything is done. Uses the [Web Badging API](https://developer.mozilla.org/en-US/docs/Web/API/Badging_API); silently ignored on unsupported browsers.
+
+### 📬 Sunday Week-Ahead Push Digest
+
+Opted-in users receive a background push every **Sunday at 6 PM UTC** with a personalised preview of the coming week:
+
+> **Your week ahead** — 4 tasks, 2 events — busiest day: Wednesday
+
+- Opt in/out via the **"📬 Weekly digest ON/OFF"** toggle in the **Focus Timer** panel's "Your week" section
+- Requires sign-in (the toggle shows "Sign in to get a Sunday week-ahead digest" otherwise)
+- The cron is configured in `vercel.json` and calls `GET /api/push/digest` — protected by `Authorization: Bearer $CRON_SECRET`
+- `digest_enabled` column added to `push_subscriptions` (backward compatible, `DEFAULT false`)
+- **Upgrade existing install:** run `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;` in the Neon SQL Editor
 
 ### 🔔 Browser Push Notifications
 - Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded
@@ -232,6 +259,14 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - Mobile-friendly — proper bottom padding for the tab bar
 - Empty state shown when nothing is scheduled in the next 14 days
 
+### 📚 Exam Study-Plan Generator
+- After saving any **Exam / Quiz** event, a compact follow-up modal appears: "Generate a study plan for this exam?"
+- Configure the **number of sessions** (1–6, default 3) and **session length** (30 m – 2 h, default 1 h)
+- Sessions are auto-scheduled using a **spaced-repetition spacing formula** — 1, 3, 5, 7, … days before the exam — with days that fall before today skipped silently
+- Each session lands in a free **16:00–21:00 slot** on its target day, checked against all existing events and class schedule meetings; the least-conflicting slot is chosen as a fallback
+- Created sessions are normal calendar events titled **"Study: \<exam title\>"** with a `studyPlanOf` back-reference to the exam event's ID
+- **Linked cleanup** — deleting an exam event shows a toast offering to also delete its associated study sessions
+
 ### 🚨 Conflict Detection
 - When creating or editing a **timed event** in the Event modal, the app automatically detects time overlaps with other events and class schedule meetings
 - **Non-blocking** — an amber warning banner appears inline ("Overlaps with Physics 101, 2:00–3:15 PM") but never prevents saving
@@ -239,7 +274,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - Only fires for timed (non-all-day) events; all-day events are excluded
 
 ### 🎨 Accent Color Themes
-Choose your preferred accent color from the sidebar (look for **Accent color** near the bottom). Six palettes are available:
+Choose your preferred accent color from the **Settings** menu (the gear button at the bottom of the sidebar / Settings tab). Six palettes are available:
 - **Luminae Blue** — the default; indistinguishable from the original brand
 - **Violet**, **Emerald**, **Rose**, **Amber**, **Slate**
 
@@ -259,7 +294,7 @@ First-run modal wizard shown once to new users. Four steps:
 3. **Canvas LMS** — how to get an API token and connect (or skip)
 4. **Quick tour** — annotated overview of Calendar, To-Do, Corvus AI, and Focus Timer
 
-The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via the **Show tour** button in the sidebar bottom area (desktop) or the Settings tab (mobile). The localStorage flag `lv-onboarding-done` controls visibility.
+The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via **Show tour** in the **Settings** menu (the gear button at the bottom of the sidebar / Settings tab). The localStorage flag `lv-onboarding-done` controls visibility.
 
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
@@ -393,6 +428,13 @@ DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
 VAPID_PRIVATE_KEY=your_vapid_private_key
 VAPID_SUBJECT=mailto:your@email.com
+
+# Cron secret — required for the Sunday week-ahead digest cron job
+# The Vercel cron runtime calls GET /api/push/digest with this header:
+#   Authorization: Bearer $CRON_SECRET
+# Generate one: openssl rand -hex 32
+# Add the same value to your Vercel project environment variables.
+CRON_SECRET=your_cron_secret
 ```
 
 > **Error tracking (optional):** A guarded Sentry scaffold lives on the `chore/error-tracking`
@@ -485,7 +527,9 @@ src/
 │   │   │   └── calendar/     # Fetch manual Canvas calendar events
 │   │   ├── push/
 │   │   │   ├── subscribe/    # POST upsert / DELETE remove push subscription
-│   │   │   └── send/         # POST send push notification to all user subs
+│   │   │   ├── send/         # POST send push notification to all user subs
+│   │   │   ├── digest/       # GET Sunday week-ahead push digest (cron-protected)
+│   │   │   └── digest-pref/  # POST toggle digest_enabled for a subscription
 │   │   └── corvus/           # Groq AI chat endpoint (context-aware)
 │   ├── error.js              # Next.js App Router error boundary page
 │   ├── login/                # Sign-in page
@@ -523,6 +567,7 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
+    ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
     ├── auth.js             # findOrCreateUser(email)
@@ -543,11 +588,14 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
-| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) |
+| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) + Neon DB per user (synced when signed in) |
 | Accent color preference | Browser `localStorage` (`lv-accent`) |
 | Onboarding wizard completion | Browser `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
+| Streak ledger | Browser `localStorage` (`lv-streak`) |
+| Digest opt-in pref (local cache) | Browser `localStorage` (`lv-digest-enabled`) |
+| Digest opt-in pref (canonical) | Neon DB — `push_subscriptions.digest_enabled` |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |

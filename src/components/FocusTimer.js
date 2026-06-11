@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import Confetti from './Confetti'
 import Select from './Select'
+import WeeklyRecap from './WeeklyRecap'
 
 const DEFAULTS = {
   focusMin: 25,
@@ -100,7 +101,7 @@ function saveStudySession(session) {
   } catch {}
 }
 
-export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast }) {
+export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
@@ -225,13 +226,16 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       setFocusSecondsToday(s => s + elapsed)
 
       // Persist completed session for study time tracking
-      saveStudySession({
+      const completedSession = {
         id:          `fs-${endMs}`,
         courseId:    courseTag?.courseId   ?? null,
         courseName:  courseTag?.courseName ?? null,
         durationSec: elapsed,
         date:        todayStr(),
-      })
+      }
+      saveStudySession(completedSession)
+      // Notify page.js so studySessions state stays in sync → cloud sync picks it up
+      onSessionComplete?.(completedSession)
 
       // Accumulate focus time on the task (additive field, ignored elsewhere)
       if (linkedTarget) {
@@ -563,6 +567,9 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <div style={{ marginBottom: 12 }}>{CoursePicker({})}</div>
                 )}
                 {SettingsContent({})}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
+                </div>
               </div>
             </div>
           )}
@@ -695,6 +702,11 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
             <span><b style={{ color: 'var(--text)' }}>{sessionsToday}</b> session{sessionsToday !== 1 ? 's' : ''}</span>
             <span><b style={{ color: 'var(--text)' }}>{fmtDuration(focusSecondsToday)}</b> focused</span>
           </span>
+        </div>
+
+        {/* Weekly recap + Sunday digest */}
+        <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
+          <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
         </div>
       </div>
     </>
