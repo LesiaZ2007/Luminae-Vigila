@@ -1,32 +1,68 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 
+/**
+ * Branded dropdown.
+ *
+ * The menu is rendered in a PORTAL with fixed positioning so it is never clipped by
+ * a scrollable/overflow:hidden ancestor (e.g. the Focus Timer panel) and always sits
+ * above other layers. It flips upward when there isn't room below.
+ *
+ * options: array of { value, label } — or { header: true, label } for a non-selectable
+ * group header row.
+ */
 export default function Select({ value, onChange, options, placeholder = 'Select…' }) {
   const [open,       setOpen]       = useState(false)
   const [hoveredVal, setHoveredVal] = useState(null)
-  const ref = useRef(null)
+  const [pos,        setPos]        = useState(null) // { left, top, width, openUp }
+  const triggerRef = useRef(null)
+  const menuRef    = useRef(null)
+
+  function computePos() {
+    const el = triggerRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom
+    const spaceAbove = r.top
+    const desired    = Math.min(264, options.length * 40 + 8)
+    const openUp     = spaceBelow < desired && spaceAbove > spaceBelow
+    const maxH       = Math.max(140, Math.min(264, (openUp ? spaceAbove : spaceBelow) - 14))
+    setPos({ left: r.left, top: r.top, bottom: r.bottom, width: r.width, openUp, maxH })
+  }
+
+  useLayoutEffect(() => { if (open) computePos() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return
+    const reposition = () => computePos()
     function handler(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+      if (triggerRef.current?.contains(e.target)) return
+      if (menuRef.current?.contains(e.target)) return
+      setOpen(false)
     }
     function onKey(e) { if (e.key === 'Escape') setOpen(false) }
+    // capture scrolls from any ancestor so the menu tracks the trigger
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
     document.addEventListener('mousedown', handler)
     document.addEventListener('keydown', onKey)
     return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
       document.removeEventListener('mousedown', handler)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selected = options.find(o => String(o.value) === String(value))
+  const selected = options.find(o => !o.header && String(o.value) === String(value))
 
   return (
-    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+    <div style={{ position: 'relative', width: '100%' }}>
       {/* Trigger */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(v => !v)}
         style={{
@@ -40,8 +76,6 @@ export default function Select({ value, onChange, options, placeholder = 'Select
           boxShadow: open ? '0 0 0 3px var(--blue-ring)' : 'none',
           transition: 'border-color .15s, box-shadow .15s',
         }}
-        onFocus={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--blue-ring)' }}
-        onBlur={e => { if (!open) { e.currentTarget.style.borderColor = ''; e.currentTarget.style.boxShadow = '' } }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected?.label || placeholder}
@@ -54,16 +88,29 @@ export default function Select({ value, onChange, options, placeholder = 'Select
         </svg>
       </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 5px)', left: 0, right: 0, zIndex: 200,
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 12, boxShadow: 'var(--shadow-modal)', overflow: 'hidden',
-          animation: 'modal-in 0.16s cubic-bezier(0.16,1,0.3,1) both',
-          maxHeight: 260, overflowY: 'auto',
-        }}>
+      {/* Dropdown — portaled to body so no overflow ancestor can clip it */}
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed', left: pos.left, width: pos.width, zIndex: 6000,
+            ...(pos.openUp
+              ? { bottom: window.innerHeight - pos.top + 5 }
+              : { top: pos.bottom + 5 }),
+            maxHeight: pos.maxH, overflowY: 'auto',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 12, boxShadow: 'var(--shadow-modal)',
+            animation: 'modal-in 0.16s cubic-bezier(0.16,1,0.3,1) both',
+          }}>
           {options.map(opt => {
+            if (opt.header) {
+              return (
+                <div key={opt.value ?? opt.label}
+                  style={{ padding: '8px 14px 4px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)' }}>
+                  {opt.label}
+                </div>
+              )
+            }
             const isSelected = String(opt.value) === String(value)
             const isHovered  = hoveredVal === opt.value
             return (
@@ -84,14 +131,15 @@ export default function Select({ value, onChange, options, placeholder = 'Select
               >
                 {opt.label}
                 {isSelected && (
-                  <svg width="13" height="10" viewBox="0 0 13 10" fill="none">
+                  <svg width="13" height="10" viewBox="0 0 13 10" fill="none" style={{ flexShrink: 0, marginLeft: 8 }}>
                     <path d="M1.5 5L5 8.5 11.5 1.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 )}
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
