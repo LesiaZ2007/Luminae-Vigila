@@ -464,7 +464,6 @@ select option {
 /* Active state for custom view-switch buttons (lv-cal-view-* class on container) */
 .lv-cal-view-dayGridMonth  .fc-viewMonth-button,
 .lv-cal-view-timeGridWeek  .fc-viewWeek-button,
-.lv-cal-view-timeGrid2Week .fc-view2Week-button,
 .lv-cal-view-timeGridDay   .fc-viewDay-button {
   background-color: var(--blue) !important;
   border-color:     var(--blue) !important;

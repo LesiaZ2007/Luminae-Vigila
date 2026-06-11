@@ -20,6 +20,7 @@ function useWindowWidth() {
 }
 import TodoPanel  from '@/components/TodoPanel'
 import EventModal from '@/components/EventModal'
+import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
@@ -35,10 +36,12 @@ import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
 import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 import FocusTimer             from '@/components/FocusTimer'
-import AccentPicker           from '@/components/AccentPicker'
+import SettingsMenu           from '@/components/SettingsMenu'
 import OfflineIndicator       from '@/components/OfflineIndicator'
 import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
+import { updateStreak } from '@/components/WeeklyRecap'
+import { updateAppBadge } from '@/lib/appBadge'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -70,9 +73,11 @@ export default function Home() {
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
   const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
+  const [studySessions,  setStudySessions]  = useState([])
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
+  const [studyPlanPending, setStudyPlanPending] = useState(null) // exam event that just got saved
   const [showTodoModal,   setShowTodoModal]   = useState(false)
   const [editingTodo,     setEditingTodo]     = useState(null)
   const [initialTodoDate, setInitialTodoDate] = useState(null)
@@ -149,6 +154,9 @@ export default function Home() {
   const shownReminders  = useRef(new Set())
   const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+
+  const [digestEnabled, setDigestEnabled] = useState(false)
+  const [digestSaving,  setDigestSaving]  = useState(false)
 
   const [clockTime,    setClockTime]    = useState(() => new Date())
   const [weather,      setWeather]      = useState(null)
@@ -247,6 +255,10 @@ export default function Home() {
           // eventPrefs is a plain object {eventId: {hidden, color}} — local wins
           return { ...(cloud.eventPrefs ?? {}), ...local }
         })
+        setStudySessions(local => {
+          const merged = mergeById(cloud.studySessions, local)
+          return merged
+        })
 
         // Count how many local items weren't in the cloud (new uploads)
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
@@ -257,11 +269,12 @@ export default function Home() {
         setTimeout(() => {
           // Re-read from localStorage (already written by the effects below)
           try {
-            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')     ?? '[]')
-            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')      ?? '[]')
-            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')  ?? '[]')
-            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes') ?? '[]')
-            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs') ?? '{}')
+            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
+            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
+            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
+            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
+            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
+            const mergedSessions  = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
 
             const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
             const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
@@ -275,6 +288,7 @@ export default function Home() {
                 todoCategories: mergedCats,
                 classSchedule:  mergedClasses,
                 eventPrefs:     mergedPrefs,
+                studySessions:  mergedSessions,
               }),
             }).then(() => {
               if (newEvents + newTodos > 0) {
@@ -306,11 +320,12 @@ export default function Home() {
           todoCategories,
           classSchedule:  canvasClasses,
           eventPrefs,
+          studySessions,
         }),
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [events, todos, todoCategories, canvasClasses, eventPrefs, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -369,10 +384,12 @@ export default function Home() {
       const t  = localStorage.getItem('lv-todos')
       const tc = localStorage.getItem('lv-todo-cats')
       const ep = localStorage.getItem('lv-event-prefs')
+      const ss = localStorage.getItem('lv-study-sessions')
       if (e)  setEvents(JSON.parse(e))
       if (t)  setTodos(JSON.parse(t))
       if (tc) setTodoCategories(JSON.parse(tc))
       if (ep) setEventPrefs(JSON.parse(ep))
+      if (ss) setStudySessions(JSON.parse(ss))
       // Canvas
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
@@ -385,10 +402,11 @@ export default function Home() {
     } catch (_) {}
   }, [])
 
-  useEffect(() => { localStorage.setItem('lv-events',    JSON.stringify(events))         }, [events])
-  useEffect(() => { localStorage.setItem('lv-todos',     JSON.stringify(todos))          }, [todos])
-  useEffect(() => { localStorage.setItem('lv-todo-cats', JSON.stringify(todoCategories)) }, [todoCategories])
-  useEffect(() => { localStorage.setItem('lv-event-prefs', JSON.stringify(eventPrefs))   }, [eventPrefs])
+  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(events))         }, [events])
+  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todos))          }, [todos])
+  useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
+  useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
+  useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
@@ -470,6 +488,7 @@ export default function Home() {
       })
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
+      setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
     } catch (_) {
@@ -514,6 +533,63 @@ export default function Home() {
     return () => clearInterval(id)
   }, [events, todos, pushToast])
 
+  /* ── Digest preference ── */
+  // Read the current push subscription's digest_enabled from the DB when signed in.
+  useEffect(() => {
+    if (!currentUser || typeof navigator === 'undefined') return
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => {
+      if (!sub) return
+      // We don't have a dedicated GET endpoint, so we store the pref in localStorage
+      // to avoid an extra round-trip on every load. The canonical value is the DB.
+      try {
+        const saved = localStorage.getItem('lv-digest-enabled')
+        if (saved !== null) setDigestEnabled(JSON.parse(saved))
+      } catch {}
+    }).catch(() => {})
+  }, [currentUser])
+
+  const toggleDigest = useCallback(async () => {
+    if (!currentUser) return
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    setDigestSaving(true)
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const sub = await reg.pushManager.getSubscription()
+      if (!sub) { pushToast('Notifications not enabled', 'Enable push notifications first.'); return }
+      const next = !digestEnabled
+      const res = await fetch('/api/push/digest-pref', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ endpoint: sub.endpoint, digest_enabled: next }),
+      })
+      if (res.ok) {
+        setDigestEnabled(next)
+        try { localStorage.setItem('lv-digest-enabled', JSON.stringify(next)) } catch {}
+        pushToast(next ? 'Sunday digest enabled' : 'Sunday digest disabled', next ? 'You\'ll get a weekly preview every Sunday at 6 PM UTC.' : 'No more weekly digest pushes.')
+      } else {
+        pushToast('Could not update digest preference', 'Please try again.')
+      }
+    } catch {
+      pushToast('Could not update digest preference', 'Please try again.')
+    } finally {
+      setDigestSaving(false)
+    }
+  }, [currentUser, digestEnabled, pushToast])
+
+  /* ── PWA App Icon Badge ── */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const incompleteTodosToday = todos.filter(t =>
+      !t.completed && t.dueDate === todayStr
+    ).length
+    const canvasDueToday = canvasAssignments.filter(a =>
+      !a.done && !a.hidden && a.dueAt && a.dueAt.slice(0, 10) === todayStr
+    ).length
+    updateAppBadge(incompleteTodosToday + canvasDueToday)
+  }, [todos, canvasAssignments])
+
   /* ── Event CRUD ── */
   const saveEvent = useCallback((ev, scope = 'single') => {
     if (scope === 'all') {
@@ -528,11 +604,17 @@ export default function Home() {
       ])
     } else {
       const expanded = expandRecurring(ev)
-      if (ev.id && events.some(e => e.id === ev.id)) {
+      const isNewEvent = !ev.id || !events.some(e => e.id === ev.id)
+      if (!isNewEvent) {
         // Single edit — replace just that one instance
         setEvents(prev => prev.map(e => e.id === ev.id ? expanded[0] : e))
       } else {
         setEvents(prev => [...prev, ...expanded])
+      }
+      // After saving a NEW exam event, offer to generate a study plan
+      if (isNewEvent && ev.extendedProps?.category === 'exam') {
+        // expanded[0] has the final id (from expandRecurring or the original)
+        setStudyPlanPending(expanded[0] ?? { ...ev, id: ev.id || String(Date.now()) })
       }
     }
   }, [events])
@@ -579,6 +661,28 @@ export default function Home() {
             setTodos(curTodos => curTodos.map(t =>
               stillGone.has(t.linkedEventId) ? { ...t, linkedEventId: null } : t
             ))
+            // For each deleted exam event, offer to delete its linked study sessions
+            stillGone.forEach(eid => {
+              setEvents(cur => {
+                const studySessions = cur.filter(e => e.extendedProps?.studyPlanOf === eid)
+                if (studySessions.length === 0) return cur
+                const sessionIds = new Set(studySessions.map(s => s.id))
+                const toastId2 = pushToast(
+                  `Delete ${studySessions.length} study session${studySessions.length !== 1 ? 's' : ''}?`,
+                  `Linked study sessions for the deleted exam were found.`,
+                  [
+                    {
+                      label: 'Delete sessions',
+                      dismiss: true,
+                      onClick: () => setEvents(c => c.filter(e => !sessionIds.has(e.id))),
+                    },
+                    { label: 'Keep', dismiss: true, onClick: () => {} },
+                  ],
+                  { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+                )
+                return cur // no change yet — user decides
+              })
+            })
           }
           return curEvs // no change to events
         })
@@ -651,12 +755,19 @@ export default function Home() {
       setTodos(p => p.map(t => {
         if (t.id !== baseId) return t
         const completed = t.completedDates || []
-        return completed.includes(dateStr)
+        const wasCompleted = completed.includes(dateStr)
+        if (!wasCompleted) updateStreak(dateStr)
+        return wasCompleted
           ? { ...t, completedDates: completed.filter(d => d !== dateStr) }
           : { ...t, completedDates: [...completed, dateStr] }
       }))
     } else {
-      setTodos(p => p.map(t => t.id === id ? { ...t, completed: !t.completed } : t))
+      setTodos(p => p.map(t => {
+        if (t.id !== id) return t
+        const nowCompleting = !t.completed
+        if (nowCompleting) updateStreak()
+        return { ...t, completed: nowCompleting }
+      }))
     }
   }, [])
   const deleteTodo = useCallback((id) => {
@@ -968,11 +1079,12 @@ export default function Home() {
 
   /* ── Canvas CRUD ── */
   const toggleCanvasAssignment = useCallback((id) => {
-    setCanvasAssignments(prev => prev.map(a =>
-      a.id === id
-        ? { ...a, done: !a.done, doneDate: !a.done ? new Date().toISOString().slice(0, 10) : null }
-        : a
-    ))
+    setCanvasAssignments(prev => prev.map(a => {
+      if (a.id !== id) return a
+      const nowDone = !a.done
+      if (nowDone) updateStreak()
+      return { ...a, done: nowDone, doneDate: nowDone ? new Date().toISOString().slice(0, 10) : null }
+    }))
   }, [])
 
   const hideCanvasAssignment = useCallback((id) => {
@@ -1734,25 +1846,13 @@ export default function Home() {
             )}
           </div>
 
-          {/* Dark mode toggle */}
-          <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
-            {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
-          </button>
-
-          {/* Accent color picker */}
-          <AccentPicker variant="sidebar" />
-
-          {/* Show tour */}
-          <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
-            Show tour
-          </button>
+          {/* Settings menu — dark mode, accent color, show tour */}
+          <SettingsMenu
+            theme={theme}
+            onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+            variant="sidebar"
+          />
         </div>
       </aside>}
 
@@ -1920,6 +2020,7 @@ export default function Home() {
               <CoursesPanel
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
+                studySessions={studySessions}
                 onToggleCanvas={toggleCanvasAssignment}
                 onUpdateCanvasNotes={updateCanvasNotes}
                 onOpenSettings={() => setShowCanvasSettings(true)}
@@ -2087,19 +2188,13 @@ export default function Home() {
                 onImport={handleImport}
                 inline
               />
-              <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
-                {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
-              </button>
-
-              {/* Accent color picker */}
-              <AccentPicker variant="sidebar" />
-
-              {/* Show tour */}
-              <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
-                Show tour
-              </button>
+              {/* Settings menu — dark mode, accent color, show tour */}
+              <SettingsMenu
+                theme={theme}
+                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+                variant="sidebar"
+              />
             </div>
           </main>
         )}
@@ -2148,6 +2243,19 @@ export default function Home() {
                     existingEvents={events}
                     canvasClasses={canvasClasses}
                     onClose={() => setEventModal({ open: false, event: null, date: null })} />
+      )}
+      {studyPlanPending && (
+        <StudyPlanModal
+          examEvent={studyPlanPending}
+          existingEvents={events}
+          canvasClasses={canvasClasses}
+          onConfirm={(sessions) => {
+            sessions.forEach(s => saveEvent(s, 'single'))
+            setStudyPlanPending(null)
+            pushToast(`${sessions.length} study session${sessions.length !== 1 ? 's' : ''} scheduled`, `For "${studyPlanPending.title}"`)
+          }}
+          onDismiss={() => setStudyPlanPending(null)}
+        />
       )}
       {showTodoModal && (
         <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
@@ -2296,7 +2404,13 @@ export default function Home() {
           onUpdateTodo={updateTodo}
           onUpdateCanvas={updateCanvasAssignment}
           onSaveEvent={saveEvent}
+          onSessionComplete={ss => setStudySessions(prev => {
+            // Guard against duplicate ids (e.g. double-fire edge cases)
+            if (prev.some(s => s.id === ss.id)) return prev
+            return [...prev, ss]
+          })}
           pushToast={pushToast}
+          digest={{ enabled: digestEnabled, saving: digestSaving, onToggle: toggleDigest, signedIn: !!currentUser }}
         />
       </ErrorBoundary>
 
