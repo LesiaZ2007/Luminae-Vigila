@@ -58,6 +58,10 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course
 - Fully independent of Canvas
 
+### ☁️ Cloud Sync — Reliability & Manual Refresh
+- **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
+- **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.
+
 ### 🔐 Sign In *(optional)*
 - **Local-first by default** — events and tasks live in your browser's local storage, no account needed
 - **Sign in with Google** to sync your identity across devices

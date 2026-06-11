@@ -28,7 +28,12 @@ function getClient() {
 /**
  * Tagged-template SQL helper that proxies to the Neon client.
  * Throws a clear error at query time (not at import time) if DATABASE_URL is missing.
+ *
+ * sql.transaction([query, query, ...]) — runs multiple tagged-template query objects
+ * in a single atomic transaction via the Neon HTTP driver.
  */
 const sql = (strings, ...values) => getClient()(strings, ...values)
+
+sql.transaction = (queries) => getClient().transaction(queries)
 
 export default sql
