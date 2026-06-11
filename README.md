@@ -51,6 +51,18 @@ Works fully offline without an account. Sign in to sync across devices or manual
   - One-click links to open assignments in Canvas
   - Filter: **Upcoming / All / Done**
 
+### 📊 GPA / Grade Projection
+
+A collapsible **GPA / Grades** card appears at the top of the Courses tab whenever Canvas is connected and at least one assignment has been graded.
+
+- **Per-course letter grade and percentage** — computed from the sum of earned points divided by graded points possible (e.g. 87 / 100 → B+)
+- **Grading scale** — A 93–100 = 4.0, A– 90–92 = 3.7, B+ 87–89 = 3.3, … F < 60 = 0.0
+- **Credit hours** — editable per course (default 3), persisted to `localStorage` under `lv-gpa`
+- **Credit-weighted projected GPA** — displayed prominently at the top of the expanded card
+- **"What do I need?" helper** — enter a target percentage per course to see the required average score on remaining (ungraded) points
+- Mobile-responsive stacked layout; matches the existing Courses tab visual style
+- Empty state shown when no graded assignments exist yet
+
 ### 📆 Class Schedule *(no Canvas required)*
 - Add recurring class meetings manually — days of week, time, room, semester dates
 - Classes appear as color-coded repeating events on the calendar
@@ -297,6 +309,7 @@ src/
 │   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
 │   ├── CoursesPanel.js               # Canvas courses + assignments tab
+  ├── GpaPanel.js                   # GPA / grade-projection collapsible card (inside Courses tab)
 │   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
 │   ├── MiniMonthCalendar.js          # Compact month grid for sidebar (desktop only)
 │   ├── ErrorBoundary.js              # React error boundary with friendly recovery card
@@ -337,6 +350,7 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
+| GPA credit-hours per course | Browser `localStorage` (`lv-gpa`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
