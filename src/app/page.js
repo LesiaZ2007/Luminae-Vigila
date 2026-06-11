@@ -1339,7 +1339,7 @@ export default function Home() {
       : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
     // Settings tab — mobile only (sidebar handles settings on desktop)
-    ...(isMobile ? [{ id: 'settings', label: 'Settings', icon: <Settings size={22}/> }] : []),
+    ...(isMobile ? [{ id: 'settings', label: 'More', icon: <Settings size={22}/> }] : []),
   ]
 
   return (
@@ -1816,16 +1816,18 @@ export default function Home() {
 
             {/* Quick actions + theme */}
             <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-              <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Event
-              </button>
-              <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Task
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
+                  <Plus size={14}/> Event
+                </button>
+                <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(147,197,253,.3)', background: 'rgba(147,197,253,.1)', color: 'rgba(147,197,253,.85)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                  <Plus size={14}/> Task
+                </button>
+              </div>
               <button onClick={() => setFocusOpen(true)}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, var(--blue), #2d5a8a)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(58,111,168,.35)' }}>
                 <Timer size={14}/> Focus Timer
               </button>
               <ImportExportButton
