@@ -486,22 +486,22 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text)' }}>Timer settings</span>
                   <IconBtn title="Done" onClick={() => setShowSettings(false)}><X size={16} /></IconBtn>
                 </div>
-                <div style={{ marginBottom: 12 }}><TaskPicker /></div>
-                <SettingsContent />
+                <div style={{ marginBottom: 12 }}>{TaskPicker({})}</div>
+                {SettingsContent({})}
               </div>
             </div>
           )}
 
           {/* Center stack */}
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
-            <Tabs light />
-            <Ring size={isMobile ? 260 : 320} />
+            {Tabs({ light: true })}
+            {Ring({ size: isMobile ? 260 : 320 })}
             {linkedTarget && (
               <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)', maxWidth: 360, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {linkedTarget.title}
               </div>
             )}
-            <Controls light />
+            {Controls({ light: true })}
           </div>
 
           {/* Background picker */}
@@ -571,23 +571,23 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
         </div>
 
         {/* Phase tabs */}
-        <div style={{ padding: '0 14px' }}><Tabs /></div>
+        <div style={{ padding: '0 14px' }}>{Tabs({})}</div>
 
         {/* Ring */}
         <div style={{ display: 'flex', justifyContent: 'center', padding: '14px 0 6px' }}>
-          <Ring size={150} />
+          {Ring({ size: 150 })}
         </div>
 
         {/* Controls */}
-        <div style={{ padding: '4px 14px 10px' }}><Controls /></div>
+        <div style={{ padding: '4px 14px 10px' }}>{Controls({})}</div>
 
         {/* Task picker */}
-        <div style={{ padding: '0 14px 10px' }}><TaskPicker /></div>
+        <div style={{ padding: '0 14px 10px' }}>{TaskPicker({})}</div>
 
         {/* Settings drawer */}
         {showSettings && (
           <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
-            <SettingsContent />
+            {SettingsContent({})}
           </div>
         )}
 
