@@ -92,6 +92,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Add events and tasks**, edit them, and mark things complete — all via natural language
 - **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
+- **Server-side rate limited** to 20 requests per minute per user to protect the Groq API key; exceeding the limit returns a 429 with a 30-second retry hint
 
 ### 🔍 Search
 - Search across events, tasks, and Canvas assignments with scope and status filters
