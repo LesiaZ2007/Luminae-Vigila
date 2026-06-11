@@ -1,6 +1,6 @@
 'use client'
 
-import { Bell, X } from 'lucide-react'
+import { Bell, Trash2, X } from 'lucide-react'
 
 const COLOR_PRESETS = [
   '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
@@ -28,8 +28,10 @@ export default function Toast({ toasts, onDismiss }) {
           }}
         >
           <div className="mt-0.5 w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
-               style={{ background: 'var(--blue-bg)' }}>
-            <Bell size={14} style={{ color: 'var(--blue)' }} />
+               style={{ background: toast.iconBg || 'var(--blue-bg)' }}>
+            {toast.icon === 'trash'
+              ? <Trash2 size={14} style={{ color: toast.iconColor || 'var(--red)' }} />
+              : <Bell size={14} style={{ color: 'var(--blue)' }} />}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold leading-tight" style={{ color: 'var(--text)', margin: 0 }}>{toast.title}</p>
