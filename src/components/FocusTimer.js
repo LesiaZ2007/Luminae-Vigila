@@ -100,7 +100,7 @@ function saveStudySession(session) {
   } catch {}
 }
 
-export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast }) {
+export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
@@ -225,13 +225,16 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       setFocusSecondsToday(s => s + elapsed)
 
       // Persist completed session for study time tracking
-      saveStudySession({
+      const completedSession = {
         id:          `fs-${endMs}`,
         courseId:    courseTag?.courseId   ?? null,
         courseName:  courseTag?.courseName ?? null,
         durationSec: elapsed,
         date:        todayStr(),
-      })
+      }
+      saveStudySession(completedSession)
+      // Notify page.js so studySessions state stays in sync → cloud sync picks it up
+      onSessionComplete?.(completedSession)
 
       // Accumulate focus time on the task (additive field, ignored elsewhere)
       if (linkedTarget) {
