@@ -7,6 +7,7 @@ import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, Log
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
+import QuickAdd from '@/components/QuickAdd'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -66,6 +67,7 @@ export default function Home() {
   const startXRef      = useRef(0)
   const startWRef      = useRef(280)
   const addMenuRef     = useRef(null)
+  const quickAddRef    = useRef(null)
 
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
@@ -168,6 +170,7 @@ export default function Home() {
       onSearch:      () => openSearchPopup(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
+      onQuickAdd:    () => { quickAddRef.current?.focus() },
       onEscape:      () => {
         if (showHelpOverlay)   { setShowHelpOverlay(false); return }
         if (focusOpen)         { setFocusOpen(false);       return }
@@ -1761,6 +1764,19 @@ export default function Home() {
         {activeNav === 'calendar' && (
           <>
             <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: isMobile ? '10px 6px 6px' : 20, position: 'relative' }}>
+              {/* Quick-Add omnibar — mobile: full-width row at top */}
+              {isMobile && (
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
+                  <QuickAdd
+                    onSaveEvent={saveEvent}
+                    onAddTodo={addTodo}
+                    todoCategories={todoCategories}
+                    eventCategories={EVENT_CATEGORIES}
+                    focusRef={quickAddRef}
+                    isMobile={true}
+                  />
+                </div>
+              )}
               {isMobile && (
                 <button
                   onClick={() => setShowGoogleSettings(true)}
@@ -1794,6 +1810,20 @@ export default function Home() {
                   {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
+              {/* ── Quick-Add omnibar — slim bar above the calendar ── */}
+              {!isMobile && (
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10, flexShrink: 0 }}>
+                  <QuickAdd
+                    onSaveEvent={saveEvent}
+                    onAddTodo={addTodo}
+                    todoCategories={todoCategories}
+                    eventCategories={EVENT_CATEGORIES}
+                    focusRef={quickAddRef}
+                    isMobile={false}
+                  />
+                </div>
+              )}
+
               <ErrorBoundary>
                 <WeeklyCalendar events={allCalendarEvents} todos={todos}
                                 onDateClick={handleDateClick} onEventClick={handleEventClick}

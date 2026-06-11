@@ -23,6 +23,14 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ## ✨ Features
 
+### ⚡ Quick-Add Omnibar
+- **Single-input natural-language entry** — type things like `dentist friday 2-3pm`, `math hw tomorrow`, `gym every tuesday 7am`, or `essay due monday` and hit Enter; no modal, no clicking
+- **Live inline preview chip** — as you type, a chip below the input shows what will be created: `Event · Dentist · Fri Jun 13, 2:00–3:00 PM` or `Task · Math HW · Due tomorrow`
+- **One-tap type toggle** — hit "Make event" / "Make task" in the chip to flip the parser's inferred type before committing
+- **Hand-written parser, no AI** — runs entirely client-side, zero latency. Handles: `today`/`tomorrow`/`tonight`, weekday names (next occurrence), `next <weekday>` (week after), explicit dates like `6/15` or `jun 15`, time ranges `2-3pm` / `2pm-3pm`, durations `for 2h`, `due` keyword, and simple recurrence `every tuesday`
+- **Keyboard shortcut `Q`** — press Q from anywhere to focus the omnibar instantly
+- Sits above the calendar on desktop and tablet; full-width at the top of the calendar view on mobile
+
 ### 📅 Calendar & Tasks
 - **Weekly / monthly / daily views** — create, edit, and delete events with categories, colors, recurrence rules, reminders, and notes
 - **To-do list** — tasks with priorities, categories, due dates, recurring schedules, and event linking
