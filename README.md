@@ -139,7 +139,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
 - **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, **Aurora**, **Rain** (diagonal streaks), **Fireflies** (warm drifting glowing dots), or **Ocean** (wave bands) — all pure CSS/JS animation, no assets (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
-- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel
+- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel; when signed in they are included in the cloud sync and will appear on all your devices
 - Self-contained — adds `lv-focus` and `lv-study-sessions` localStorage keys; never alters existing events or tasks
 
 ### ⏱ Study Time Tracking
@@ -148,7 +148,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 
 - **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
 - **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
-- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` (localStorage-only — no schema/sync changes needed)
+- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` and synced to Neon DB for signed-in users (cross-device)
 - Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
@@ -543,7 +543,7 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
-| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) |
+| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) + Neon DB per user (synced when signed in) |
 | Accent color preference | Browser `localStorage` (`lv-accent`) |
 | Onboarding wizard completion | Browser `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |

@@ -70,6 +70,7 @@ export default function Home() {
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
   const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
+  const [studySessions,  setStudySessions]  = useState([])
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
@@ -247,6 +248,10 @@ export default function Home() {
           // eventPrefs is a plain object {eventId: {hidden, color}} — local wins
           return { ...(cloud.eventPrefs ?? {}), ...local }
         })
+        setStudySessions(local => {
+          const merged = mergeById(cloud.studySessions, local)
+          return merged
+        })
 
         // Count how many local items weren't in the cloud (new uploads)
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
@@ -257,11 +262,12 @@ export default function Home() {
         setTimeout(() => {
           // Re-read from localStorage (already written by the effects below)
           try {
-            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')     ?? '[]')
-            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')      ?? '[]')
-            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')  ?? '[]')
-            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes') ?? '[]')
-            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs') ?? '{}')
+            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
+            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
+            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
+            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
+            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
+            const mergedSessions  = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
 
             const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
             const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
@@ -275,6 +281,7 @@ export default function Home() {
                 todoCategories: mergedCats,
                 classSchedule:  mergedClasses,
                 eventPrefs:     mergedPrefs,
+                studySessions:  mergedSessions,
               }),
             }).then(() => {
               if (newEvents + newTodos > 0) {
@@ -306,11 +313,12 @@ export default function Home() {
           todoCategories,
           classSchedule:  canvasClasses,
           eventPrefs,
+          studySessions,
         }),
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [events, todos, todoCategories, canvasClasses, eventPrefs, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -369,10 +377,12 @@ export default function Home() {
       const t  = localStorage.getItem('lv-todos')
       const tc = localStorage.getItem('lv-todo-cats')
       const ep = localStorage.getItem('lv-event-prefs')
+      const ss = localStorage.getItem('lv-study-sessions')
       if (e)  setEvents(JSON.parse(e))
       if (t)  setTodos(JSON.parse(t))
       if (tc) setTodoCategories(JSON.parse(tc))
       if (ep) setEventPrefs(JSON.parse(ep))
+      if (ss) setStudySessions(JSON.parse(ss))
       // Canvas
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
@@ -385,10 +395,11 @@ export default function Home() {
     } catch (_) {}
   }, [])
 
-  useEffect(() => { localStorage.setItem('lv-events',    JSON.stringify(events))         }, [events])
-  useEffect(() => { localStorage.setItem('lv-todos',     JSON.stringify(todos))          }, [todos])
-  useEffect(() => { localStorage.setItem('lv-todo-cats', JSON.stringify(todoCategories)) }, [todoCategories])
-  useEffect(() => { localStorage.setItem('lv-event-prefs', JSON.stringify(eventPrefs))   }, [eventPrefs])
+  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(events))         }, [events])
+  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todos))          }, [todos])
+  useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
+  useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
+  useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
@@ -470,6 +481,7 @@ export default function Home() {
       })
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
+      setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
     } catch (_) {
@@ -1920,6 +1932,7 @@ export default function Home() {
               <CoursesPanel
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
+                studySessions={studySessions}
                 onToggleCanvas={toggleCanvasAssignment}
                 onUpdateCanvasNotes={updateCanvasNotes}
                 onOpenSettings={() => setShowCanvasSettings(true)}
@@ -2296,6 +2309,11 @@ export default function Home() {
           onUpdateTodo={updateTodo}
           onUpdateCanvas={updateCanvasAssignment}
           onSaveEvent={saveEvent}
+          onSessionComplete={ss => setStudySessions(prev => {
+            // Guard against duplicate ids (e.g. double-fire edge cases)
+            if (prev.some(s => s.id === ss.id)) return prev
+            return [...prev, ss]
+          })}
           pushToast={pushToast}
         />
       </ErrorBoundary>
