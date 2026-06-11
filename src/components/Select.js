@@ -64,6 +64,15 @@ export default function Select({ value, onChange, options, placeholder = 'Select
           maxHeight: 260, overflowY: 'auto',
         }}>
           {options.map(opt => {
+            // Non-selectable group header row (opt.header === true)
+            if (opt.header) {
+              return (
+                <div key={opt.value ?? opt.label}
+                  style={{ padding: '8px 14px 4px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)' }}>
+                  {opt.label}
+                </div>
+              )
+            }
             const isSelected = String(opt.value) === String(value)
             const isHovered  = hoveredVal === opt.value
             return (

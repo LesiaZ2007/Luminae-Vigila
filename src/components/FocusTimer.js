@@ -21,12 +21,13 @@
  *   onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Play, Pause, RotateCcw, SkipForward, X, Volume2, VolumeX, Sliders,
   CalendarPlus, Check, Maximize2, Minimize2, Lightbulb,
 } from 'lucide-react'
 import Confetti from './Confetti'
+import Select from './Select'
 
 const DEFAULTS = {
   focusMin: 25,
@@ -324,8 +325,8 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     const glow = !running
       ? 'none'
       : (big || isDark)
-        ? `drop-shadow(0 0 14px ${accent}66)`
-        : `drop-shadow(0 0 10px ${accent}cc) drop-shadow(0 0 22px ${accent}66)`
+        ? `drop-shadow(0 0 10px ${accent}4d)`
+        : `drop-shadow(0 0 7px ${accent}80) drop-shadow(0 0 14px ${accent}33)`
     return (
       <div ref={ringRef} style={{ position: 'relative', width: size, height: size }}>
         <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', filter: glow, transition: 'filter .3s' }}>
@@ -388,6 +389,61 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     )
   }
 
+  function TaskPicker({ light }) {
+    const focusOptions = [
+      { value: '', label: 'No specific task' },
+      ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
+      ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
+      ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
+      ...canvasAssignments.filter(a => !a.done).map(a => ({
+        value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
+      })),
+    ]
+    return (
+      <div>
+        <label style={{ fontSize: '0.62rem', fontWeight: 700, color: light ? 'rgba(255,255,255,0.5)' : 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Focusing on
+        </label>
+        <div style={{ marginTop: 5 }}>
+          <Select value={taskId ?? ''} onChange={v => setTaskId(v || null)} options={focusOptions} placeholder="No specific task" />
+        </div>
+        {linkedTarget?.focusSeconds > 0 && (
+          <div style={{ fontSize: '0.66rem', color: light ? 'rgba(255,255,255,0.55)' : 'var(--text-3)', marginTop: 6 }}>
+            {fmtDuration(linkedTarget.focusSeconds)} focused on this so far
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function SettingsContent() {
+    const def = settings.customDefaults || FACTORY
+    const atDefault = settings.focusMin === def.focusMin && settings.shortMin === def.shortMin && settings.longMin === def.longMin
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <NumField label="Focus" value={settings.focusMin} min={1} max={120} onChange={v => setSettings(s => ({ ...s, focusMin: v }))} />
+          <NumField label="Short" value={settings.shortMin} min={1} max={60}  onChange={v => setSettings(s => ({ ...s, shortMin: v }))} />
+          <NumField label="Long"  value={settings.longMin}  min={1} max={60}  onChange={v => setSettings(s => ({ ...s, longMin: v }))} />
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => setSettings(s => ({ ...s, ...(s.customDefaults || FACTORY) }))} disabled={atDefault}
+            title={settings.customDefaults ? `Reset to your default (${def.focusMin}/${def.shortMin}/${def.longMin})` : 'Reset to 25 / 5 / 15'}
+            style={{ flex: 1, padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: atDefault ? 'var(--text-3)' : 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, cursor: atDefault ? 'default' : 'pointer', opacity: atDefault ? 0.55 : 1 }}>
+            Reset to {def.focusMin}/{def.shortMin}/{def.longMin}
+          </button>
+          <button onClick={() => setSettings(s => ({ ...s, customDefaults: { focusMin: s.focusMin, shortMin: s.shortMin, longMin: s.longMin } }))}
+            title="Save the current durations as your personal default"
+            style={{ flex: 1, padding: '7px 8px', borderRadius: 8, border: 'none', background: 'var(--blue-bg)', color: 'var(--blue-text)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
+            Set as my default
+          </button>
+        </div>
+        <ToggleRow label="Auto-start next phase" on={settings.autoStartNext} onClick={() => setSettings(s => ({ ...s, autoStartNext: !s.autoStartNext }))} />
+        <ToggleRow label="Log sessions to calendar" icon={<CalendarPlus size={13} />} on={settings.logToCalendar} onClick={() => setSettings(s => ({ ...s, logToCalendar: !s.logToCalendar }))} />
+      </div>
+    )
+  }
+
   /* ════════════ FULL-SCREEN ZEN MODE ════════════ */
   if (fullscreen) {
     return (
@@ -408,6 +464,9 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
               <span style={{ fontSize: '0.82rem', fontWeight: 800, letterSpacing: '0.04em' }}>Focus</span>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
+              <IconBtn title="Timer settings" color={showSettings ? '#fff' : 'rgba(255,255,255,0.6)'} onClick={() => setShowSettings(v => !v)}>
+                <Sliders size={17} />
+              </IconBtn>
               <IconBtn title={settings.sound ? 'Mute' : 'Unmute'} color="rgba(255,255,255,0.6)" onClick={() => setSettings(s => ({ ...s, sound: !s.sound }))}>
                 {settings.sound ? <Volume2 size={17} /> : <VolumeX size={17} />}
               </IconBtn>
@@ -416,6 +475,22 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
               </IconBtn>
             </div>
           </div>
+
+          {/* Settings overlay — same controls as the compact panel, as a floating card */}
+          {showSettings && (
+            <div onClick={() => setShowSettings(false)}
+              style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', padding: 16, animation: 'lv-backdrop-in .16s ease' }}>
+              <div onClick={e => e.stopPropagation()}
+                style={{ width: 340, maxWidth: '100%', maxHeight: 'calc(100dvh - 60px)', overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow-modal)', padding: 16, animation: 'modal-in .18s cubic-bezier(.22,1,.36,1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text)' }}>Timer settings</span>
+                  <IconBtn title="Done" onClick={() => setShowSettings(false)}><X size={16} /></IconBtn>
+                </div>
+                <div style={{ marginBottom: 12 }}><TaskPicker /></div>
+                <SettingsContent />
+              </div>
+            </div>
+          )}
 
           {/* Center stack */}
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
@@ -507,65 +582,12 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
         <div style={{ padding: '4px 14px 10px' }}><Controls /></div>
 
         {/* Task picker */}
-        <div style={{ padding: '0 14px 10px' }}>
-          <label style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Focusing on
-          </label>
-          <select className="field" value={taskId ?? ''} onChange={e => setTaskId(e.target.value || null)}
-            style={{ marginTop: 5, padding: '8px 12px', fontSize: '0.8rem' }}>
-            <option value="">No specific task</option>
-            {todos.some(t => !t.completed) && (
-              <optgroup label="Tasks">
-                {todos.filter(t => !t.completed).map(t => (
-                  <option key={t.id} value={t.id}>{t.title}</option>
-                ))}
-              </optgroup>
-            )}
-            {canvasAssignments.some(a => !a.done) && (
-              <optgroup label="Canvas assignments">
-                {canvasAssignments.filter(a => !a.done).map(a => (
-                  <option key={a.id} value={`canvas:${a.id}`}>
-                    {a.title}{a.courseName ? ` · ${a.courseName}` : ''}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-          {linkedTarget?.focusSeconds > 0 && (
-            <div style={{ fontSize: '0.66rem', color: 'var(--text-3)', marginTop: 5 }}>
-              {fmtDuration(linkedTarget.focusSeconds)} focused on this task so far
-            </div>
-          )}
-        </div>
+        <div style={{ padding: '0 14px 10px' }}><TaskPicker /></div>
 
         {/* Settings drawer */}
         {showSettings && (
-          <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)', display: 'flex', flexDirection: 'column', gap: 9 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <NumField label="Focus" value={settings.focusMin} min={1} max={120} onChange={v => setSettings(s => ({ ...s, focusMin: v }))} />
-              <NumField label="Short" value={settings.shortMin} min={1} max={60}  onChange={v => setSettings(s => ({ ...s, shortMin: v }))} />
-              <NumField label="Long"  value={settings.longMin}  min={1} max={60}  onChange={v => setSettings(s => ({ ...s, longMin: v }))} />
-            </div>
-            {(() => {
-              const def = settings.customDefaults || FACTORY
-              const atDefault = settings.focusMin === def.focusMin && settings.shortMin === def.shortMin && settings.longMin === def.longMin
-              return (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => setSettings(s => ({ ...s, ...(s.customDefaults || FACTORY) }))} disabled={atDefault}
-                    title={settings.customDefaults ? `Reset to your default (${def.focusMin}/${def.shortMin}/${def.longMin})` : 'Reset to 25 / 5 / 15'}
-                    style={{ flex: 1, padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: atDefault ? 'var(--text-3)' : 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, cursor: atDefault ? 'default' : 'pointer', opacity: atDefault ? 0.55 : 1 }}>
-                    Reset to {def.focusMin}/{def.shortMin}/{def.longMin}
-                  </button>
-                  <button onClick={() => setSettings(s => ({ ...s, customDefaults: { focusMin: s.focusMin, shortMin: s.shortMin, longMin: s.longMin } }))}
-                    title="Save the current durations as your personal default"
-                    style={{ flex: 1, padding: '7px 8px', borderRadius: 8, border: 'none', background: 'var(--blue-bg)', color: 'var(--blue-text)', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
-                    Set as my default
-                  </button>
-                </div>
-              )
-            })()}
-            <ToggleRow label="Auto-start next phase" on={settings.autoStartNext} onClick={() => setSettings(s => ({ ...s, autoStartNext: !s.autoStartNext }))} />
-            <ToggleRow label="Log sessions to calendar" icon={<CalendarPlus size={13} />} on={settings.logToCalendar} onClick={() => setSettings(s => ({ ...s, logToCalendar: !s.logToCalendar }))} />
+          <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
+            <SettingsContent />
           </div>
         )}
 
@@ -621,18 +643,23 @@ function BackgroundFX({ type, accent }) {
     )
   }
 
-  // stars / snow — generated particle field
+  // stars / snow — generated particle field.
+  // Memoized on `type` ONLY: the timer re-renders every 250ms, and without this the
+  // random positions would be regenerated each render, making the stars teleport/twitch.
   const isSnow = type === 'snow'
-  const count = isSnow ? 70 : 55
-  const particles = Array.from({ length: count }, (_, i) => ({
-    id: i,
-    left: Math.random() * 100,
-    top: Math.random() * 100,
-    size: isSnow ? 2 + Math.random() * 4 : 1.4 + Math.random() * 1.8,
-    dur: isSnow ? 7 + Math.random() * 9 : 3.5 + Math.random() * 5,
-    delay: Math.random() * -12,
-    drift: (Math.random() * 2 - 1) * 40,
-  }))
+  const particles = useMemo(() => {
+    const count = isSnow ? 70 : 55
+    return Array.from({ length: count }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      top: Math.random() * 100,
+      size: isSnow ? 2 + Math.random() * 4 : 1.4 + Math.random() * 1.8,
+      // Slow, long fades so the opacity fluctuates smoothly rather than blinking
+      dur: isSnow ? 7 + Math.random() * 9 : 5 + Math.random() * 7,
+      delay: Math.random() * -12,
+      drift: (Math.random() * 2 - 1) * 40,
+    }))
+  }, [type, isSnow])
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
