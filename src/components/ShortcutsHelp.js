@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { X, Keyboard } from 'lucide-react'
 
 const SHORTCUTS = [
-  { key: 'Q',   description: 'Focus quick-add omnibar' },
   { key: 'N',   description: 'New event (full form)' },
   { key: 'T',   description: 'New task (full form)' },
   { key: '/',   description: 'Open search' },

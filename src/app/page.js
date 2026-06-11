@@ -7,7 +7,6 @@ import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, Log
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
-import QuickAdd from '@/components/QuickAdd'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -22,7 +21,6 @@ function useWindowWidth() {
 import TodoPanel  from '@/components/TodoPanel'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
-import CrunchForecastStrip from '@/components/CrunchForecastStrip'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
@@ -38,11 +36,11 @@ import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
 import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 import FocusTimer             from '@/components/FocusTimer'
-import AccentPicker           from '@/components/AccentPicker'
+import SettingsMenu           from '@/components/SettingsMenu'
 import OfflineIndicator       from '@/components/OfflineIndicator'
 import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
-import WeeklyRecap, { updateStreak } from '@/components/WeeklyRecap'
+import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
@@ -71,7 +69,6 @@ export default function Home() {
   const startXRef      = useRef(0)
   const startWRef      = useRef(280)
   const addMenuRef     = useRef(null)
-  const quickAddRef    = useRef(null)
 
   const [events,         setEvents]         = useState([])
   const [todos,          setTodos]           = useState([])
@@ -179,7 +176,6 @@ export default function Home() {
       onSearch:      () => openSearchPopup(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
-      onQuickAdd:    () => { quickAddRef.current?.focus() },
       onEscape:      () => {
         if (showHelpOverlay)   { setShowHelpOverlay(false); return }
         if (focusOpen)         { setFocusOpen(false);       return }
@@ -1780,9 +1776,6 @@ export default function Home() {
           onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
         />
 
-        {/* ── Weekly Recap card ── */}
-        <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} />
-
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* Sign-in / user display */}
@@ -1853,41 +1846,13 @@ export default function Home() {
             )}
           </div>
 
-          {/* Sunday digest toggle */}
-          {currentUser ? (
-            <button
-              onClick={toggleDigest}
-              disabled={digestSaving}
-              title={digestEnabled ? 'Disable Sunday week-ahead digest' : 'Enable Sunday week-ahead digest push'}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '7px 12px', borderRadius: 10, border: `1px solid ${digestEnabled ? 'rgba(147,197,253,.3)' : 'rgba(255,255,255,.08)'}`, background: digestEnabled ? 'rgba(147,197,253,.1)' : 'transparent', color: digestEnabled ? '#93c5fd' : 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s', opacity: digestSaving ? 0.6 : 1 }}>
-              <span>📬 Weekly digest</span>
-              <span style={{ fontSize: '0.65rem', fontWeight: 800, color: digestEnabled ? '#10b981' : 'rgba(147,197,253,.4)' }}>{digestEnabled ? 'ON' : 'OFF'}</span>
-            </button>
-          ) : (
-            <div style={{ padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.06)', fontSize: '0.7rem', color: 'rgba(147,197,253,.35)', fontWeight: 500 }}>
-              Digest requires sign-in
-            </div>
-          )}
-
-          {/* Dark mode toggle */}
-          <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
-            {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
-          </button>
-
-          {/* Accent color picker */}
-          <AccentPicker variant="sidebar" />
-
-          {/* Show tour */}
-          <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
-            Show tour
-          </button>
+          {/* Settings menu — dark mode, accent color, show tour */}
+          <SettingsMenu
+            theme={theme}
+            onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+            variant="sidebar"
+          />
         </div>
       </aside>}
 
@@ -1896,19 +1861,6 @@ export default function Home() {
         {activeNav === 'calendar' && (
           <>
             <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: isMobile ? '10px 6px 6px' : 20, position: 'relative' }}>
-              {/* Quick-Add omnibar — mobile: full-width row at top */}
-              {isMobile && (
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
-                  <QuickAdd
-                    onSaveEvent={saveEvent}
-                    onAddTodo={addTodo}
-                    todoCategories={todoCategories}
-                    eventCategories={EVENT_CATEGORIES}
-                    focusRef={quickAddRef}
-                    isMobile={true}
-                  />
-                </div>
-              )}
               {isMobile && (
                 <button
                   onClick={() => setShowGoogleSettings(true)}
@@ -1942,29 +1894,6 @@ export default function Home() {
                   {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
-              <CrunchForecastStrip
-                events={events}
-                todos={todos}
-                canvasAssignments={canvasAssignments}
-                isMobile={isMobile}
-                onDayClick={(dateStr) => {
-                  setCalendarTargetDate(dateStr)
-                }}
-              />
-              {/* ── Quick-Add omnibar — slim bar above the calendar ── */}
-              {!isMobile && (
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10, flexShrink: 0 }}>
-                  <QuickAdd
-                    onSaveEvent={saveEvent}
-                    onAddTodo={addTodo}
-                    todoCategories={todoCategories}
-                    eventCategories={EVENT_CATEGORIES}
-                    focusRef={quickAddRef}
-                    isMobile={false}
-                  />
-                </div>
-              )}
-
               <ErrorBoundary>
                 <WeeklyCalendar events={allCalendarEvents} todos={todos}
                                 onDateClick={handleDateClick} onEventClick={handleEventClick}
@@ -2238,9 +2167,6 @@ export default function Home() {
               onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
             />
 
-            {/* Weekly Recap */}
-            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} />
-
             {/* Quick actions + theme */}
             <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2262,34 +2188,13 @@ export default function Home() {
                 onImport={handleImport}
                 inline
               />
-              <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
-                {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
-              </button>
-
-              {/* Accent color picker */}
-              <AccentPicker variant="sidebar" />
-
-              {/* Sunday digest toggle */}
-              {currentUser ? (
-                <button
-                  onClick={toggleDigest}
-                  disabled={digestSaving}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '8px 12px', borderRadius: 10, border: `1px solid ${digestEnabled ? 'rgba(147,197,253,.3)' : 'rgba(255,255,255,.08)'}`, background: digestEnabled ? 'rgba(147,197,253,.1)' : 'transparent', color: digestEnabled ? '#93c5fd' : 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', opacity: digestSaving ? 0.6 : 1 }}>
-                  <span>📬 Weekly digest</span>
-                  <span style={{ fontSize: '0.65rem', fontWeight: 800, color: digestEnabled ? '#10b981' : 'rgba(147,197,253,.4)' }}>{digestEnabled ? 'ON' : 'OFF'}</span>
-                </button>
-              ) : (
-                <div style={{ padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.06)', fontSize: '0.72rem', color: 'rgba(147,197,253,.35)', fontWeight: 500, textAlign: 'center' }}>
-                  Digest requires sign-in
-                </div>
-              )}
-
-              {/* Show tour */}
-              <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
-                Show tour
-              </button>
+              {/* Settings menu — dark mode, accent color, show tour */}
+              <SettingsMenu
+                theme={theme}
+                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+                variant="sidebar"
+              />
             </div>
           </main>
         )}
@@ -2505,6 +2410,7 @@ export default function Home() {
             return [...prev, ss]
           })}
           pushToast={pushToast}
+          digest={{ enabled: digestEnabled, saving: digestSaving, onToggle: toggleDigest, signedIn: !!currentUser }}
         />
       </ErrorBoundary>
 

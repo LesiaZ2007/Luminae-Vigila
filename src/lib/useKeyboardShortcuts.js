@@ -31,11 +31,10 @@ function isEditableTarget(e) {
  *   - onSearch()         — / (forward-slash)
  *   - onToggleFocus()    — F
  *   - onShowHelp()       — ? (Shift+/)
- *   - onQuickAdd()       — Q  (focus the quick-add omnibar)
  *   - onEscape()         — Escape (also called when modals are open)
  * @param {boolean} modalOpen — true when ANY overlay modal is visible
  */
-export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onQuickAdd, onEscape }, modalOpen = false) {
+export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape }, modalOpen = false) {
   const handleKeyDown = useCallback((e) => {
     // Escape is always active — used to close whatever is open
     if (e.key === 'Escape') {
@@ -76,15 +75,10 @@ export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggle
         e.preventDefault()
         onToggleFocus?.()
         break
-      case 'q':
-      case 'Q':
-        e.preventDefault()
-        onQuickAdd?.()
-        break
       default:
         break
     }
-  }, [onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onQuickAdd, onEscape, modalOpen])
+  }, [onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape, modalOpen])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
