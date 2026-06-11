@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, RefreshCw } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -154,6 +154,7 @@ export default function Home() {
   const [googleEvents,       setGoogleEvents]       = useState([])
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
+  const [syncingCloud,       setSyncingCloud]       = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
@@ -428,6 +429,42 @@ export default function Home() {
     setToasts(p => [...p, { id, title, subtitle }])
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000)
   }, [])
+
+  // ── Manual cloud refresh ─────────────────────────────────────────────────────
+  // Pulls the latest cloud state and merges it into local — cloud wins on conflicts,
+  // local-only items are preserved. Safe to call at any time; spinner while in flight.
+  const pullCloudSync = useCallback(async () => {
+    if (!currentUser || syncingCloud) return
+    setSyncingCloud(true)
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return
+      const cloud = await res.json()
+      if (!cloud) return
+
+      // cloud wins for ids present in both; local-only items kept
+      function mergeCloudWins(cloudArr, localArr) {
+        const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
+        const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
+        return Object.values({ ...localMap, ...cloudMap })
+      }
+
+      setEvents(local => mergeCloudWins(cloud.events, local))
+      setTodos(local => mergeCloudWins(cloud.todos, local))
+      setTodoCategories(local => {
+        const merged = mergeCloudWins(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
+      setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
+
+      pushToast('Synced', 'Latest data pulled from the cloud.')
+    } catch (_) {
+      // non-fatal — user can try again
+    } finally {
+      setSyncingCloud(false)
+    }
+  }, [currentUser, syncingCloud, pushToast])
 
   /* ── Reminder checker ── */
   useEffect(() => {
@@ -1481,6 +1518,12 @@ export default function Home() {
                 <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
                 <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
               </div>
+              <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                      style={{ background: 'none', border: 'none', padding: 4, cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s', flexShrink: 0 }}
+                      onMouseEnter={e => { if (!syncingCloud) e.currentTarget.style.color = '#93c5fd' }}
+                      onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
+                <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+              </button>
               <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
                 <button type="submit" title="Sign out"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
@@ -1773,6 +1816,10 @@ export default function Home() {
                     <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signed in as</div>
                     <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,.85)', fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
                   </div>
+                  <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                          style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+                  </button>
                   <form action="/api/auth/logout" method="POST">
                     <button type="submit" title="Sign out"
                             style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
