@@ -391,10 +391,11 @@ select option {
 /* ══════════════════════════════════════════════
    FOCUS TIMER — full-screen ambient backgrounds
 ══════════════════════════════════════════════ */
-/* Stars: gentle opacity-only twinkle (no transform → smooth + cheap, not distracting) */
+/* Stars: gentle opacity-only twinkle (no transform → smooth + cheap, not distracting).
+   Stays well above 0 so stars never fully blink out — just a soft breathing glow. */
 @keyframes lv-twinkle {
-  0%, 100% { opacity: 0.2; }
-  50%      { opacity: 0.85; }
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.9; }
 }
 /* Snow: slow fall from top to bottom with a sideways drift */
 @keyframes lv-snow {
