@@ -56,10 +56,13 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 A collapsible **GPA / Grades** card appears at the top of the Courses tab whenever Canvas is connected and at least one assignment has been graded.
 
+- **Canvas grade auto-import** — live official grades are fetched from `/api/canvas/grades` automatically whenever assignments sync (same 15-minute cadence); no separate polling loop added. The official Canvas score overrides the assignment-computed estimate, giving a more accurate GPA.
+- **Manual grade override** — click any percentage to type in your own value. The override is stored separately in `localStorage` under `lv-gpa.overrides` and always wins over the auto-imported value.
+- **Source badge** — each course row shows a green `Canvas live` badge when using the official grade, or an amber `manual` badge when overriding. The manual badge has a one-click `↺` to reset back to Canvas.
 - **Per-course letter grade and percentage** — computed from the sum of earned points divided by graded points possible (e.g. 87 / 100 → B+)
 - **Grading scale** — A 93–100 = 4.0, A– 90–92 = 3.7, B+ 87–89 = 3.3, … F < 60 = 0.0
 - **Credit hours** — editable per course (default 3), persisted to `localStorage` under `lv-gpa`
-- **Credit-weighted projected GPA** — displayed prominently at the top of the expanded card
+- **Credit-weighted projected GPA** — uses whichever grade source is active per course
 - **"What do I need?" helper** — enter a target percentage per course to see the required average score on remaining (ungraded) points
 - Mobile-responsive stacked layout; matches the existing Courses tab visual style
 - Empty state shown when no graded assignments exist yet
@@ -103,6 +106,23 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Date range filter** — collapsible From / To date pickers filter all result types simultaneously
 - **Keyboard navigation** — arrow keys move focus through results; Enter opens the highlighted item
 
+### ✅ Tasks — Drag-to-Reorder
+- Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
+- Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
+- Tasks without a `sortOrder` fall back to date-based sorting; new items added before or after reordering work seamlessly
+
+### 👆 Tasks — Swipe Gestures *(mobile / touch)*
+- **Swipe right** on a task to mark it complete — triggers the existing confetti celebration
+- **Swipe left** on a task to delete it — reveals a red trash background as visual feedback
+- Axis is locked after 6 px of movement so horizontal swipes don't fight vertical scrolling
+- A 72 px threshold prevents accidental triggers; items snap back if the swipe falls short
+
+### ↩️ Undo Delete
+- Deleting a **task** or a **calendar event** shows a toast for ~6 seconds with an **Undo** button
+- Tapping Undo fully restores the item (including its synced state and any subtasks)
+- The deletion is "soft" — the item is removed from view immediately but todo/event unlinking is deferred until the undo window closes, so a full restore is always possible
+- Works for single events and "delete all in series" recurring event deletions
+
 ### 📋 Tasks — Subtasks
 - Add up to 20 subtasks to any to-do item in the Add/Edit modal
 - Each subtask can be checked off individually — matches CoursesPanel done style with strikethrough
@@ -112,13 +132,24 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Pomodoro-style timer** tied to your tasks — open it from the timer FAB (desktop) or the Settings tab (mobile)
 - **Focus → break → repeat:** a short break after each focus session and a **long break every 4 sessions** (all lengths configurable)
 - **Pick a task or Canvas assignment to focus on** — completed sessions accumulate focus time on it (`X focused so far`)
+- **Course tag** — optionally tag each focus session with a Canvas course (dropdown shows your enrolled courses; default: None). The tag is persisted so the same course is pre-selected next time you open the timer.
 - **Configurable durations** — set Focus / Short / Long lengths; one click resets to the factory `25 / 5 / 15`, or save your own values as your personal default
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
 - **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
-- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, or a slow **Aurora** (Esc to exit)
+- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Snow**, **Aurora**, **Rain** (diagonal streaks), or **Fireflies** (warm drifting glowing dots) — all pure CSS/JS animation, no assets (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
-- Fully optional and self-contained — it adds one `localStorage` key (`lv-focus`) and never alters existing events or tasks
+- Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel
+- Self-contained — adds `lv-focus` and `lv-study-sessions` localStorage keys; never alters existing events or tasks
+
+### ⏱ Study Time Tracking
+
+A collapsible **Study Time** card appears in the Courses tab below the GPA panel once at least one tagged focus session exists.
+
+- **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
+- **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
+- Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` (localStorage-only — no schema/sync changes needed)
+- Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
 - When Canvas syncs and finds new assignments that weren't seen before, a toast fires in-app
@@ -158,13 +189,85 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - When Groq returns 429 (rate limited), the send button shows a 30-second countdown
 - Input and button are disabled during the cooldown to prevent repeated hammering
 
+### 🤖 Corvus — Session Memory
+- Chat history persists to `localStorage` and is restored on reload (capped at 50 messages, pruned oldest-first)
+- Recent history is sent as context on every request so Corvus remembers what you've already discussed in the session
+- Session expires after 30 minutes of inactivity; any pending-confirmation items from a previous session are automatically cancelled on restore
+- **Clear conversation** button (trash icon in the header) wipes the session and resets to the greeting
+
+### 🤖 Corvus — Plan My Week
+- New **"Plan my week"** quick-action button (highlighted in blue) gathers your next 7 days of events, pending tasks, and Canvas assignments client-side and sends Corvus a structured planning prompt
+- Corvus responds with a day-by-day study schedule proposal, then offers to add individual study blocks via its existing `preview_event` confirm flow — no AI calls until you tap the button
+
+### 🤖 Corvus — Time Estimation
+- New **"Estimate task time"** quick-action (highlighted in green) asks Corvus to estimate how long one of your upcoming items will take
+- Corvus uses built-in heuristics (reading ≈ 45–90 min, problem sets ≈ 1–3 h, essays ≈ 2–4 h, etc.) and always offers to block matching study time on the calendar after giving an estimate
+- Also available via natural language: "How long will my Chem homework take?"
+
+### 🤖 Corvus — Proactive Nudge (zero AI cost)
+- On app load, Luminae Vigila checks **client-side** (no AI call) whether 3+ deadlines cluster within the next 72 hours with no study blocks covering them
+- If detected, a small dismissible **"Busy stretch ahead — want help planning it?"** chip appears near the Corvus FAB with a red badge on the button; a matching banner is shown inside the Corvus panel
+- Tapping "Help me plan" opens Corvus pre-loaded with the deadline list and a planning prompt
+- Dismissal (X button or tapping away) sets a daily `localStorage` flag so the chip only appears once per day
+- Also surfaces as an in-panel banner when you open Corvus on the full tab or floating widget
+
+### ⌨️ Keyboard Shortcuts
+- **Power-user hotkeys** — press a single key anywhere in the app (outside text fields) to trigger common actions
+- `N` — open "New Event" modal
+- `T` — open "New Task" modal
+- `/` — open the search popup (Ctrl+K also works)
+- `F` — toggle the Focus Timer panel
+- `?` — show the keyboard shortcuts help overlay
+- `Esc` — close the topmost open overlay (help, focus timer, search, or Corvus float)
+- All shortcuts are suppressed while typing in any input, textarea, or contenteditable so they never interfere with regular typing
+- Shortcuts are also suppressed while a blocking modal (event/task/settings) is open, except `Esc` which always works
+
+### 📋 Agenda View
+- **Condensed 14-day list** — a new "Agenda" tab in the sidebar (and mobile bottom nav) shows everything coming up in a single scrollable view
+- Includes user calendar **events**, **tasks** with due dates, **Canvas assignments**, and **class schedule meetings**, all grouped by day
+- Day headers read **Today**, **Tomorrow**, or the full weekday + date
+- Items are sorted chronologically within each day; timed events appear before all-day/due-date items
+- Clicking any event opens its **EventModal**; clicking a task opens the **AddTodoModal**; Canvas assignments open their detail panel
+- Color-coded left stripe and icon match each item's category color for quick scanning
+- Mobile-friendly — proper bottom padding for the tab bar
+- Empty state shown when nothing is scheduled in the next 14 days
+
+### 🚨 Conflict Detection
+- When creating or editing a **timed event** in the Event modal, the app automatically detects time overlaps with other events and class schedule meetings
+- **Non-blocking** — an amber warning banner appears inline ("Overlaps with Physics 101, 2:00–3:15 PM") but never prevents saving
+- Checks against all visible user events and every applicable class schedule meeting for that date and weekday
+- Only fires for timed (non-all-day) events; all-day events are excluded
+
+### 🎨 Accent Color Themes
+Choose your preferred accent color from the sidebar (look for **Accent color** near the bottom). Six palettes are available:
+- **Luminae Blue** — the default; indistinguishable from the original brand
+- **Violet**, **Emerald**, **Rose**, **Amber**, **Slate**
+
+The accent is applied via a `data-accent` attribute on `<html>` and saved to `localStorage` (`lv-accent`). A before-paint inline script in `layout.js` restores it before the first render so there is never a flash of the wrong color. Both light and dark mode look polished with every accent.
+
+### 📡 Offline Indicator
+A subtle pill badge appears in the bottom-right corner when the app loses internet connectivity:
+- Shows "Offline — changes will sync when you reconnect" with a WifiOff icon
+- On reconnect it briefly shows "Back online" for 2 seconds, then auto-hides
+- Uses `window` online/offline events + `navigator.onLine` for initial state
+- Zero configuration; always mounted and self-managing
+
+### 🧭 Onboarding Wizard
+First-run modal wizard shown once to new users. Four steps:
+1. **Welcome** — overview of all major features
+2. **Google Calendar** — how to connect (or skip)
+3. **Canvas LMS** — how to get an API token and connect (or skip)
+4. **Quick tour** — annotated overview of Calendar, To-Do, Corvus AI, and Focus Timer
+
+The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via the **Show tour** button in the sidebar bottom area (desktop) or the Settings tab (mobile). The localStorage flag `lv-onboarding-done` controls visibility.
+
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
 - **Responsive design** — desktop (full sidebar), tablet (mini-sidebar with labels), mobile (bottom tab navigation)
 - **Mobile To-Do tab** — stacked layout with To-Do / Canvas / Both toggle pills; shows priority tasks up top and Canvas assignments below
 - **Mobile search** — full-screen tab (no overlay), query resets each time you enter the tab; desktop keeps the Ctrl+K popup
-- **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, and import/export on mobile
+- **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, accent picker, and import/export on mobile
 - **Swipe-safe navigation** — horizontal swipes advance/retreat weeks without accidentally triggering event creation
 - **100dvh layout** — dynamic viewport height keeps the bottom tab bar fully visible on real devices
 
@@ -414,7 +517,10 @@ src/
 │   ├── TimePicker.js                 # Time picker — text input + analog clock popup
 │   ├── CategoryManager.js            # Manage to-do categories
 │   ├── Select.js                     # Custom dropdown
-│   └── Toast.js                      # Toast notifications
+│   ├── Toast.js                      # Toast notifications
+│   ├── AccentPicker.js               # Accent color palette popover (sidebar + settings)
+│   ├── OfflineIndicator.js           # Offline/back-online status pill badge
+│   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
     ├── db.js               # Neon PostgreSQL client
@@ -437,8 +543,11 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
+| Study time sessions (per course) | Browser `localStorage` (`lv-study-sessions`) |
+| Accent color preference | Browser `localStorage` (`lv-accent`) |
+| Onboarding wizard completion | Browser `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
-| GPA credit-hours per course | Browser `localStorage` (`lv-gpa`) |
+| GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |

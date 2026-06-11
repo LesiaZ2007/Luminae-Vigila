@@ -8,4 +8,6 @@ When making any changes, update README to reflect the additions. Remember to sty
 When making changes, make sure to work in the appropriate branch and create commits for changes you make with the appropriate description
 
 Restart the dev server so I can see changes locally when you change things.
+
+Your goal is to give me the highest quality work while conserving usage and tokens. When possible, create agents to work in separate branches and you, as the superior model, have to oversee and check their work
 <!-- END:nextjs-agent-rules -->

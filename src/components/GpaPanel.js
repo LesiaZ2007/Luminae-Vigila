@@ -7,10 +7,18 @@
  *   canvasAssignments  — array from page.js state (fields: id, courseId, courseName,
  *                        score, pointsPossible, submissionState, dueAt, title)
  *   courseColors       — { [courseId]: hexColor }
+ *
+ * Canvas grade auto-import:
+ *   - Fetches live grades from /api/canvas/grades whenever the panel opens or
+ *     canvasAssignments changes (i.e. the same cadence as the existing Canvas sync).
+ *   - Auto-imported scores populate the grade display.
+ *   - A manual override (stored in localStorage under lv-gpa.overrides) always wins
+ *     over the auto-imported value. A small badge shows the source; overridden values
+ *     show a "reset to Canvas" affordance.
  */
 
-import { useState, useMemo, useEffect } from 'react'
-import { GraduationCap, ChevronDown, ChevronRight, TrendingUp } from 'lucide-react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { GraduationCap, ChevronDown, ChevronRight, TrendingUp, RefreshCw, RotateCcw } from 'lucide-react'
 import { getCourseColor } from '@/components/CoursesPanel'
 
 // ── GPA scale ────────────────────────────────────────────────────────────────
@@ -52,6 +60,25 @@ function loadGpaPrefs() {
 
 function saveGpaPrefs(prefs) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(prefs)) } catch {}
+}
+
+// ── Source badge ───────────────────────────────────────────────────────────────
+
+function SourceBadge({ isManual, onReset }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '1px 6px', borderRadius: 999, background: isManual ? 'rgba(245,158,11,.15)' : 'rgba(16,185,129,.1)', color: isManual ? '#f59e0b' : '#10b981', flexShrink: 0 }}>
+      {isManual ? 'manual' : 'Canvas live'}
+      {isManual && (
+        <button
+          onClick={onReset}
+          title="Reset to Canvas auto-grade"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: '#f59e0b', lineHeight: 0, marginLeft: 2 }}
+        >
+          <RotateCcw size={9} />
+        </button>
+      )}
+    </span>
+  )
 }
 
 // ── WhatINeed helper ──────────────────────────────────────────────────────────
@@ -110,9 +137,29 @@ function WhatINeedRow({ earnedPts, possiblePts, totalPossible, color }) {
 
 // ── CourseGpaRow ──────────────────────────────────────────────────────────────
 
-function CourseGpaRow({ course, color, credits, onCreditsChange }) {
-  const { name, earnedPts, possiblePts, totalPossible, pct, grade } = course
-  const gc = gradeColor(grade.letter)
+/**
+ * canvasLive  — { currentScore, currentGrade } from /api/canvas/grades (may be null)
+ * override    — { score, grade } manual entry stored in prefs (may be null)
+ * onOverride  — (score) => void  — set manual score override
+ * onResetOverride — () => void   — clear manual override
+ */
+function CourseGpaRow({ course, color, credits, onCreditsChange, canvasLive, override, onOverride, onResetOverride }) {
+  const { name, earnedPts, possiblePts, totalPossible, pct: assignmentPct } = course
+
+  // Determine effective grade/pct:
+  //   1. manual override wins
+  //   2. else Canvas live score (currentScore) wins when available
+  //   3. else fall back to assignment-computed grade
+  const isManualOverride = override != null
+  const effectivePct = isManualOverride
+    ? override.score
+    : (canvasLive?.currentScore != null ? canvasLive.currentScore : assignmentPct)
+  const effectiveGrade = pctToGrade(effectivePct)
+  const gc = gradeColor(effectiveGrade.letter)
+
+  // Inline manual-override input state (local to the row)
+  const [editingScore, setEditingScore] = useState(false)
+  const [draftScore, setDraftScore]     = useState('')
 
   return (
     <div style={{
@@ -126,18 +173,46 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
           {name}
         </span>
 
+        {/* Source badge */}
+        {canvasLive?.currentScore != null && (
+          <SourceBadge isManual={isManualOverride} onReset={onResetOverride} />
+        )}
+
         {/* Letter badge */}
         <span style={{
           fontSize: '0.78rem', fontWeight: 800, padding: '2px 9px', borderRadius: 999,
           color: gc, background: `${gc}18`, flexShrink: 0,
         }}>
-          {grade.letter}
+          {effectiveGrade.letter}
         </span>
 
-        {/* Numeric % */}
-        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-2)', flexShrink: 0 }}>
-          {pct.toFixed(1)}%
-        </span>
+        {/* Numeric % — click to override */}
+        {editingScore ? (
+          <input
+            autoFocus
+            type="number" min="0" max="100" step="0.1"
+            value={draftScore}
+            onChange={e => setDraftScore(e.target.value)}
+            onBlur={() => {
+              const n = parseFloat(draftScore)
+              if (!isNaN(n) && n >= 0 && n <= 100) onOverride(n)
+              setEditingScore(false); setDraftScore('')
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.currentTarget.blur() }
+              if (e.key === 'Escape') { setEditingScore(false); setDraftScore('') }
+            }}
+            style={{ width: 60, padding: '2px 5px', borderRadius: 6, border: '1px solid var(--blue)', background: 'var(--input-bg)', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.78rem', textAlign: 'right', outline: 'none', flexShrink: 0 }}
+          />
+        ) : (
+          <button
+            onClick={() => { setDraftScore(effectivePct.toFixed(1)); setEditingScore(true) }}
+            title="Click to override grade"
+            style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-2)', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', borderRadius: 4, textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
+          >
+            {effectivePct.toFixed(1)}%
+          </button>
+        )}
       </div>
 
       {/* Body */}
@@ -150,6 +225,12 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
               ({(totalPossible - possiblePts).toFixed(1)} ungraded)
             </span>
           )}
+          {canvasLive?.currentScore != null && !isManualOverride && (
+            <span style={{ color: 'var(--text-3)', marginLeft: 6, fontStyle: 'italic' }}>
+              · Canvas: {canvasLive.currentScore.toFixed(1)}%
+              {canvasLive.currentGrade ? ` (${canvasLive.currentGrade})` : ''}
+            </span>
+          )}
         </div>
 
         {/* Progress bar */}
@@ -157,7 +238,7 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
           <div style={{
             height: '100%', borderRadius: 999,
             background: gc,
-            width: `${Math.min(pct, 100)}%`,
+            width: `${Math.min(effectivePct, 100)}%`,
             transition: 'width .4s ease',
           }} />
         </div>
@@ -165,7 +246,7 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
         {/* GPA points row + credit hours editor */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
-            GPA points: <strong style={{ color: 'var(--text-2)' }}>{grade.points.toFixed(1)}</strong>
+            GPA points: <strong style={{ color: 'var(--text-2)' }}>{effectiveGrade.points.toFixed(1)}</strong>
           </span>
           <span style={{ fontSize: '0.72rem', color: 'var(--text-3)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
             Credits:
@@ -186,13 +267,19 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
           </span>
         </div>
 
-        {/* What-do-I-need helper */}
+        {/* What-do-I-need helper — only relevant in assignment-based mode */}
         <WhatINeedRow
           earnedPts={earnedPts}
           possiblePts={possiblePts}
           totalPossible={totalPossible}
           color={color}
         />
+        {/* Hint to override */}
+        {canvasLive?.currentScore == null && !isManualOverride && (
+          <div style={{ fontSize: '0.62rem', color: 'var(--text-3)', marginTop: 2, fontStyle: 'italic' }}>
+            Click the % above to set a manual grade override.
+          </div>
+        )}
       </div>
     </div>
   )
@@ -201,22 +288,83 @@ function CourseGpaRow({ course, color, credits, onCreditsChange }) {
 // ── Main GpaPanel ─────────────────────────────────────────────────────────────
 
 export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) {
-  const [open, setOpen] = useState(false)
-  const [credits, setCredits] = useState({}) // { [courseId]: number }
+  const [open,     setOpen]    = useState(false)
+  const [credits,  setCredits] = useState({})   // { [courseId]: number }
+  // Canvas live grades: null = not loaded yet, {} = loaded (map courseId → grade obj)
+  const [canvasGrades,  setCanvasGrades]  = useState(null)
+  const [gradesLoading, setGradesLoading] = useState(false)
+  // Manual overrides: { [courseId]: { score: number } }
+  const [overrides, setOverrides] = useState({})
 
-  // Load persisted credits on mount
+  // Load persisted credits + overrides on mount
   useEffect(() => {
     const prefs = loadGpaPrefs()
-    if (prefs.credits) setCredits(prefs.credits)
+    if (prefs.credits)   setCredits(prefs.credits)
+    if (prefs.overrides) setOverrides(prefs.overrides)
   }, [])
 
   function handleCreditsChange(courseId, val) {
     setCredits(prev => {
       const next = { ...prev, [courseId]: val }
-      saveGpaPrefs({ credits: next })
+      saveGpaPrefs({ ...loadGpaPrefs(), credits: next })
       return next
     })
   }
+
+  function handleOverride(courseId, score) {
+    setOverrides(prev => {
+      const next = { ...prev, [courseId]: { score } }
+      saveGpaPrefs({ ...loadGpaPrefs(), overrides: next })
+      return next
+    })
+  }
+
+  function handleResetOverride(courseId) {
+    setOverrides(prev => {
+      const next = { ...prev }
+      delete next[courseId]
+      saveGpaPrefs({ ...loadGpaPrefs(), overrides: next })
+      return next
+    })
+  }
+
+  // Fetch Canvas grades — called when the panel opens or canvasAssignments changes
+  // Uses the same credential flow as the existing GradesPanel in CoursesPanel.js.
+  const fetchRef = useRef(null)
+  const fetchCanvasGrades = useCallback(async (courseIds) => {
+    if (!courseIds.length) { setCanvasGrades({}); return }
+    // De-bounce: cancel any in-flight fetch
+    const id = Symbol()
+    fetchRef.current = id
+    setGradesLoading(true)
+    try {
+      const res  = await fetch(`/api/canvas/grades?courseIds=${courseIds.join(',')}`)
+      if (fetchRef.current !== id) return   // stale
+      if (!res.ok) return
+      const data = await res.json()
+      if (fetchRef.current !== id) return
+      const map = {}
+      for (const g of data.grades ?? []) map[g.courseId] = g
+      setCanvasGrades(map)
+    } catch (_) {
+      // non-fatal — fall back to assignment-computed grades
+    } finally {
+      if (fetchRef.current === id) setGradesLoading(false)
+    }
+  }, [])
+
+  // Derive unique course IDs from canvasAssignments (stable for useMemo)
+  const courseIds = useMemo(() => {
+    const seen = new Set()
+    for (const a of canvasAssignments) seen.add(a.courseId)
+    return [...seen]
+  }, [canvasAssignments])
+
+  // Fetch Canvas grades whenever the set of course IDs changes (same cadence as sync)
+  useEffect(() => {
+    if (!courseIds.length) return
+    fetchCanvasGrades(courseIds)
+  }, [courseIds.join(','), fetchCanvasGrades]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build per-course grade summaries from graded assignments
   const courses = useMemo(() => {
@@ -240,18 +388,23 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [canvasAssignments])
 
-  // Credit-weighted GPA
+  // Credit-weighted GPA — uses override → Canvas live → assignment-computed
   const overallGpa = useMemo(() => {
     if (!courses.length) return null
     let weightedSum = 0
     let totalCredits = 0
     for (const c of courses) {
-      const cr = credits[c.id] ?? 3
-      weightedSum  += c.grade.points * cr
+      const cr  = credits[c.id] ?? 3
+      const ov  = overrides[c.id]
+      const live = canvasGrades?.[c.id]
+      const effectivePct = ov != null
+        ? ov.score
+        : (live?.currentScore != null ? live.currentScore : c.pct)
+      weightedSum  += pctToGrade(effectivePct).points * cr
       totalCredits += cr
     }
     return totalCredits > 0 ? weightedSum / totalCredits : null
-  }, [courses, credits])
+  }, [courses, credits, overrides, canvasGrades])
 
   const hasGraded = courses.length > 0
 
@@ -282,6 +435,17 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
         <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.01em' }}>
           GPA / Grades
         </span>
+
+        {/* Refresh Canvas grades button */}
+        {open && (
+          <button
+            onClick={e => { e.stopPropagation(); fetchCanvasGrades(courseIds) }}
+            title="Refresh Canvas grades"
+            style={{ background: 'none', border: 'none', cursor: gradesLoading ? 'wait' : 'pointer', padding: '3px 5px', borderRadius: 6, color: 'var(--text-3)', display: 'flex', flexShrink: 0 }}
+          >
+            <RefreshCw size={11} style={{ animation: gradesLoading ? 'gc-spin 1s linear infinite' : 'none' }} />
+          </button>
+        )}
 
         {/* Overall GPA pill */}
         {overallGpa !== null && (
@@ -353,11 +517,15 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
                   color={getCourseColor(course.id, courseColors)}
                   credits={credits[course.id] ?? 3}
                   onCreditsChange={val => handleCreditsChange(course.id, val)}
+                  canvasLive={canvasGrades?.[course.id] ?? null}
+                  override={overrides[course.id] ?? null}
+                  onOverride={score => handleOverride(course.id, score)}
+                  onResetOverride={() => handleResetOverride(course.id)}
                 />
               ))}
 
               <div style={{ fontSize: '0.68rem', color: 'var(--text-3)', marginTop: 4, textAlign: 'right' }}>
-                Based on graded assignments only. Credit hours persist locally.
+                {canvasGrades ? 'Canvas live grades · ' : ''}Based on graded assignments. Credit hours persist locally.
               </div>
             </>
           )}

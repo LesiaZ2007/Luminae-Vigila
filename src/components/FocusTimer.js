@@ -10,7 +10,7 @@
  * Two surfaces:
  *   - Compact panel anchored to a FAB (desktop) / opened from Settings (mobile)
  *   - Full-screen "zen" mode with a depleting glow ring and a selectable ambient
- *     background (stars, snow, or a slow aurora) for distraction-free focus
+ *     background (snow, aurora, rain, or fireflies) for distraction-free focus
  *
  * Time-blocking tie-in (no fragile drag-and-drop):
  *   - Toggle "Log to calendar" and every completed focus session is dropped onto the
@@ -37,7 +37,7 @@ const DEFAULTS = {
   autoStartNext: false,
   sound: true,
   logToCalendar: false,
-  fx: 'stars',           // ambient background in full-screen: 'none' | 'stars' | 'snow' | 'aurora'
+  fx: 'snow',            // ambient background in full-screen: 'none' | 'snow' | 'aurora' | 'rain' | 'fireflies'
   showInfo: true,        // show the "how it works" note in the compact panel
   customDefaults: null,  // {focusMin, shortMin, longMin} saved as the user's personal default
 }
@@ -52,10 +52,11 @@ const PHASES = {
 }
 
 const FX_OPTIONS = [
-  { id: 'none',   label: 'None'   },
-  { id: 'stars',  label: 'Stars'  },
-  { id: 'snow',   label: 'Snow'   },
-  { id: 'aurora', label: 'Aurora' },
+  { id: 'none',       label: 'None'       },
+  { id: 'snow',       label: 'Snow'       },
+  { id: 'aurora',     label: 'Aurora'     },
+  { id: 'rain',       label: 'Rain'       },
+  { id: 'fireflies',  label: 'Fireflies'  },
 ]
 
 function todayStr() {
@@ -67,23 +68,44 @@ function loadState() {
   try {
     const raw = JSON.parse(localStorage.getItem('lv-focus') ?? '{}')
     const settings = { ...DEFAULTS, ...(raw.settings ?? {}) }
+    // Migrate retired backgrounds (stars / ocean) to a still-supported one.
+    if (settings.fx === 'stars' || settings.fx === 'ocean') settings.fx = 'snow'
     const isToday = raw.day === todayStr()
     return {
       settings,
       taskId: raw.taskId ?? null,
+      courseTag: raw.courseTag ?? null,  // { courseId, courseName } or null
       day: todayStr(),
       sessionsToday: isToday ? (raw.sessionsToday ?? 0) : 0,
       focusSecondsToday: isToday ? (raw.focusSecondsToday ?? 0) : 0,
     }
   } catch {
-    return { settings: { ...DEFAULTS }, taskId: null, day: todayStr(), sessionsToday: 0, focusSecondsToday: 0 }
+    return { settings: { ...DEFAULTS }, taskId: null, courseTag: null, day: todayStr(), sessionsToday: 0, focusSecondsToday: 0 }
   }
+}
+
+// ── Study session persistence (localStorage-only) ─────────────────────────────
+// Key: 'lv-study-sessions'
+// Shape: [{ id, courseId, courseName, durationSec, date }]  (date = 'YYYY-MM-DD')
+
+function loadStudySessions() {
+  try { return JSON.parse(localStorage.getItem('lv-study-sessions') ?? '[]') } catch { return [] }
+}
+
+function saveStudySession(session) {
+  try {
+    const arr = loadStudySessions()
+    arr.push(session)
+    localStorage.setItem('lv-study-sessions', JSON.stringify(arr))
+  } catch {}
 }
 
 export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
+  // courseTag: null = None, or { courseId, courseName }
+  const [courseTag,  setCourseTag]  = useState(null)
   const [phase,      setPhase]      = useState('focus')
   const [running,    setRunning]    = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(DEFAULTS.focusMin * 60)
@@ -108,6 +130,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     const s = loadState()
     setSettings(s.settings)
     setTaskId(s.taskId)
+    if (s.courseTag) setCourseTag(s.courseTag)
     setSessionsToday(s.sessionsToday)
     setFocusSecondsToday(s.focusSecondsToday)
     setSecondsLeft(s.settings.focusMin * 60)
@@ -119,10 +142,10 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     if (!hydrated) return
     try {
       localStorage.setItem('lv-focus', JSON.stringify({
-        settings, taskId, day: todayStr(), sessionsToday, focusSecondsToday,
+        settings, taskId, courseTag, day: todayStr(), sessionsToday, focusSecondsToday,
       }))
     } catch {}
-  }, [hydrated, settings, taskId, sessionsToday, focusSecondsToday])
+  }, [hydrated, settings, taskId, courseTag, sessionsToday, focusSecondsToday])
 
   /* ── If not running, keep the displayed time in sync with the phase length ── */
   useEffect(() => {
@@ -200,6 +223,15 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       const newCount = sessionsToday + 1
       setSessionsToday(newCount)
       setFocusSecondsToday(s => s + elapsed)
+
+      // Persist completed session for study time tracking
+      saveStudySession({
+        id:          `fs-${endMs}`,
+        courseId:    courseTag?.courseId   ?? null,
+        courseName:  courseTag?.courseName ?? null,
+        durationSec: elapsed,
+        date:        todayStr(),
+      })
 
       // Accumulate focus time on the task (additive field, ignored elsewhere)
       if (linkedTarget) {
@@ -298,6 +330,23 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     setSecondsLeft(phaseDurMin(p) * 60)
   }
 
+  // Build unique course list: Canvas courses + any manual classes from canvasAssignments.
+  // MUST stay above the `if (!open)` early return so hook order is stable when the timer
+  // is closed vs open.
+  const courseOptions = useMemo(() => {
+    const seen = new Map()
+    for (const a of canvasAssignments) {
+      if (a.courseId && !seen.has(String(a.courseId))) {
+        seen.set(String(a.courseId), a.courseName || String(a.courseId))
+      }
+    }
+    const opts = [{ value: '', label: 'None' }]
+    for (const [id, name] of seen) {
+      opts.push({ value: id, label: name })
+    }
+    return opts
+  }, [canvasAssignments])
+
   if (!open) {
     return burst ? <Confetti priority="high" x={burst.x} y={burst.y} /> : null
   }
@@ -385,6 +434,29 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
           {running ? <Pause size={light ? 30 : 24} fill="#fff" /> : <Play size={light ? 30 : 24} fill="#fff" style={{ marginLeft: 3 }} />}
         </button>
         <IconBtn title="Skip phase" onClick={skipPhase} color={muted}><SkipForward size={light ? 20 : 16} /></IconBtn>
+      </div>
+    )
+  }
+
+  function CoursePicker({ light }) {
+    const curVal = courseTag?.courseId ? String(courseTag.courseId) : ''
+    return (
+      <div>
+        <label style={{ fontSize: '0.62rem', fontWeight: 700, color: light ? 'rgba(255,255,255,0.5)' : 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Course tag
+        </label>
+        <div style={{ marginTop: 5 }}>
+          <Select
+            value={curVal}
+            onChange={v => {
+              if (!v) { setCourseTag(null); return }
+              const name = courseOptions.find(o => o.value === v)?.label ?? v
+              setCourseTag({ courseId: v, courseName: name })
+            }}
+            options={courseOptions}
+            placeholder="None"
+          />
+        </div>
       </div>
     )
   }
@@ -487,6 +559,9 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <IconBtn title="Done" onClick={() => setShowSettings(false)}><X size={16} /></IconBtn>
                 </div>
                 <div style={{ marginBottom: 12 }}>{TaskPicker({})}</div>
+                {courseOptions.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>{CoursePicker({})}</div>
+                )}
                 {SettingsContent({})}
               </div>
             </div>
@@ -584,6 +659,11 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
         {/* Task picker */}
         <div style={{ padding: '0 14px 10px' }}>{TaskPicker({})}</div>
 
+        {/* Course tag picker */}
+        {courseOptions.length > 1 && (
+          <div style={{ padding: '0 14px 10px' }}>{CoursePicker({})}</div>
+        )}
+
         {/* Settings drawer */}
         {showSettings && (
           <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
@@ -643,9 +723,97 @@ function BackgroundFX({ type, accent }) {
     )
   }
 
-  // stars / snow — generated particle field.
-  // Memoized on `type` ONLY: the timer re-renders every 250ms, and without this the
-  // random positions would be regenerated each render, making the stars teleport/twitch.
+  if (type === 'rain') return <RainFX />
+  if (type === 'fireflies') return <FirefliesFX />
+  return <ParticleFX type={type} />
+}
+
+// Each effect lives in its own component so hook order never changes when the
+// user switches backgrounds mid-session.
+
+// ── Rain ──
+// Each streak is a very thin tall rectangle with a negative
+// skew so it looks like a diagonal rain streak.  Pure CSS animation, no images.
+function RainFX() {
+    const drops = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
+      id: i,
+      left:   Math.random() * 110 - 5,     // allow some off-screen starts
+      dur:    0.55 + Math.random() * 0.5,  // fast rain: 0.55–1.05s
+      delay:  -(Math.random() * 2),
+      height: 14 + Math.random() * 18,     // streak length in px
+      drift:  (Math.random() * 2 - 1) * 8, // subtle sideways jitter
+      opacity: 0.35 + Math.random() * 0.35,
+    })), [])
+
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
+        {/* Subtle water-surface sheen at the very bottom */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '6px',
+          background: 'linear-gradient(180deg, transparent, rgba(180,220,255,0.08))',
+        }} />
+        {drops.map(p => (
+          <span key={p.id} style={{
+            position: 'absolute', left: `${p.left}%`, top: '-5%',
+            width: 1.5, height: p.height, borderRadius: 1,
+            background: 'rgba(180,220,255,0.65)',
+            willChange: 'transform, opacity',
+            ['--drift']: `${p.drift}px`,
+            animation: `lv-rain ${p.dur}s linear ${p.delay}s infinite`,
+          }} />
+        ))}
+      </div>
+    )
+}
+
+// ── Fireflies ──
+// Warm glowing dots that drift randomly through the screen.
+// Two separate animations run simultaneously: a slow drift path and a glow pulse.
+function FirefliesFX() {
+    const flies = useMemo(() => Array.from({ length: 38 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 95,
+      top:  Math.random() * 90,
+      size: 3 + Math.random() * 4,
+      driftDur:  8 + Math.random() * 12,
+      glowDur:   1.5 + Math.random() * 2.5,
+      driftDelay: -(Math.random() * 16),
+      glowDelay:  -(Math.random() * 4),
+      // Four random waypoints for the drift path
+      fx:  (Math.random() * 80 - 40) + 'px',
+      fy:  (Math.random() * 60 - 30) + 'px',
+      fx2: (Math.random() * 80 - 40) + 'px',
+      fy2: (Math.random() * 60 - 30) + 'px',
+      fx3: (Math.random() * 80 - 40) + 'px',
+      fy3: (Math.random() * 60 - 30) + 'px',
+    })), [])
+
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
+        {flies.map(f => (
+          <span key={f.id} style={{
+            position: 'absolute', left: `${f.left}%`, top: `${f.top}%`,
+            width: f.size, height: f.size, borderRadius: '50%',
+            background: 'rgba(255,225,80,0.9)',
+            willChange: 'transform, opacity, box-shadow',
+            ['--fx']:  f.fx,  ['--fy']:  f.fy,
+            ['--fx2']: f.fx2, ['--fy2']: f.fy2,
+            ['--fx3']: f.fx3, ['--fy3']: f.fy3,
+            // Stack both animations on the same element
+            animation: [
+              `lv-firefly-drift ${f.driftDur}s ease-in-out ${f.driftDelay}s infinite`,
+              `lv-firefly-glow  ${f.glowDur}s  ease-in-out ${f.glowDelay}s  infinite`,
+            ].join(', '),
+          }} />
+        ))}
+      </div>
+    )
+}
+
+// stars / snow — generated particle field.
+// Memoized on `type` ONLY: the timer re-renders every 250ms, and without this the
+// random positions would be regenerated each render, making the stars teleport/twitch.
+function ParticleFX({ type }) {
   const isSnow = type === 'snow'
   const particles = useMemo(() => {
     const count = isSnow ? 70 : 55
