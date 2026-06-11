@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { CanvasLogo } from '@/components/CanvasSettingsModal'
 import AssignmentDetailModal from '@/components/AssignmentDetailModal'
+import GpaPanel from '@/components/GpaPanel'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -735,6 +736,12 @@ export default function CoursesPanel({
 
             {/* Course cards */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '6px 16px 24px' }}>
+              {/* GPA / Grades collapsible card */}
+              <GpaPanel
+                canvasAssignments={canvasAssignments}
+                courseColors={courseColors}
+              />
+
               {filteredByCourse.length === 0 && futureByCourse.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-3)', fontSize: '0.82rem' }}>
                   {tab === 'thisweek' ? 'No assignments due this week 🎉' : 'No assignments found.'}
