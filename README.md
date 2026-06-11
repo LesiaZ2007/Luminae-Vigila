@@ -40,6 +40,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 🟠 Canvas LMS
 - Connect with your Canvas API token + institution URL (no IT setup needed)
+- **Canvas Calendar Feed (no token needed)** — paste your personal iCal feed URL (Canvas → Calendar → Calendar Feed) to pull assignment due dates and events without an API token; works for any public `.ics` subscription URL too; events appear in Canvas orange on the calendar
 - **Assignments on the calendar** — due dates appear as all-day task markers alongside your own events
 - **Per-course toggles** — enable/disable individual courses; updates apply instantly to the calendar
 - **Courses tab** — appears automatically when Canvas is connected, showing:
