@@ -35,6 +35,9 @@ import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
 import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 import FocusTimer             from '@/components/FocusTimer'
+import AccentPicker           from '@/components/AccentPicker'
+import OfflineIndicator       from '@/components/OfflineIndicator'
+import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
@@ -77,6 +80,7 @@ export default function Home() {
   const [corvusFloat,   setCorvusFloat]   = useState(false)
   const [nudgeCluster,  setNudgeCluster]  = useState(null)
   const [focusOpen,     setFocusOpen]     = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
   const [showAddMenu,   setShowAddMenu]   = useState(false)
   const [showHelpOverlay,   setShowHelpOverlay]   = useState(false)
   const [showSearchPopup,   setShowSearchPopup]   = useState(false)
@@ -180,7 +184,13 @@ export default function Home() {
     [events, googleEvents, eventPrefs],
   )
 
-  useEffect(() => { setMounted(true) }, [])
+  useEffect(() => {
+    setMounted(true)
+    // Small delay so the app renders first, then the wizard slides in gracefully
+    if (typeof window !== 'undefined') {
+      setTimeout(() => { if (shouldShowOnboarding()) setShowOnboarding(true) }, 600)
+    }
+  }, [])
 
   // If the user was on the mobile-only 'settings' tab and the window grows past mobile breakpoint,
   // redirect them to calendar so they don't land on a blank screen.
@@ -1650,6 +1660,17 @@ export default function Home() {
                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
             {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
           </button>
+
+          {/* Accent color picker */}
+          <AccentPicker variant="sidebar" />
+
+          {/* Show tour */}
+          <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
+                  onMouseEnter={e => e.currentTarget.style.color = 'rgba(147,197,253,.9)'}
+                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.5)'}>
+            Show tour
+          </button>
         </div>
       </aside>}
 
@@ -1987,6 +2008,15 @@ export default function Home() {
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
                 {theme === 'dark' ? <><Sun size={12}/> Light mode</> : <><Moon size={12}/> Dark mode</>}
               </button>
+
+              {/* Accent color picker */}
+              <AccentPicker variant="sidebar" />
+
+              {/* Show tour */}
+              <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)', background: 'transparent', color: 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>
+                Show tour
+              </button>
             </div>
           </main>
         )}
@@ -2206,6 +2236,18 @@ export default function Home() {
         >
           <Timer size={20} />
         </button>
+      )}
+
+      {/* ── Offline indicator (always mounted — shows/hides itself) ── */}
+      <OfflineIndicator />
+
+      {/* ── Onboarding wizard (first-run only) ── */}
+      {showOnboarding && (
+        <OnboardingWizard
+          onClose={() => setShowOnboarding(false)}
+          onOpenGoogleSettings={() => { setShowOnboarding(false); setShowGoogleSettings(true) }}
+          onOpenCanvasSettings={() => { setShowOnboarding(false); setShowCanvasSettings(true) }}
+        />
       )}
 
       {/* ── Floating Corvus widget (desktop only) ── */}
