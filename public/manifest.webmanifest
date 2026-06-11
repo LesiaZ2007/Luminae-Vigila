@@ -1,0 +1,25 @@
+{
+  "name": "luminaeVigila",
+  "short_name": "Vigila",
+  "description": "Your personal student planner — sync Google Calendar and Canvas, manage tasks, and get AI-powered scheduling help.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a1628",
+  "theme_color": "#243b55",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
