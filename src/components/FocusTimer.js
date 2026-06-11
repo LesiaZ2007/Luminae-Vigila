@@ -567,12 +567,19 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <div style={{ marginBottom: 12 }}>{CoursePicker({})}</div>
                 )}
                 {SettingsContent({})}
-                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
-                </div>
               </div>
             </div>
           )}
+
+          {/* Weekly recap — persistent surface card (top-left), readable on the dark backdrop */}
+          <div style={{
+            position: 'absolute', top: 58, left: 20, zIndex: 3,
+            width: 224, maxWidth: 'calc(100vw - 40px)',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 16, boxShadow: 'var(--shadow-modal)', padding: '11px 13px',
+          }}>
+            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
+          </div>
 
           {/* Center stack */}
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
