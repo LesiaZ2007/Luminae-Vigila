@@ -1199,6 +1199,22 @@ export default function Home() {
       setActiveNav('todos')
       return
     }
+    // Any event currently marked hidden (shown semi-transparently via "Show hidden")
+    // → offer to unhide it, for ANY source. Without this, clicking a hidden local
+    // event just reopens the edit modal whose eye button only re-hides it, so the
+    // event could never be returned to normal.
+    if (eventPrefs[info.event.id]?.hidden) {
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        eventId: info.event.id,
+        title: info.event.title,
+        subtitle: 'This event is hidden.',
+        actions: [{ label: 'Unhide event', onClick: () => unhideEvent(info.event.id) }],
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
+      return
+    }
     // Canvas class schedule events — show info toast
     if (info.event.extendedProps?.source === 'canvas-class') {
       const { professor, location, courseName } = info.event.extendedProps
@@ -1291,7 +1307,6 @@ export default function Home() {
         .filter(e => eventPrefs[e.id]?.hidden)
         .map(e => ({
           ...e,
-          classNames: ['lv-hidden-event'],
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       const hiddenGcal = googleEvents
@@ -1299,7 +1314,6 @@ export default function Home() {
         .map(e => ({
           ...e,
           color: eventPrefs[e.id]?.color || e.color,
-          classNames: ['lv-hidden-event'],
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       return [...hiddenLocal, ...hiddenGcal]
