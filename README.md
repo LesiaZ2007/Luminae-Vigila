@@ -23,14 +23,6 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ## ✨ Features
 
-### ⚡ Quick-Add Omnibar
-- **Single-input natural-language entry** — type things like `dentist friday 2-3pm`, `math hw tomorrow`, `gym every tuesday 7am`, or `essay due monday` and hit Enter; no modal, no clicking
-- **Live inline preview chip** — as you type, a chip below the input shows what will be created: `Event · Dentist · Fri Jun 13, 2:00–3:00 PM` or `Task · Math HW · Due tomorrow`
-- **One-tap type toggle** — hit "Make event" / "Make task" in the chip to flip the parser's inferred type before committing
-- **Hand-written parser, no AI** — runs entirely client-side, zero latency. Handles: `today`/`tomorrow`/`tonight`, weekday names (next occurrence), `next <weekday>` (week after), explicit dates like `6/15` or `jun 15`, time ranges `2-3pm` / `2pm-3pm`, durations `for 2h`, `due` keyword, and simple recurrence `every tuesday`
-- **Keyboard shortcut `Q`** — press Q from anywhere to focus the omnibar instantly
-- Sits above the calendar on desktop and tablet; full-width at the top of the calendar view on mobile
-
 ### 📅 Calendar & Tasks
 - **Weekly / monthly / daily views** — create, edit, and delete events with categories, colors, recurrence rules, reminders, and notes
 - **To-do list** — tasks with priorities, categories, due dates, recurring schedules, and event linking
@@ -173,7 +165,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 
 ### 📊 Weekly Recap + Streaks
 
-A compact **"Your week"** card lives at the bottom of the sidebar (desktop) and the Settings tab (mobile):
+A compact **"Your week"** section lives inside the **Focus Timer** panel (open it from the desktop timer FAB or the mobile Settings tab), grouping your weekly stats with the rest of your timing tools:
 
 - **Tasks completed this week** — counts both to-do completions and Canvas mark-done actions
 - **Focus hours this week** — reads from the Focus Timer's `lv-study-sessions` localStorage key
@@ -192,8 +184,8 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 
 > **Your week ahead** — 4 tasks, 2 events — busiest day: Wednesday
 
-- Opt in/out via the **"📬 Weekly digest ON/OFF"** toggle in the sidebar (desktop) or Settings tab (mobile)
-- Requires sign-in (the toggle shows "Digest requires sign-in" otherwise)
+- Opt in/out via the **"📬 Weekly digest ON/OFF"** toggle in the **Focus Timer** panel's "Your week" section
+- Requires sign-in (the toggle shows "Sign in to get a Sunday week-ahead digest" otherwise)
 - The cron is configured in `vercel.json` and calls `GET /api/push/digest` — protected by `Authorization: Bearer $CRON_SECRET`
 - `digest_enabled` column added to `push_subscriptions` (backward compatible, `DEFAULT false`)
 - **Upgrade existing install:** run `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;` in the Neon SQL Editor
@@ -275,16 +267,6 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - Created sessions are normal calendar events titled **"Study: \<exam title\>"** with a `studyPlanOf` back-reference to the exam event's ID
 - **Linked cleanup** — deleting an exam event shows a toast offering to also delete its associated study sessions
 
-### 📊 14-Day Crunch Forecast Strip
-- A slim horizontal strip above the calendar showing **load intensity** for each of the next 14 days
-- Each cell shows the weekday initial, an intensity-colored density block, and the day number
-- **Intensity** = count of pending tasks due + Canvas assignments due + exam events that day; uses `var(--blue)` at increasing opacity levels so all six accent themes work correctly
-- A small **red dot** on a cell means at least one exam is that day
-- **Tooltip on hover** shows a plain-text summary — e.g. "2 tasks due · 1 assignment due · 1 exam"
-- **Click any day** to navigate the main calendar to that date
-- **Collapsible** — a small toggle hides the strip when you want maximum calendar space; collapsed state persists in `localStorage` (`lv-crunch-collapsed`)
-- Empty days render a faint neutral cell; today's cell has an accent-colored border
-
 ### 🚨 Conflict Detection
 - When creating or editing a **timed event** in the Event modal, the app automatically detects time overlaps with other events and class schedule meetings
 - **Non-blocking** — an amber warning banner appears inline ("Overlaps with Physics 101, 2:00–3:15 PM") but never prevents saving
@@ -292,7 +274,7 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - Only fires for timed (non-all-day) events; all-day events are excluded
 
 ### 🎨 Accent Color Themes
-Choose your preferred accent color from the sidebar (look for **Accent color** near the bottom). Six palettes are available:
+Choose your preferred accent color from the **Settings** menu (the gear button at the bottom of the sidebar / Settings tab). Six palettes are available:
 - **Luminae Blue** — the default; indistinguishable from the original brand
 - **Violet**, **Emerald**, **Rose**, **Amber**, **Slate**
 
@@ -312,7 +294,7 @@ First-run modal wizard shown once to new users. Four steps:
 3. **Canvas LMS** — how to get an API token and connect (or skip)
 4. **Quick tour** — annotated overview of Calendar, To-Do, Corvus AI, and Focus Timer
 
-The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via the **Show tour** button in the sidebar bottom area (desktop) or the Settings tab (mobile). The localStorage flag `lv-onboarding-done` controls visibility.
+The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via **Show tour** in the **Settings** menu (the gear button at the bottom of the sidebar / Settings tab). The localStorage flag `lv-onboarding-done` controls visibility.
 
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
