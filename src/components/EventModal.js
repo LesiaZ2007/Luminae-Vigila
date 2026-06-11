@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, Trash2, RefreshCw, EyeOff } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { X, Trash2, RefreshCw, EyeOff, AlertTriangle } from 'lucide-react'
 import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
@@ -73,7 +73,77 @@ function initState(event, initialDate, categories) {
   }
 }
 
-export default function EventModal({ event, initialDate, categories, onSave, onDelete, onHide, onClose }) {
+/**
+ * Detect overlapping events for conflict warnings.
+ * Returns an array of {title, timeRange} strings describing conflicting events.
+ * Never blocks saving — only provides advisory warnings.
+ */
+function detectConflicts({ date, startTime, endTime, allDay, editingEventId, existingEvents, canvasClasses }) {
+  if (allDay || !date || !startTime || !endTime || startTime >= endTime) return []
+
+  const newStart = new Date(`${date}T${startTime}:00`)
+  const newEnd   = new Date(`${date}T${endTime}:00`)
+  if (isNaN(newStart) || isNaN(newEnd)) return []
+
+  const conflicts = []
+  const seen = new Set()
+
+  function checkOverlap(evStart, evEnd, title, timeLabel) {
+    if (!evStart || !evEnd || isNaN(evStart) || isNaN(evEnd)) return
+    // Strict overlap: both start < other end and end > other start
+    if (newStart < evEnd && newEnd > evStart) {
+      const key = `${title}|${timeLabel}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        conflicts.push({ title, timeRange: timeLabel })
+      }
+    }
+  }
+
+  function fmtTime(d) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  }
+
+  // ── Check existing user events ──────────────────────────────────────────
+  for (const ev of existingEvents) {
+    // Skip the event being edited
+    if (ev.id && ev.id === editingEventId) continue
+    if (ev.allDay || !ev.start) continue
+    const s = new Date(ev.start)
+    const e = ev.end ? new Date(ev.end) : new Date(s.getTime() + 3600_000)
+    // Same calendar day — use local date so evening events aren't bumped to next day
+    const sLocal = `${s.getFullYear()}-${String(s.getMonth()+1).padStart(2,'0')}-${String(s.getDate()).padStart(2,'0')}`
+    if (sLocal !== date) continue
+    checkOverlap(s, e, ev.title || 'Event', `${fmtTime(s)} – ${fmtTime(e)}`)
+  }
+
+  // ── Check class schedule recurring instances on this date ───────────────
+  for (const cls of canvasClasses) {
+    if (cls.enabled === false) continue
+    if (!cls.days?.length || !cls.semesterStart || !cls.semesterEnd || !cls.startTime || !cls.endTime) continue
+
+    // Check if this class meets on the same weekday and within semester range
+    const clsStart = new Date(`${date}T${cls.startTime}:00`)
+    const clsEnd   = new Date(`${date}T${cls.endTime}:00`)
+    if (isNaN(clsStart) || isNaN(clsEnd)) continue
+
+    const semStart = new Date(cls.semesterStart + 'T00:00:00')
+    const semEnd   = new Date(cls.semesterEnd   + 'T23:59:59')
+    const targetDate = new Date(date + 'T12:00:00')
+
+    if (targetDate < semStart || targetDate > semEnd) continue
+
+    const dow = targetDate.getDay()
+    if (!cls.days.includes(dow)) continue
+
+    const name = cls.courseName + (cls.section ? ` (${cls.section})` : '')
+    checkOverlap(clsStart, clsEnd, name, `${fmtTime(clsStart)} – ${fmtTime(clsEnd)}`)
+  }
+
+  return conflicts
+}
+
+export default function EventModal({ event, initialDate, categories, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [] }) {
   const isEdit         = !!event
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
@@ -106,6 +176,20 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
 
   // For recurring events: null = scope not yet chosen, 'single' or 'all'
   const [editScope, setEditScope] = useState(isRecurringEdit ? null : 'single')
+
+  // ── Conflict detection ──────────────────────────────────────────────────
+  const conflicts = useMemo(() => {
+    if (allDay) return []
+    return detectConflicts({
+      date,
+      startTime,
+      endTime,
+      allDay,
+      editingEventId: event?.id || null,
+      existingEvents,
+      canvasClasses,
+    })
+  }, [date, startTime, endTime, allDay, event?.id, existingEvents, canvasClasses]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const cat = categories.find(c => c.id === category) || categories[0]
 
@@ -483,6 +567,34 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
               <textarea value={notes} onChange={e => setNotes(e.target.value)}
                         placeholder="Any details, location, links…" rows={2} className="field" />
             </div>
+
+            {/* ── Conflict warnings (non-blocking) ── */}
+            {conflicts.length > 0 && (
+              <div style={{
+                borderRadius: 10,
+                border: '1px solid var(--amber)',
+                background: 'rgba(245,158,11,0.08)',
+                padding: '10px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={13} style={{ color: 'var(--amber)', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--amber)' }}>
+                    Schedule conflict{conflicts.length > 1 ? 's' : ''} detected
+                  </span>
+                </div>
+                {conflicts.map((c, i) => (
+                  <div key={i} style={{ fontSize: '0.76rem', color: 'var(--text-2)', paddingLeft: 19 }}>
+                    Overlaps with <strong style={{ color: 'var(--text)' }}>{c.title}</strong>, {c.timeRange}
+                  </div>
+                ))}
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-3)', paddingLeft: 19 }}>
+                  You can still save — this is just a heads-up.
+                </div>
+              </div>
+            )}
 
             {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
 
