@@ -116,7 +116,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
 - **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
-- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, or a slow **Aurora** (Esc to exit)
+- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, **Aurora**, **Rain** (diagonal streaks), **Fireflies** (warm drifting glowing dots), or **Ocean** (wave bands) — all pure CSS/JS animation, no assets (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
 - Fully optional and self-contained — it adds one `localStorage` key (`lv-focus`) and never alters existing events or tasks
 
@@ -158,13 +158,36 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - When Groq returns 429 (rate limited), the send button shows a 30-second countdown
 - Input and button are disabled during the cooldown to prevent repeated hammering
 
+### 🎨 Accent Color Themes
+Choose your preferred accent color from the sidebar (look for **Accent color** near the bottom). Six palettes are available:
+- **Luminae Blue** — the default; indistinguishable from the original brand
+- **Violet**, **Emerald**, **Rose**, **Amber**, **Slate**
+
+The accent is applied via a `data-accent` attribute on `<html>` and saved to `localStorage` (`lv-accent`). A before-paint inline script in `layout.js` restores it before the first render so there is never a flash of the wrong color. Both light and dark mode look polished with every accent.
+
+### 📡 Offline Indicator
+A subtle pill badge appears in the bottom-right corner when the app loses internet connectivity:
+- Shows "Offline — changes will sync when you reconnect" with a WifiOff icon
+- On reconnect it briefly shows "Back online" for 2 seconds, then auto-hides
+- Uses `window` online/offline events + `navigator.onLine` for initial state
+- Zero configuration; always mounted and self-managing
+
+### 🧭 Onboarding Wizard
+First-run modal wizard shown once to new users. Four steps:
+1. **Welcome** — overview of all major features
+2. **Google Calendar** — how to connect (or skip)
+3. **Canvas LMS** — how to get an API token and connect (or skip)
+4. **Quick tour** — annotated overview of Calendar, To-Do, Corvus AI, and Focus Timer
+
+The wizard is skippable at any step, never shows again after dismissal, and can be re-triggered at any time via the **Show tour** button in the sidebar bottom area (desktop) or the Settings tab (mobile). The localStorage flag `lv-onboarding-done` controls visibility.
+
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
 - **Responsive design** — desktop (full sidebar), tablet (mini-sidebar with labels), mobile (bottom tab navigation)
 - **Mobile To-Do tab** — stacked layout with To-Do / Canvas / Both toggle pills; shows priority tasks up top and Canvas assignments below
 - **Mobile search** — full-screen tab (no overlay), query resets each time you enter the tab; desktop keeps the Ctrl+K popup
-- **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, and import/export on mobile
+- **Mobile Settings tab** — exposes Google Calendar sync, Canvas connection, class schedule, sign-in, theme toggle, accent picker, and import/export on mobile
 - **Swipe-safe navigation** — horizontal swipes advance/retreat weeks without accidentally triggering event creation
 - **100dvh layout** — dynamic viewport height keeps the bottom tab bar fully visible on real devices
 
@@ -414,7 +437,10 @@ src/
 │   ├── TimePicker.js                 # Time picker — text input + analog clock popup
 │   ├── CategoryManager.js            # Manage to-do categories
 │   ├── Select.js                     # Custom dropdown
-│   └── Toast.js                      # Toast notifications
+│   ├── Toast.js                      # Toast notifications
+│   ├── AccentPicker.js               # Accent color palette popover (sidebar + settings)
+│   ├── OfflineIndicator.js           # Offline/back-online status pill badge
+│   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
     ├── db.js               # Neon PostgreSQL client
@@ -437,6 +463,8 @@ src/
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
+| Accent color preference | Browser `localStorage` (`lv-accent`) |
+| Onboarding wizard completion | Browser `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit-hours per course | Browser `localStorage` (`lv-gpa`) |
 | Google Calendar tokens | Neon DB, per user |
