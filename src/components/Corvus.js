@@ -1,12 +1,16 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Zap, ZapOff, Calendar, CheckSquare, ChevronRight, Maximize2, X, Pencil, RefreshCw } from 'lucide-react'
+import { Send, Zap, ZapOff, Calendar, CheckSquare, ChevronRight, Maximize2, X, Pencil, RefreshCw, Trash2, Clock, CalendarDays } from 'lucide-react'
 import EventModal   from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
 
-const SESSION_KEY = 'corvus-session'
-const SESSION_TTL = 30 * 60 * 1000   // 30 min
+// ── Storage keys ─────────────────────────────────────────────────────────────
+const SESSION_KEY       = 'corvus-session'
+const SESSION_TTL       = 30 * 60 * 1000   // 30 min
+const NUDGE_DISMISS_KEY = 'corvus-nudge-dismissed'   // value = YYYY-MM-DD
+const MAX_HISTORY       = 50   // max messages kept in localStorage
+const MAX_CONTEXT       = 16   // max messages sent per request (keeps Groq token usage sane)
 
 function CrowIcon({ size = 18, color = 'currentColor' }) {
   return (
@@ -25,11 +29,153 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
-const QUICK_ACTIONS = [
-  { id: 'urgent', label: 'Urgent deadlines', prompt: 'Review my upcoming events, tasks, and Canvas assignments and tell me which ones are urgent.' },
-  { id: 'week',   label: 'Summarize my week', prompt: 'Summarize my schedule and to-dos for this week, including Canvas deadlines.' },
-  { id: 'focus',  label: 'What next?', prompt: 'What should I focus on next based on my current schedule and tasks?' },
-  { id: 'plan',   label: 'Plan study time', prompt: 'Create a simple study plan for my upcoming deadlines and classes.' },
+// ── Build a "plan my week" structured prompt ──────────────────────────────────
+function buildPlanMyWeekPrompt(events, todos, canvasAssignments) {
+  const now    = new Date()
+  const in7    = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+  const dateOf = d => new Date(d + (d.length === 10 ? 'T12:00:00' : ''))
+
+  const upcomingEvents = [...(events || [])].filter(e => {
+    if (!e.start) return false
+    const d = new Date(e.start)
+    return d >= now && d <= in7
+  }).sort((a, b) => new Date(a.start) - new Date(b.start))
+
+  const pendingTasks = [...(todos || [])].filter(t => !t.completed && t.dueDate && dateOf(t.dueDate) <= in7)
+    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''))
+
+  const dueAssignments = [...(canvasAssignments || [])].filter(a => {
+    if (a.done || a.hidden || !a.dueAt) return false
+    const d = new Date(a.dueAt)
+    return d >= now && d <= in7
+  }).sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt))
+
+  const lines = [
+    'Please look at my next 7 days and propose a balanced study/work schedule.',
+    '',
+    `DATE RANGE: ${now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} → ${in7.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`,
+    '',
+  ]
+
+  if (upcomingEvents.length) {
+    lines.push('EVENTS THIS WEEK:')
+    upcomingEvents.forEach(e => lines.push(`  • ${formatDate(e.start)}${formatTime(e.start) ? ' ' + formatTime(e.start) : ''} — ${e.title}`))
+    lines.push('')
+  }
+  if (pendingTasks.length) {
+    lines.push('TASKS DUE THIS WEEK:')
+    pendingTasks.forEach(t => lines.push(`  • Due ${formatDate(t.dueDate)} — ${t.title} [${t.priority || 'medium'} priority]`))
+    lines.push('')
+  }
+  if (dueAssignments.length) {
+    lines.push('CANVAS ASSIGNMENTS DUE THIS WEEK:')
+    dueAssignments.forEach(a => lines.push(`  • Due ${formatDate(a.dueAt)} — [${a.courseName}] ${a.title}`))
+    lines.push('')
+  }
+
+  lines.push('Suggest specific study blocks I should add to my calendar (day + time + subject + rough duration). You can use preview_event to create them after I confirm your plan — just describe the plan first, then I\'ll tell you to go ahead.')
+  return lines.join('\n')
+}
+
+// ── Build a deadline-cluster nudge prompt ──────────────────────────────────────
+function buildNudgePrompt(cluster) {
+  const lines = [
+    `I have ${cluster.items.length} deadlines in the next 72 hours and no study blocks covering them yet. Here's what's coming up:`,
+    '',
+  ]
+  cluster.items.forEach(item => {
+    lines.push(`  • ${item.label} — due ${formatDate(item.due)}`)
+  })
+  lines.push('')
+  lines.push('Can you help me plan study time for these? Suggest specific time blocks and I\'ll confirm each one.')
+  return lines.join('\n')
+}
+
+// ── Detect deadline cluster (client-side, zero AI cost) ───────────────────────
+function detectDeadlineCluster(events, todos, canvasAssignments) {
+  const now      = new Date()
+  const cutoff   = new Date(now.getTime() + 72 * 60 * 60 * 1000)
+
+  // Gather upcoming deadlines within 72h
+  const items = []
+  ;(todos || []).forEach(t => {
+    if (!t.completed && t.dueDate) {
+      const d = new Date(t.dueDate + 'T23:59:00')
+      if (d >= now && d <= cutoff) items.push({ label: t.title, due: t.dueDate, type: 'task' })
+    }
+  })
+  ;(canvasAssignments || []).forEach(a => {
+    if (!a.done && !a.hidden && a.dueAt) {
+      const d = new Date(a.dueAt)
+      if (d >= now && d <= cutoff) items.push({ label: `[${a.courseName}] ${a.title}`, due: a.dueAt, type: 'assignment' })
+    }
+  })
+
+  if (items.length < 3) return null
+
+  // Check whether any user events in the 72h window look like study blocks
+  const studyKeywords = ['study', 'review', 'work on', 'prep', 'prepare', 'homework', 'hw', 'read', 'practice']
+  const hasStudyBlock = (events || []).some(e => {
+    if (!e.start) return false
+    const d = new Date(e.start)
+    if (d < now || d > cutoff) return false
+    const title = (e.title || '').toLowerCase()
+    return studyKeywords.some(kw => title.includes(kw))
+  })
+
+  if (hasStudyBlock) return null
+  return { items }
+}
+
+// ── Nudge banner ──────────────────────────────────────────────────────────────
+function NudgeBanner({ cluster, onOpen, onDismiss }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      background: 'linear-gradient(135deg, rgba(239,68,68,0.12), rgba(245,158,11,0.10))',
+      border: '1px solid rgba(239,68,68,0.28)', borderRadius: 12,
+      padding: '10px 14px', margin: '0 0 10px 0',
+      animation: 'corvus-panel-in .3s cubic-bezier(.22,1,.36,1)',
+    }}>
+      <span style={{ fontSize: '1.0rem', flexShrink: 0 }}>🚦</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.3 }}>
+          Busy stretch ahead
+        </div>
+        <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', lineHeight: 1.3 }}>
+          {cluster.items.length} deadlines in 72 h — no study blocks yet
+        </div>
+      </div>
+      <button
+        onClick={onOpen}
+        style={{
+          flexShrink: 0, padding: '5px 10px', borderRadius: 8, border: 'none',
+          background: '#ef4444', color: '#fff',
+          fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        Help me plan
+      </button>
+      <button
+        onClick={onDismiss}
+        style={{
+          flexShrink: 0, padding: 4, borderRadius: 6, border: 'none',
+          background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', alignItems: 'center',
+        }}
+        title="Dismiss"
+      >
+        <X size={13} />
+      </button>
+    </div>
+  )
+}
+
+const BASE_QUICK_ACTIONS = [
+  { id: 'urgent',   label: 'Urgent deadlines',  prompt: 'Review my upcoming events, tasks, and Canvas assignments and tell me which ones are urgent.' },
+  { id: 'week',     label: 'Summarize my week', prompt: 'Summarize my schedule and to-dos for this week, including Canvas deadlines.' },
+  { id: 'focus',    label: 'What next?',         prompt: 'What should I focus on next based on my current schedule and tasks?' },
+  { id: 'planweek', label: 'Plan my week',       prompt: null, icon: <CalendarDays size={11} /> },
+  { id: 'estimate', label: 'Estimate task time', prompt: 'I want to estimate how long one of my upcoming tasks or assignments will take. Which one should I pick? List my pending items and I\'ll choose.', icon: <Clock size={11} /> },
 ]
 
 function DetailRow({ label, value, dot }) {
@@ -226,8 +372,9 @@ function MentionCard({ item, type, eventCategories, onNavigate }) {
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────
-export default function Corvus({ events, canvasClassEvents = [], todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose }) {
+// ── Main component ────────────────────────────────────────────────────────────
+export default function Corvus({ events, canvasClassEvents = [], todos, canvasAssignments = [], todoCategories, eventCategories, onAddTodo, onSaveEvent, onUpdateTodo, onNavigateToItem, compact = false, onExpand, onClose, nudgeCluster = null, onNudgeDismiss }) {
+
   // ── Lazy-init state from localStorage so history survives tab switches ──
   const [history, setHistory] = useState(() => {
     try {
@@ -245,33 +392,74 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     } catch (_) {}
     return [{ type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." }]
   })
-  const [pending,       setPending]       = useState(null)
+  const [pending,        setPending]        = useState(null)
   const [editingPreview, setEditingPreview] = useState(false)
-  const [autoAdd,       setAutoAdd]       = useState(false)
-  const [loading,           setLoading]           = useState(false)
-  const [input,             setInput]             = useState('')
+  const [autoAdd,        setAutoAdd]        = useState(false)
+  const [loading,        setLoading]        = useState(false)
+  const [input,          setInput]          = useState('')
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0)
+  // Nudge: only show in-panel banner if we haven't dismissed today and a cluster exists
+  const [nudgeDismissed, setNudgeDismissed] = useState(() => {
+    try {
+      const d = localStorage.getItem(NUDGE_DISMISS_KEY)
+      return d === new Date().toISOString().slice(0, 10)
+    } catch (_) { return false }
+  })
   const countdownRef = useRef(null)
-  const bottomRef = useRef(null)
+  const bottomRef    = useRef(null)
 
   // Clean up countdown interval on unmount
   useEffect(() => () => clearInterval(countdownRef.current), [])
 
-  // ── Persist session to localStorage ──
+  // ── Persist session (cap at MAX_HISTORY messages) ──
   useEffect(() => {
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ history: history.slice(-20), items: items.slice(-60), t: Date.now() }))
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        history: history.slice(-MAX_HISTORY),
+        items:   items.slice(-60),
+        t:       Date.now(),
+      }))
     } catch (_) {}
   }, [history, items])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [items, loading])
 
-  // ── API call ──
+  // ── If opened via nudge, pre-load the prompt once ──
+  const nudgeLoadedRef = useRef(false)
+  useEffect(() => {
+    if (nudgeCluster && !nudgeDismissed && !nudgeLoadedRef.current && !loading) {
+      nudgeLoadedRef.current = true
+      // Slight delay so component renders first
+      const timer = setTimeout(() => {
+        sendMessage(buildNudgePrompt(nudgeCluster))
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nudgeCluster])
+
+  // ── Clear conversation ──
+  function clearConversation() {
+    setHistory([])
+    setItems([{ type: 'assistant', text: "Hi! I'm Corvus. Tell me what you need — I'll add tasks or events, or edit existing ones." }])
+    setPending(null)
+    try { localStorage.removeItem(SESSION_KEY) } catch (_) {}
+  }
+
+  // ── Dismiss nudge (set daily flag + notify parent) ──
+  function dismissNudge() {
+    const today = new Date().toISOString().slice(0, 10)
+    try { localStorage.setItem(NUDGE_DISMISS_KEY, today) } catch (_) {}
+    setNudgeDismissed(true)
+    onNudgeDismiss?.()
+  }
+
+  // ── API call — sends last MAX_CONTEXT messages as context ──
   async function callApi(msgs) {
     const res = await fetch('/api/corvus', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: msgs,
+        messages: msgs.slice(-MAX_CONTEXT),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         events: [...events, ...canvasClassEvents]
           .filter(e => !e.start || new Date(e.start) >= new Date(Date.now() - 86400_000))
@@ -337,7 +525,6 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
         }
         onSaveEvent(updated)
         setItems(p => [...p, { type: 'action', text: `Updated "${updated.title}"` }])
-        // Skip API call — add tool result to history for next turn
         setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Event updated.' }] }])
       } else {
         setItems(p => [...p, { type: 'action', text: "Couldn't find that event." }])
@@ -370,7 +557,6 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       if (resolvedEvents.length > 0 || resolvedTasks.length > 0) {
         setItems(p => [...p, { type: 'mention_items', events: resolvedEvents, tasks: resolvedTasks }])
       }
-      // Acknowledge without extra API round-trip (display-only tool)
       setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Items shown to user.' }] }])
     }
   }
@@ -443,7 +629,8 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     setInput('')
     setLoading(true)
     const userMsg    = { role: 'user', content: text }
-    const newHistory = [...history.slice(-6), userMsg]
+    // Send recent history as context (capped), not the entire accumulated history
+    const newHistory = [...history.slice(-(MAX_HISTORY - 1)), userMsg]
     setHistory(newHistory)
     setItems(p => [...p, { type: 'user', text }])
     try {
@@ -474,8 +661,16 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     await sendMessage(input.trim())
   }
 
-  async function handleQuickAction(prompt) {
-    await sendMessage(prompt)
+  async function handleQuickAction(action) {
+    if (action.id === 'planweek') {
+      await sendMessage(buildPlanMyWeekPrompt(
+        [...events, ...canvasClassEvents],
+        todos,
+        canvasAssignments,
+      ))
+    } else {
+      await sendMessage(action.prompt)
+    }
   }
 
   // Build the event object to pass to EventModal for editing the preview
@@ -513,7 +708,8 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
-  const showSidePanel = !compact && !!pending && !autoAdd
+  const showSidePanel   = !compact && !!pending && !autoAdd
+  const showNudgeBanner = !!nudgeCluster && !nudgeDismissed
 
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden', background: 'var(--surface)' }}>
@@ -528,6 +724,20 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
             <span style={{ fontWeight: 700, fontSize: compact ? '0.82rem' : '0.9rem', color: 'var(--text)' }}>Corvus</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {/* Clear conversation button */}
+            <button
+              onClick={clearConversation}
+              title="Clear conversation"
+              style={{
+                display: 'flex', alignItems: 'center', padding: '3px 8px', borderRadius: 999,
+                border: '1px solid var(--border)', background: 'var(--surface2)',
+                color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.67rem', fontWeight: 600,
+                cursor: 'pointer', gap: 4,
+              }}
+            >
+              <Trash2 size={9} />
+              {!compact && 'Clear'}
+            </button>
             <button onClick={() => setAutoAdd(v => !v)} title={autoAdd ? 'Auto-add on' : 'Preview on'} style={{
               display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 999,
               border: '1px solid var(--border)', background: autoAdd ? 'var(--blue-bg)' : 'var(--surface2)',
@@ -549,15 +759,21 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
           </div>
         </div>
 
+        {/* Quick actions */}
         <div style={{ padding: compact ? '8px 14px' : '12px 20px', gap: 8, overflowX: 'auto', display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
-          {QUICK_ACTIONS.map(action => (
-            <button key={action.id} onClick={() => handleQuickAction(action.prompt)} disabled={loading || !!pending}
+          {BASE_QUICK_ACTIONS.map(action => (
+            <button key={action.id} onClick={() => handleQuickAction(action)} disabled={loading || !!pending}
                     style={{
                       flex: '0 0 auto', padding: '8px 12px', borderRadius: 999, border: '1px solid',
-                      borderColor: 'rgba(255,255,255,.12)', background: 'var(--surface2)',
-                      color: 'var(--text-2)', fontSize: '0.75rem', fontWeight: 700, cursor: loading || pending ? 'not-allowed' : 'pointer',
+                      borderColor: action.id === 'planweek' ? 'rgba(58,111,168,0.45)' : action.id === 'estimate' ? 'rgba(16,185,129,0.35)' : 'rgba(255,255,255,.12)',
+                      background: action.id === 'planweek' ? 'var(--blue-bg)' : action.id === 'estimate' ? 'rgba(16,185,129,0.08)' : 'var(--surface2)',
+                      color: action.id === 'planweek' ? 'var(--blue-text)' : action.id === 'estimate' ? '#10b981' : 'var(--text-2)',
+                      fontSize: '0.75rem', fontWeight: 700,
+                      cursor: loading || pending ? 'not-allowed' : 'pointer',
                       opacity: loading || pending ? 0.45 : 1,
+                      display: 'flex', alignItems: 'center', gap: 5,
                     }}>
+              {action.icon && action.icon}
               {action.label}
             </button>
           ))}
@@ -565,6 +781,19 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: compact ? '14px' : '20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* Proactive nudge banner (shown inside chat area, above messages) */}
+          {showNudgeBanner && (
+            <NudgeBanner
+              cluster={nudgeCluster}
+              onOpen={() => {
+                dismissNudge()
+                sendMessage(buildNudgePrompt(nudgeCluster))
+              }}
+              onDismiss={dismissNudge}
+            />
+          )}
+
           {items.map((item, i) => {
             if (item.type === 'user') return (
               <div key={i} style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -595,7 +824,6 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
             )
             if (item.type === 'preview_task' || item.type === 'preview_event') {
               if (compact) {
-                // Inline card in compact mode
                 return (
                   <div key={i} style={{ display: 'flex', justifyContent: 'flex-start' }}>
                     <InlinePreviewCard

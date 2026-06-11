@@ -38,6 +38,18 @@ export default async function RootLayout({ children }) {
 
   return (
     <html lang="en" className={jakarta.variable} suppressHydrationWarning>
+      <head>
+        {/*
+          Inline script: read the saved accent from localStorage before the first
+          paint so there is never a flash of the default blue on a different accent.
+          Runs synchronously in <head> — must be tiny and have no imports.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var a=localStorage.getItem('lv-accent');if(a&&a!=='blue')document.documentElement.setAttribute('data-accent',a)}catch(e){}})()`,
+          }}
+        />
+      </head>
       <body className="h-full overflow-hidden">
         <ThemeProvider>{children}</ThemeProvider>
         <ServiceWorkerRegistration isSignedIn={isSignedIn} />
