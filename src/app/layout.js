@@ -13,6 +13,15 @@ const jakarta = Plus_Jakarta_Sans({
 export const metadata = {
   title: "luminaeVigila",
   description: "Your personal schedule, calendar, and task manager",
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'luminaeVigila',
+  },
+  icons: {
+    apple: '/icon.svg',
+  },
 };
 
 // Allow env(safe-area-inset-*) to work on iOS (notch / home-indicator)
@@ -20,6 +29,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  themeColor: '#243b55',
 };
 
 export default async function RootLayout({ children }) {
