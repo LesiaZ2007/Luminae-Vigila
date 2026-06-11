@@ -158,6 +158,33 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - When Groq returns 429 (rate limited), the send button shows a 30-second countdown
 - Input and button are disabled during the cooldown to prevent repeated hammering
 
+### ⌨️ Keyboard Shortcuts
+- **Power-user hotkeys** — press a single key anywhere in the app (outside text fields) to trigger common actions
+- `N` — open "New Event" modal
+- `T` — open "New Task" modal
+- `/` — open the search popup (Ctrl+K also works)
+- `F` — toggle the Focus Timer panel
+- `?` — show the keyboard shortcuts help overlay
+- `Esc` — close the topmost open overlay (help, focus timer, search, or Corvus float)
+- All shortcuts are suppressed while typing in any input, textarea, or contenteditable so they never interfere with regular typing
+- Shortcuts are also suppressed while a blocking modal (event/task/settings) is open, except `Esc` which always works
+
+### 📋 Agenda View
+- **Condensed 14-day list** — a new "Agenda" tab in the sidebar (and mobile bottom nav) shows everything coming up in a single scrollable view
+- Includes user calendar **events**, **tasks** with due dates, **Canvas assignments**, and **class schedule meetings**, all grouped by day
+- Day headers read **Today**, **Tomorrow**, or the full weekday + date
+- Items are sorted chronologically within each day; timed events appear before all-day/due-date items
+- Clicking any event opens its **EventModal**; clicking a task opens the **AddTodoModal**; Canvas assignments open their detail panel
+- Color-coded left stripe and icon match each item's category color for quick scanning
+- Mobile-friendly — proper bottom padding for the tab bar
+- Empty state shown when nothing is scheduled in the next 14 days
+
+### 🚨 Conflict Detection
+- When creating or editing a **timed event** in the Event modal, the app automatically detects time overlaps with other events and class schedule meetings
+- **Non-blocking** — an amber warning banner appears inline ("Overlaps with Physics 101, 2:00–3:15 PM") but never prevents saving
+- Checks against all visible user events and every applicable class schedule meeting for that date and weekday
+- Only fires for timed (non-all-day) events; all-day events are excluded
+
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
