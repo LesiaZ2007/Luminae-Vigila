@@ -2021,7 +2021,9 @@ export default function Home() {
           onClose={() => setFocusOpen(false)}
           isMobile={isMobile}
           todos={todos}
+          canvasAssignments={canvasAssignments}
           onUpdateTodo={updateTodo}
+          onUpdateCanvas={updateCanvasAssignment}
           onSaveEvent={saveEvent}
           pushToast={pushToast}
         />
