@@ -20,6 +20,8 @@ function useWindowWidth() {
 }
 import TodoPanel  from '@/components/TodoPanel'
 import EventModal from '@/components/EventModal'
+import StudyPlanModal    from '@/components/StudyPlanModal'
+import CrunchForecastStrip from '@/components/CrunchForecastStrip'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
@@ -73,6 +75,7 @@ export default function Home() {
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
+  const [studyPlanPending, setStudyPlanPending] = useState(null) // exam event that just got saved
   const [showTodoModal,   setShowTodoModal]   = useState(false)
   const [editingTodo,     setEditingTodo]     = useState(null)
   const [initialTodoDate, setInitialTodoDate] = useState(null)
@@ -528,11 +531,17 @@ export default function Home() {
       ])
     } else {
       const expanded = expandRecurring(ev)
-      if (ev.id && events.some(e => e.id === ev.id)) {
+      const isNewEvent = !ev.id || !events.some(e => e.id === ev.id)
+      if (!isNewEvent) {
         // Single edit — replace just that one instance
         setEvents(prev => prev.map(e => e.id === ev.id ? expanded[0] : e))
       } else {
         setEvents(prev => [...prev, ...expanded])
+      }
+      // After saving a NEW exam event, offer to generate a study plan
+      if (isNewEvent && ev.extendedProps?.category === 'exam') {
+        // expanded[0] has the final id (from expandRecurring or the original)
+        setStudyPlanPending(expanded[0] ?? { ...ev, id: ev.id || String(Date.now()) })
       }
     }
   }, [events])
@@ -579,6 +588,28 @@ export default function Home() {
             setTodos(curTodos => curTodos.map(t =>
               stillGone.has(t.linkedEventId) ? { ...t, linkedEventId: null } : t
             ))
+            // For each deleted exam event, offer to delete its linked study sessions
+            stillGone.forEach(eid => {
+              setEvents(cur => {
+                const studySessions = cur.filter(e => e.extendedProps?.studyPlanOf === eid)
+                if (studySessions.length === 0) return cur
+                const sessionIds = new Set(studySessions.map(s => s.id))
+                const toastId2 = pushToast(
+                  `Delete ${studySessions.length} study session${studySessions.length !== 1 ? 's' : ''}?`,
+                  `Linked study sessions for the deleted exam were found.`,
+                  [
+                    {
+                      label: 'Delete sessions',
+                      dismiss: true,
+                      onClick: () => setEvents(c => c.filter(e => !sessionIds.has(e.id))),
+                    },
+                    { label: 'Keep', dismiss: true, onClick: () => {} },
+                  ],
+                  { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+                )
+                return cur // no change yet — user decides
+              })
+            })
           }
           return curEvs // no change to events
         })
@@ -1794,6 +1825,15 @@ export default function Home() {
                   {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
                 </button>
               )}
+              <CrunchForecastStrip
+                events={events}
+                todos={todos}
+                canvasAssignments={canvasAssignments}
+                isMobile={isMobile}
+                onDayClick={(dateStr) => {
+                  setCalendarTargetDate(dateStr)
+                }}
+              />
               <ErrorBoundary>
                 <WeeklyCalendar events={allCalendarEvents} todos={todos}
                                 onDateClick={handleDateClick} onEventClick={handleEventClick}
@@ -2148,6 +2188,19 @@ export default function Home() {
                     existingEvents={events}
                     canvasClasses={canvasClasses}
                     onClose={() => setEventModal({ open: false, event: null, date: null })} />
+      )}
+      {studyPlanPending && (
+        <StudyPlanModal
+          examEvent={studyPlanPending}
+          existingEvents={events}
+          canvasClasses={canvasClasses}
+          onConfirm={(sessions) => {
+            sessions.forEach(s => saveEvent(s, 'single'))
+            setStudyPlanPending(null)
+            pushToast(`${sessions.length} study session${sessions.length !== 1 ? 's' : ''} scheduled`, `For "${studyPlanPending.title}"`)
+          }}
+          onDismiss={() => setStudyPlanPending(null)}
+        />
       )}
       {showTodoModal && (
         <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}

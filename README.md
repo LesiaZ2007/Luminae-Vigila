@@ -232,6 +232,24 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - Mobile-friendly — proper bottom padding for the tab bar
 - Empty state shown when nothing is scheduled in the next 14 days
 
+### 📚 Exam Study-Plan Generator
+- After saving any **Exam / Quiz** event, a compact follow-up modal appears: "Generate a study plan for this exam?"
+- Configure the **number of sessions** (1–6, default 3) and **session length** (30 m – 2 h, default 1 h)
+- Sessions are auto-scheduled using a **spaced-repetition spacing formula** — 1, 3, 5, 7, … days before the exam — with days that fall before today skipped silently
+- Each session lands in a free **16:00–21:00 slot** on its target day, checked against all existing events and class schedule meetings; the least-conflicting slot is chosen as a fallback
+- Created sessions are normal calendar events titled **"Study: \<exam title\>"** with a `studyPlanOf` back-reference to the exam event's ID
+- **Linked cleanup** — deleting an exam event shows a toast offering to also delete its associated study sessions
+
+### 📊 14-Day Crunch Forecast Strip
+- A slim horizontal strip above the calendar showing **load intensity** for each of the next 14 days
+- Each cell shows the weekday initial, an intensity-colored density block, and the day number
+- **Intensity** = count of pending tasks due + Canvas assignments due + exam events that day; uses `var(--blue)` at increasing opacity levels so all six accent themes work correctly
+- A small **red dot** on a cell means at least one exam is that day
+- **Tooltip on hover** shows a plain-text summary — e.g. "2 tasks due · 1 assignment due · 1 exam"
+- **Click any day** to navigate the main calendar to that date
+- **Collapsible** — a small toggle hides the strip when you want maximum calendar space; collapsed state persists in `localStorage` (`lv-crunch-collapsed`)
+- Empty days render a faint neutral cell; today's cell has an accent-colored border
+
 ### 🚨 Conflict Detection
 - When creating or editing a **timed event** in the Event modal, the app automatically detects time overlaps with other events and class schedule meetings
 - **Non-blocking** — an amber warning banner appears inline ("Overlaps with Physics 101, 2:00–3:15 PM") but never prevents saving
