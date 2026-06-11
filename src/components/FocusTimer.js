@@ -721,11 +721,19 @@ function BackgroundFX({ type, accent }) {
     )
   }
 
-  // ── Rain ──
-  // Memoized on type. Each streak is a very thin tall rectangle with a negative
-  // skew so it looks like a diagonal rain streak.  Pure CSS animation, no images.
-  if (type === 'rain') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
+  if (type === 'rain') return <RainFX />
+  if (type === 'fireflies') return <FirefliesFX />
+  if (type === 'ocean') return <OceanFX />
+  return <ParticleFX type={type} />
+}
+
+// Each effect lives in its own component so hook order never changes when the
+// user switches backgrounds mid-session.
+
+// ── Rain ──
+// Each streak is a very thin tall rectangle with a negative
+// skew so it looks like a diagonal rain streak.  Pure CSS animation, no images.
+function RainFX() {
     const drops = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
       id: i,
       left:   Math.random() * 110 - 5,     // allow some off-screen starts
@@ -734,7 +742,7 @@ function BackgroundFX({ type, accent }) {
       height: 14 + Math.random() * 18,     // streak length in px
       drift:  (Math.random() * 2 - 1) * 8, // subtle sideways jitter
       opacity: 0.35 + Math.random() * 0.35,
-    })), [type]) // eslint-disable-line react-hooks/exhaustive-deps
+    })), [])
 
     return (
       <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
@@ -755,13 +763,12 @@ function BackgroundFX({ type, accent }) {
         ))}
       </div>
     )
-  }
+}
 
-  // ── Fireflies ──
-  // Warm glowing dots that drift randomly through the screen.
-  // Two separate animations run simultaneously: a slow drift path and a glow pulse.
-  if (type === 'fireflies') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
+// ── Fireflies ──
+// Warm glowing dots that drift randomly through the screen.
+// Two separate animations run simultaneously: a slow drift path and a glow pulse.
+function FirefliesFX() {
     const flies = useMemo(() => Array.from({ length: 38 }, (_, i) => ({
       id: i,
       left: Math.random() * 95,
@@ -778,7 +785,7 @@ function BackgroundFX({ type, accent }) {
       fy2: (Math.random() * 60 - 30) + 'px',
       fx3: (Math.random() * 80 - 40) + 'px',
       fy3: (Math.random() * 60 - 30) + 'px',
-    })), [type]) // eslint-disable-line react-hooks/exhaustive-deps
+    })), [])
 
     return (
       <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
@@ -800,12 +807,12 @@ function BackgroundFX({ type, accent }) {
         ))}
       </div>
     )
-  }
+}
 
-  // ── Ocean ──
-  // Three sinusoidal wave bands rendered as large rounded rectangles that
-  // slowly oscillate horizontally.  Deep blue palette, feels calm and meditative.
-  if (type === 'ocean') {
+// ── Ocean ──
+// Three sinusoidal wave bands rendered as large rounded rectangles that
+// slowly oscillate horizontally.  Deep blue palette, feels calm and meditative.
+function OceanFX() {
     return (
       <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
         {/* Sky gradient */}
@@ -861,11 +868,12 @@ function BackgroundFX({ type, accent }) {
         }} />
       </div>
     )
-  }
+}
 
-  // stars / snow — generated particle field.
-  // Memoized on `type` ONLY: the timer re-renders every 250ms, and without this the
-  // random positions would be regenerated each render, making the stars teleport/twitch.
+// stars / snow — generated particle field.
+// Memoized on `type` ONLY: the timer re-renders every 250ms, and without this the
+// random positions would be regenerated each render, making the stars teleport/twitch.
+function ParticleFX({ type }) {
   const isSnow = type === 'snow'
   const particles = useMemo(() => {
     const count = isSnow ? 70 : 55
