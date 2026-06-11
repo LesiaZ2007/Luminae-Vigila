@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS event_prefs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ── Custom Lists ──────────────────────────────────────────────────────────
+-- Lightweight standalone checklists (e.g. Groceries, Packing, Ideas).
+-- Each row stores a complete list object as JSONB: { id, name, emoji, items[] }.
+-- Items are embedded directly in the list data — no separate items table needed.
+-- Created lazily on first sync (CREATE TABLE IF NOT EXISTS self-heals existing deploys).
+CREATE TABLE IF NOT EXISTS custom_lists (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data       JSONB       NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, user_id)
+);
+
 -- ── Study Sessions ─────────────────────────────────────────────────────────
 -- Completed Pomodoro focus sessions logged by the Focus Timer.
 -- Mirrors the client shape: { id, courseId, courseName, durationSec, date }

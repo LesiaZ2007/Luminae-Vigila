@@ -106,6 +106,20 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Date range filter** — collapsible From / To date pickers filter all result types simultaneously
 - **Keyboard navigation** — arrow keys move focus through results; Enter opens the highlighted item
 
+### 📋 Custom Lists
+
+Lightweight standalone checklists that live alongside your regular To-Do tasks — great for groceries, packing lists, wish lists, project notes, and anything that doesn't need priorities or categories.
+
+- **List switcher** — a tab row at the top of the To-Do area lets you switch between **My Tasks** (the normal todo view) and any custom list you've created. Works on both the desktop sidebar/full-page To-Do panel and the mobile To-Do tab.
+- **Create a list** — tap **+** in the switcher to open a creation sheet. Pick an emoji icon (🛒 📦 ✅ 📝 🎒 🎁 🛠️ 💡 🧹 🌿) and give the list a name.
+- **Items** — each item has a checkbox and text. Checking an item strikes it through. Items can also have an optional **due date** and a short **note**, both accessible via the **⋯** affordance on every row. Double-click a non-checked item's text to rename it inline.
+- **Reorder by dragging** — grab the grip handle (appears on hover, desktop only) to drag items into any order using the same pointer-drag pattern as the regular task list.
+- **Touch swipe gestures** — on mobile, swipe right to check an item and swipe left to delete it, same thresholds and snap-back behaviour as the main To-Do swipe gestures.
+- **Clear checked** — a per-list button removes all checked items at once.
+- **Delete list** — with a confirmation dialog. "My Tasks" cannot be deleted.
+- **Cloud sync** — custom lists sync to Neon for signed-in users via the existing `/api/sync` endpoint (same debounced POST + atomic transaction pattern). Stored in a `custom_lists` table (JSONB, self-creating `CREATE TABLE IF NOT EXISTS`). Unsigned-out users keep data in `localStorage` under `lv-custom-lists`.
+- **Offline-first** — `localStorage` is the source of truth; cloud is additive. Merge on sign-in is local-wins; the manual cloud refresh is cloud-wins (same as events/tasks).
+
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
 - Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
@@ -541,6 +555,7 @@ src/
 │   ├── Corvus.js                     # AI assistant (floating panel + full tab)
 │   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
+│   ├── CustomListPanel.js            # Custom list switcher tabs + checklist body
 │   ├── CoursesPanel.js               # Canvas courses + assignments tab
   ├── GpaPanel.js                   # GPA / grade-projection collapsible card (inside Courses tab)
 │   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
@@ -567,6 +582,7 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
+    ├── customLists.js      # Custom list localStorage helpers + cloud-merge logic
     ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
@@ -585,6 +601,7 @@ src/
 | Data | Where |
 |:---|:---|
 | Events & tasks | Browser `localStorage` — no account needed |
+| Custom lists & items | Browser `localStorage` (`lv-custom-lists`) + Neon DB per user (synced when signed in) |
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
