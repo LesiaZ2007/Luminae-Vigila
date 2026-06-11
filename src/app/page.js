@@ -39,6 +39,8 @@ import AccentPicker           from '@/components/AccentPicker'
 import OfflineIndicator       from '@/components/OfflineIndicator'
 import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
+import WeeklyRecap, { updateStreak } from '@/components/WeeklyRecap'
+import { updateAppBadge } from '@/lib/appBadge'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -149,6 +151,9 @@ export default function Home() {
   const shownReminders  = useRef(new Set())
   const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+
+  const [digestEnabled, setDigestEnabled] = useState(false)
+  const [digestSaving,  setDigestSaving]  = useState(false)
 
   const [clockTime,    setClockTime]    = useState(() => new Date())
   const [weather,      setWeather]      = useState(null)
@@ -514,6 +519,63 @@ export default function Home() {
     return () => clearInterval(id)
   }, [events, todos, pushToast])
 
+  /* ── Digest preference ── */
+  // Read the current push subscription's digest_enabled from the DB when signed in.
+  useEffect(() => {
+    if (!currentUser || typeof navigator === 'undefined') return
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => {
+      if (!sub) return
+      // We don't have a dedicated GET endpoint, so we store the pref in localStorage
+      // to avoid an extra round-trip on every load. The canonical value is the DB.
+      try {
+        const saved = localStorage.getItem('lv-digest-enabled')
+        if (saved !== null) setDigestEnabled(JSON.parse(saved))
+      } catch {}
+    }).catch(() => {})
+  }, [currentUser])
+
+  const toggleDigest = useCallback(async () => {
+    if (!currentUser) return
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    setDigestSaving(true)
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const sub = await reg.pushManager.getSubscription()
+      if (!sub) { pushToast('Notifications not enabled', 'Enable push notifications first.'); return }
+      const next = !digestEnabled
+      const res = await fetch('/api/push/digest-pref', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ endpoint: sub.endpoint, digest_enabled: next }),
+      })
+      if (res.ok) {
+        setDigestEnabled(next)
+        try { localStorage.setItem('lv-digest-enabled', JSON.stringify(next)) } catch {}
+        pushToast(next ? 'Sunday digest enabled' : 'Sunday digest disabled', next ? 'You\'ll get a weekly preview every Sunday at 6 PM UTC.' : 'No more weekly digest pushes.')
+      } else {
+        pushToast('Could not update digest preference', 'Please try again.')
+      }
+    } catch {
+      pushToast('Could not update digest preference', 'Please try again.')
+    } finally {
+      setDigestSaving(false)
+    }
+  }, [currentUser, digestEnabled, pushToast])
+
+  /* ── PWA App Icon Badge ── */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const incompleteTodosToday = todos.filter(t =>
+      !t.completed && t.dueDate === todayStr
+    ).length
+    const canvasDueToday = canvasAssignments.filter(a =>
+      !a.done && !a.hidden && a.dueAt && a.dueAt.slice(0, 10) === todayStr
+    ).length
+    updateAppBadge(incompleteTodosToday + canvasDueToday)
+  }, [todos, canvasAssignments])
+
   /* ── Event CRUD ── */
   const saveEvent = useCallback((ev, scope = 'single') => {
     if (scope === 'all') {
@@ -651,12 +713,19 @@ export default function Home() {
       setTodos(p => p.map(t => {
         if (t.id !== baseId) return t
         const completed = t.completedDates || []
-        return completed.includes(dateStr)
+        const wasCompleted = completed.includes(dateStr)
+        if (!wasCompleted) updateStreak(dateStr)
+        return wasCompleted
           ? { ...t, completedDates: completed.filter(d => d !== dateStr) }
           : { ...t, completedDates: [...completed, dateStr] }
       }))
     } else {
-      setTodos(p => p.map(t => t.id === id ? { ...t, completed: !t.completed } : t))
+      setTodos(p => p.map(t => {
+        if (t.id !== id) return t
+        const nowCompleting = !t.completed
+        if (nowCompleting) updateStreak()
+        return { ...t, completed: nowCompleting }
+      }))
     }
   }, [])
   const deleteTodo = useCallback((id) => {
@@ -968,11 +1037,12 @@ export default function Home() {
 
   /* ── Canvas CRUD ── */
   const toggleCanvasAssignment = useCallback((id) => {
-    setCanvasAssignments(prev => prev.map(a =>
-      a.id === id
-        ? { ...a, done: !a.done, doneDate: !a.done ? new Date().toISOString().slice(0, 10) : null }
-        : a
-    ))
+    setCanvasAssignments(prev => prev.map(a => {
+      if (a.id !== id) return a
+      const nowDone = !a.done
+      if (nowDone) updateStreak()
+      return { ...a, done: nowDone, doneDate: nowDone ? new Date().toISOString().slice(0, 10) : null }
+    }))
   }, [])
 
   const hideCanvasAssignment = useCallback((id) => {
@@ -1664,6 +1734,9 @@ export default function Home() {
           onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
         />
 
+        {/* ── Weekly Recap card ── */}
+        <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} />
+
         {/* Bottom actions */}
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* Sign-in / user display */}
@@ -1733,6 +1806,22 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {/* Sunday digest toggle */}
+          {currentUser ? (
+            <button
+              onClick={toggleDigest}
+              disabled={digestSaving}
+              title={digestEnabled ? 'Disable Sunday week-ahead digest' : 'Enable Sunday week-ahead digest push'}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '7px 12px', borderRadius: 10, border: `1px solid ${digestEnabled ? 'rgba(147,197,253,.3)' : 'rgba(255,255,255,.08)'}`, background: digestEnabled ? 'rgba(147,197,253,.1)' : 'transparent', color: digestEnabled ? '#93c5fd' : 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s', opacity: digestSaving ? 0.6 : 1 }}>
+              <span>📬 Weekly digest</span>
+              <span style={{ fontSize: '0.65rem', fontWeight: 800, color: digestEnabled ? '#10b981' : 'rgba(147,197,253,.4)' }}>{digestEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+          ) : (
+            <div style={{ padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.06)', fontSize: '0.7rem', color: 'rgba(147,197,253,.35)', fontWeight: 500 }}>
+              Digest requires sign-in
+            </div>
+          )}
 
           {/* Dark mode toggle */}
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -2066,6 +2155,9 @@ export default function Home() {
               onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
             />
 
+            {/* Weekly Recap */}
+            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} />
+
             {/* Quick actions + theme */}
             <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2094,6 +2186,21 @@ export default function Home() {
 
               {/* Accent color picker */}
               <AccentPicker variant="sidebar" />
+
+              {/* Sunday digest toggle */}
+              {currentUser ? (
+                <button
+                  onClick={toggleDigest}
+                  disabled={digestSaving}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '8px 12px', borderRadius: 10, border: `1px solid ${digestEnabled ? 'rgba(147,197,253,.3)' : 'rgba(255,255,255,.08)'}`, background: digestEnabled ? 'rgba(147,197,253,.1)' : 'transparent', color: digestEnabled ? '#93c5fd' : 'rgba(147,197,253,.5)', fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', opacity: digestSaving ? 0.6 : 1 }}>
+                  <span>📬 Weekly digest</span>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 800, color: digestEnabled ? '#10b981' : 'rgba(147,197,253,.4)' }}>{digestEnabled ? 'ON' : 'OFF'}</span>
+                </button>
+              ) : (
+                <div style={{ padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.06)', fontSize: '0.72rem', color: 'rgba(147,197,253,.35)', fontWeight: 500, textAlign: 'center' }}>
+                  Digest requires sign-in
+                </div>
+              )}
 
               {/* Show tour */}
               <button onClick={() => { resetOnboarding(); setShowOnboarding(true) }}

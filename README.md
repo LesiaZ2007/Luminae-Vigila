@@ -163,6 +163,33 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - A sticky bottom bar shows the count and "Mark done" / "Cancel" buttons
 - Only undone assignments are toggled — no double-toggle on already-done items
 
+### 📊 Weekly Recap + Streaks
+
+A compact **"Your week"** card lives at the bottom of the sidebar (desktop) and the Settings tab (mobile):
+
+- **Tasks completed this week** — counts both to-do completions and Canvas mark-done actions
+- **Focus hours this week** — reads from the Focus Timer's `lv-study-sessions` localStorage key
+- **Day streak** — a flame icon shows consecutive days with at least one completed task or focus session; tracked in `localStorage` under `lv-streak` (`{streak, lastDate, bestStreak, completionDates, lastWeekCompleted}`)
+- **Week-over-week delta** — "+3 vs last wk" if you did more tasks than last Sunday–Saturday
+- **Personal-best confetti** — hitting a new longest streak triggers the existing confetti component
+- Streak is updated automatically when any task or Canvas assignment is marked done
+
+### 📛 PWA App Icon Badge
+
+When supported by the browser/OS (Android Chrome, desktop Chrome/Edge), the app icon shows a numeric badge equal to the count of **tasks + Canvas assignments due today** that are not yet completed. The badge clears when everything is done. Uses the [Web Badging API](https://developer.mozilla.org/en-US/docs/Web/API/Badging_API); silently ignored on unsupported browsers.
+
+### 📬 Sunday Week-Ahead Push Digest
+
+Opted-in users receive a background push every **Sunday at 6 PM UTC** with a personalised preview of the coming week:
+
+> **Your week ahead** — 4 tasks, 2 events — busiest day: Wednesday
+
+- Opt in/out via the **"📬 Weekly digest ON/OFF"** toggle in the sidebar (desktop) or Settings tab (mobile)
+- Requires sign-in (the toggle shows "Digest requires sign-in" otherwise)
+- The cron is configured in `vercel.json` and calls `GET /api/push/digest` — protected by `Authorization: Bearer $CRON_SECRET`
+- `digest_enabled` column added to `push_subscriptions` (backward compatible, `DEFAULT false`)
+- **Upgrade existing install:** run `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;` in the Neon SQL Editor
+
 ### 🔔 Browser Push Notifications
 - Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded
 - On sign-in the app requests notification permission and registers a push subscription
@@ -393,6 +420,13 @@ DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
 VAPID_PRIVATE_KEY=your_vapid_private_key
 VAPID_SUBJECT=mailto:your@email.com
+
+# Cron secret — required for the Sunday week-ahead digest cron job
+# The Vercel cron runtime calls GET /api/push/digest with this header:
+#   Authorization: Bearer $CRON_SECRET
+# Generate one: openssl rand -hex 32
+# Add the same value to your Vercel project environment variables.
+CRON_SECRET=your_cron_secret
 ```
 
 > **Error tracking (optional):** A guarded Sentry scaffold lives on the `chore/error-tracking`
@@ -485,7 +519,9 @@ src/
 │   │   │   └── calendar/     # Fetch manual Canvas calendar events
 │   │   ├── push/
 │   │   │   ├── subscribe/    # POST upsert / DELETE remove push subscription
-│   │   │   └── send/         # POST send push notification to all user subs
+│   │   │   ├── send/         # POST send push notification to all user subs
+│   │   │   ├── digest/       # GET Sunday week-ahead push digest (cron-protected)
+│   │   │   └── digest-pref/  # POST toggle digest_enabled for a subscription
 │   │   └── corvus/           # Groq AI chat endpoint (context-aware)
 │   ├── error.js              # Next.js App Router error boundary page
 │   ├── login/                # Sign-in page
@@ -523,6 +559,7 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
+    ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
     ├── auth.js             # findOrCreateUser(email)
@@ -548,6 +585,9 @@ src/
 | Onboarding wizard completion | Browser `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
+| Streak ledger | Browser `localStorage` (`lv-streak`) |
+| Digest opt-in pref (local cache) | Browser `localStorage` (`lv-digest-enabled`) |
+| Digest opt-in pref (canonical) | Neon DB — `push_subscriptions.digest_enabled` |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |

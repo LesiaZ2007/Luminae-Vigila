@@ -83,13 +83,17 @@ CREATE TABLE IF NOT EXISTS event_prefs (
 -- ── Push Subscriptions ──────────────────────────────────────────────────────
 -- Web Push API subscription objects, one row per browser/device per user.
 CREATE TABLE IF NOT EXISTS push_subscriptions (
-  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  endpoint   TEXT        NOT NULL,
-  p256dh     TEXT        NOT NULL,
-  auth       TEXT        NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint       TEXT        NOT NULL,
+  p256dh         TEXT        NOT NULL,
+  auth           TEXT        NOT NULL,
+  digest_enabled BOOLEAN     NOT NULL DEFAULT false,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, endpoint)
 );
+
+-- If upgrading an existing install, run this in the Neon SQL Editor:
+-- ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
