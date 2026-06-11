@@ -190,6 +190,7 @@ export default function Home() {
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
   const [canvasClasses,      setCanvasClasses]      = useState([])
   const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
+  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
   const [showClassModal,     setShowClassModal]     = useState(false)
   const [editingClass,       setEditingClass]       = useState(null)
@@ -408,9 +409,11 @@ export default function Home() {
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
       const cce = localStorage.getItem('lv-canvas-cal-events')
+      const cie = localStorage.getItem('lv-canvas-ics-events')
       if (ca)  setCanvasAssignments(JSON.parse(ca))
       if (cc)  setCanvasClasses(JSON.parse(cc))
       if (cce) setCanvasCalEvents(JSON.parse(cce))
+      if (cie) setCanvasIcsEvents(JSON.parse(cie))
     } catch (_) {}
   }, [])
 
@@ -422,6 +425,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
   useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
+  useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
 
   const pushToast = useCallback((title, subtitle) => {
     const id = String(Date.now())
@@ -744,21 +748,58 @@ export default function Home() {
     })))
   }, [pushToast])
 
+  /* ── Canvas ICS feed sync (no token required) ── */
+  const syncCanvasIcs = useCallback(async () => {
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    const icsUrl = prefs.icsUrl
+    if (!icsUrl) return
+
+    try {
+      const res = await fetch('/api/canvas/ics', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ url: icsUrl }),
+      })
+      if (!res.ok) return
+      const { events: rawEvents } = await res.json()
+      if (!Array.isArray(rawEvents)) return
+
+      const mapped = rawEvents.map(e => ({
+        id:    `canvasics_${e.id}`,
+        title: e.title,
+        start: e.start,
+        end:   e.end || null,
+        allDay: e.allDay ?? false,
+        color:  '#E8751A',
+        extendedProps: {
+          source:      'canvas-ics',
+          location:    e.location    || null,
+          description: e.description || null,
+          htmlUrl:     e.htmlUrl     || null,
+        },
+      }))
+      setCanvasIcsEvents(mapped)
+    } catch (err) {
+      console.error('Canvas ICS sync failed:', err)
+    }
+  }, [])
+
   const syncCanvas = useCallback(async () => {
     setCvSyncing(true)
     try {
-      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents()])
+      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents(), syncCanvasIcs()])
     } catch (err) {
       console.error('Canvas sync failed:', err)
     } finally {
       setCvSyncing(false)
     }
-  }, [syncCanvasAssignments, syncCanvasCalEvents])
+  }, [syncCanvasAssignments, syncCanvasCalEvents, syncCanvasIcs])
 
   // Initial sync on mount
   useEffect(() => {
     const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
     if (prefs.connected) syncCanvas()
+    else if (prefs.icsUrl) syncCanvasIcs()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodic 15-min sync
@@ -766,9 +807,10 @@ export default function Home() {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
       if (prefs.connected) syncCanvas()
+      else if (prefs.icsUrl) syncCanvasIcs()
     }, 15 * 60_000)
     return () => clearInterval(id)
-  }, [syncCanvas])
+  }, [syncCanvas, syncCanvasIcs])
 
   /* ── Canvas calendar visibility prefs ── */
   const toggleCanvasOnCalendar = useCallback(() => {
@@ -916,6 +958,22 @@ export default function Home() {
       return
     }
 
+    // Canvas ICS feed events — show info toast (read-only)
+    if (info.event.extendedProps?.source === 'canvas-ics') {
+      const { location, htmlUrl, description } = info.event.extendedProps
+      const plain = description ? description.replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''
+      const subtitle = [location && `📍 ${location}`, plain].filter(Boolean).join('\n') || 'Canvas calendar event'
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        title: info.event.title,
+        subtitle: subtitle,
+        actions: htmlUrl ? [{ label: 'Open in Canvas', onClick: () => window.open(htmlUrl, '_blank') }] : [],
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
+      return
+    }
+
     // Google Calendar events are read-only – show a brief toast
     if (info.event.extendedProps?.source === 'google') {
       const desc = info.event.extendedProps.description
@@ -985,6 +1043,11 @@ export default function Home() {
     ),
   [canvasCalEvents, canvasCalPrefs])
 
+  // Canvas ICS feed events — shown when showOnCalendar is enabled (same toggle)
+  const visibleCanvasIcsEvents = useMemo(() =>
+    canvasCalPrefs.showOnCalendar ? canvasIcsEvents : [],
+  [canvasIcsEvents, canvasCalPrefs.showOnCalendar])
+
   // Map from Canvas courseId → class schedule color (for linked courses)
   const scheduleColorByCourseId = useMemo(() => {
     const map = {}
@@ -1022,6 +1085,7 @@ export default function Home() {
     ...hiddenGcalEvents,
     ...canvasClassEvents,
     ...visibleCanvasCalEvents,
+    ...visibleCanvasIcsEvents,
     ...canvasAssignmentTasks,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
@@ -1908,6 +1972,7 @@ export default function Home() {
           }}
           onSync={syncCanvas}
           onColorsChange={updateCourseColors}
+          onIcsSync={syncCanvasIcs}
         />
       )}
 
