@@ -161,6 +161,20 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ---
 
+## 🧪 Testing
+
+```bash
+npm install   # required before running tests (node_modules is not committed)
+npm test      # run all unit tests once (vitest run)
+npm run test:watch  # watch mode
+```
+
+Tests live in `src/lib/` alongside the modules they cover:
+- `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
+- `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
+
+---
+
 ## 🚀 Running Locally
 
 ```bash
