@@ -22,6 +22,13 @@ function toHHMM(date) {
   return `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`
 }
 
+// Local calendar date (YYYY-MM-DD) for a timed value. Using toISOString() here would
+// convert to UTC first, which shifts the day for evening events and moves them forward
+// a day when the modal re-saves them. Always read the day in the user's own timezone.
+function toYMDLocal(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
+}
+
 function initState(event, initialDate, categories) {
   if (event) {
     const s    = event.start instanceof Date ? event.start : new Date(event.start || Date.now())
@@ -35,7 +42,7 @@ function initState(event, initialDate, categories) {
       title:     event.title || '',
       category:  event.extendedProps?.category || categories[0].id,
       allDay:    aDay,
-      date:      s.toISOString().slice(0, 10),
+      date:      aDay ? s.toISOString().slice(0, 10) : toYMDLocal(s),
       endDate:   aDay ? eDisplay.toISOString().slice(0, 10) : '',
       startTime: aDay ? '09:00' : toHHMM(s),
       endTime:   aDay ? '10:00' : toHHMM(eRaw),
@@ -53,7 +60,7 @@ function initState(event, initialDate, categories) {
   const hasTime = base.length > 10
   return {
     title: '', category: categories[0].id, allDay: false,
-    date:    d.toISOString().slice(0, 10),
+    date:    hasTime ? toYMDLocal(d) : d.toISOString().slice(0, 10),
     endDate: '',
     startTime: hasTime ? toHHMM(d) : '09:00',
     endTime:   hasTime ? toHHMM(new Date(d.getTime() + 3600_000)) : '10:00',
@@ -124,7 +131,7 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
       const instEnd   = event.end   instanceof Date ? event.end   : new Date(event.end ?? instStart.getTime() + 3600_000)
       const duration  = instEnd - instStart
       const eS        = new Date(s.getTime() + duration)
-      setDate(s.toISOString().slice(0, 10))
+      setDate(toYMDLocal(s))
       if (!allDay) {
         setStartTime(toHHMM(s))
         setEndTime(toHHMM(eS))

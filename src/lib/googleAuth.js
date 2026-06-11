@@ -5,17 +5,18 @@
 import { google }        from 'googleapis'
 import { upsertAccount } from './googleTokenStore'
 
-function getRedirectUri() {
+function getRedirectUri(origin) {
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI
   if (process.env.VERCEL_URL)          return `https://${process.env.VERCEL_URL}/api/google/callback`
+  if (origin)                          return `${origin}/api/google/callback`
   return 'http://localhost:3000/api/google/callback'
 }
 
-export function makeOAuth2Client() {
+export function makeOAuth2Client(origin) {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    getRedirectUri(),
+    getRedirectUri(origin),
   )
 }
 

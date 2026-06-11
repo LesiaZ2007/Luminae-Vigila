@@ -90,6 +90,18 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - Each subtask can be checked off individually — matches CoursesPanel done style with strikethrough
 - Progress chip on the task row shows `X/Y steps`; click to expand the inline checklist
 
+### 🎯 Focus Timer *(optional)*
+- **Pomodoro-style timer** tied to your tasks — open it from the timer FAB (desktop) or the Settings tab (mobile)
+- **Focus → break → repeat:** a short break after each focus session and a **long break every 4 sessions** (all lengths configurable)
+- **Pick a task or Canvas assignment to focus on** — completed sessions accumulate focus time on it (`X focused so far`)
+- **Configurable durations** — set Focus / Short / Long lengths; one click resets to the factory `25 / 5 / 15`, or save your own values as your personal default
+- **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
+- **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance
+- **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
+- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, or a slow **Aurora** (Esc to exit)
+- A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
+- Fully optional and self-contained — it adds one `localStorage` key (`lv-focus`) and never alters existing events or tasks
+
 ### 🟠 Canvas — Assignment Notifications
 - When Canvas syncs and finds new assignments that weren't seen before, a toast fires in-app
 - If the browser has notification permission, an OS-level `Notification` also appears
@@ -299,6 +311,7 @@ src/
 │   ├── CoursesPanel.js               # Canvas courses + assignments tab
 │   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
 │   ├── MiniMonthCalendar.js          # Compact month grid for sidebar (desktop only)
+│   ├── FocusTimer.js                  # Optional Pomodoro focus timer + full-screen zen mode
 │   ├── ErrorBoundary.js              # React error boundary with friendly recovery card
 │   ├── ServiceWorkerRegistration.js  # SW registration + push subscription client component
 │   ├── ImportExportButton.js         # JSON import/export
@@ -336,6 +349,7 @@ src/
 | Events & tasks | Browser `localStorage` — no account needed |
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
+| Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |

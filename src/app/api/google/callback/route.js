@@ -61,7 +61,8 @@ export async function GET(request) {
   }
 
   try {
-    const oauth2 = makeOAuth2Client()
+    const origin = new URL(request.url).origin
+    const oauth2 = makeOAuth2Client(origin)
     const { tokens } = await oauth2.getToken(code)
     oauth2.setCredentials(tokens)
 

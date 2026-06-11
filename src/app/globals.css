@@ -356,9 +356,10 @@ select option {
 .cal-view-enter { animation: cal-view-enter 0.28s cubic-bezier(0.22,1,0.36,1) forwards; }
 
 /* Active state for custom view-switch buttons (lv-cal-view-* class on container) */
-.lv-cal-view-dayGridMonth .fc-viewMonth-button,
-.lv-cal-view-timeGridWeek .fc-viewWeek-button,
-.lv-cal-view-timeGridDay  .fc-viewDay-button {
+.lv-cal-view-dayGridMonth  .fc-viewMonth-button,
+.lv-cal-view-timeGridWeek  .fc-viewWeek-button,
+.lv-cal-view-timeGrid2Week .fc-view2Week-button,
+.lv-cal-view-timeGridDay   .fc-viewDay-button {
   background-color: var(--blue) !important;
   border-color:     var(--blue) !important;
   color:            #fff !important;
@@ -385,6 +386,28 @@ select option {
   0%   { transform: translate(0, 0) rotate(0deg); opacity: 1; }
   60%  { opacity: 1; }
   100% { transform: translate(var(--cdx, 0px), var(--cdy, -120px)) rotate(var(--crot, 360deg)); opacity: 0; }
+}
+
+/* ══════════════════════════════════════════════
+   FOCUS TIMER — full-screen ambient backgrounds
+══════════════════════════════════════════════ */
+/* Stars: gentle opacity-only twinkle (no transform → smooth + cheap, not distracting).
+   Stays well above 0 so stars never fully blink out — just a soft breathing glow. */
+@keyframes lv-twinkle {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.9; }
+}
+/* Snow: slow fall from top to bottom with a sideways drift */
+@keyframes lv-snow {
+  0%   { transform: translate(0, -5vh)  rotate(0deg);   opacity: 0; }
+  10%  { opacity: 0.9; }
+  90%  { opacity: 0.9; }
+  100% { transform: translate(var(--drift, 0px), 105vh) rotate(360deg); opacity: 0; }
+}
+/* Aurora: large blurred color blobs breathing slowly */
+@keyframes lv-aurora {
+  0%, 100% { transform: translate(0, 0) scale(1);      opacity: 0.7; }
+  50%      { transform: translate(4%, 6%) scale(1.18); opacity: 1;   }
 }
 
 /* ══════════════════════════════════════════════
@@ -678,6 +701,35 @@ select option {
   .fc .fc-button {
     font-size: 0.72rem !important;
     padding: 4px 9px !important;
+  }
+}
+
+/* ══════════════════════════════════════════════
+   MOBILE — MODAL & OVERLAY FIXES (< 640 px)
+══════════════════════════════════════════════ */
+@media (max-width: 639px) {
+  /* Modals: full-width with smaller radius and less padding so they fit */
+  .modal-surface {
+    border-radius: 16px !important;
+    max-height: calc(100dvh - 48px) !important;
+  }
+  .modal-header {
+    padding: 14px 16px 12px !important;
+  }
+  .modal-body {
+    padding: 16px 16px 20px !important;
+    max-height: calc(100dvh - 120px) !important;
+    gap: 14px !important;
+  }
+
+  /* Mobile settings tab: prevent horizontal overflow */
+  .lv-mobile-settings {
+    overflow-x: hidden;
+  }
+
+  /* Ensure bottom-nav tap targets are tall enough */
+  .lv-bottom-nav button {
+    min-height: 52px;
   }
 }
 
