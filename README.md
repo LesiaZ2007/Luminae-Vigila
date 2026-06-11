@@ -158,6 +158,28 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - When Groq returns 429 (rate limited), the send button shows a 30-second countdown
 - Input and button are disabled during the cooldown to prevent repeated hammering
 
+### 🤖 Corvus — Session Memory
+- Chat history persists to `localStorage` and is restored on reload (capped at 50 messages, pruned oldest-first)
+- Recent history is sent as context on every request so Corvus remembers what you've already discussed in the session
+- Session expires after 30 minutes of inactivity; any pending-confirmation items from a previous session are automatically cancelled on restore
+- **Clear conversation** button (trash icon in the header) wipes the session and resets to the greeting
+
+### 🤖 Corvus — Plan My Week
+- New **"Plan my week"** quick-action button (highlighted in blue) gathers your next 7 days of events, pending tasks, and Canvas assignments client-side and sends Corvus a structured planning prompt
+- Corvus responds with a day-by-day study schedule proposal, then offers to add individual study blocks via its existing `preview_event` confirm flow — no AI calls until you tap the button
+
+### 🤖 Corvus — Time Estimation
+- New **"Estimate task time"** quick-action (highlighted in green) asks Corvus to estimate how long one of your upcoming items will take
+- Corvus uses built-in heuristics (reading ≈ 45–90 min, problem sets ≈ 1–3 h, essays ≈ 2–4 h, etc.) and always offers to block matching study time on the calendar after giving an estimate
+- Also available via natural language: "How long will my Chem homework take?"
+
+### 🤖 Corvus — Proactive Nudge (zero AI cost)
+- On app load, Luminae Vigila checks **client-side** (no AI call) whether 3+ deadlines cluster within the next 72 hours with no study blocks covering them
+- If detected, a small dismissible **"Busy stretch ahead — want help planning it?"** chip appears near the Corvus FAB with a red badge on the button; a matching banner is shown inside the Corvus panel
+- Tapping "Help me plan" opens Corvus pre-loaded with the deadline list and a planning prompt
+- Dismissal (X button or tapping away) sets a daily `localStorage` flag so the chip only appears once per day
+- Also surfaces as an in-panel banner when you open Corvus on the full tab or floating widget
+
 ### 🌦 Everything Else
 - **Weather widget** — live temperature and rain forecast pulled from Open-Meteo
 - **Dark / light mode** — toggle from the sidebar
