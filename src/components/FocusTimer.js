@@ -71,19 +71,38 @@ function loadState() {
     return {
       settings,
       taskId: raw.taskId ?? null,
+      courseTag: raw.courseTag ?? null,  // { courseId, courseName } or null
       day: todayStr(),
       sessionsToday: isToday ? (raw.sessionsToday ?? 0) : 0,
       focusSecondsToday: isToday ? (raw.focusSecondsToday ?? 0) : 0,
     }
   } catch {
-    return { settings: { ...DEFAULTS }, taskId: null, day: todayStr(), sessionsToday: 0, focusSecondsToday: 0 }
+    return { settings: { ...DEFAULTS }, taskId: null, courseTag: null, day: todayStr(), sessionsToday: 0, focusSecondsToday: 0 }
   }
+}
+
+// ── Study session persistence (localStorage-only) ─────────────────────────────
+// Key: 'lv-study-sessions'
+// Shape: [{ id, courseId, courseName, durationSec, date }]  (date = 'YYYY-MM-DD')
+
+function loadStudySessions() {
+  try { return JSON.parse(localStorage.getItem('lv-study-sessions') ?? '[]') } catch { return [] }
+}
+
+function saveStudySession(session) {
+  try {
+    const arr = loadStudySessions()
+    arr.push(session)
+    localStorage.setItem('lv-study-sessions', JSON.stringify(arr))
+  } catch {}
 }
 
 export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
+  // courseTag: null = None, or { courseId, courseName }
+  const [courseTag,  setCourseTag]  = useState(null)
   const [phase,      setPhase]      = useState('focus')
   const [running,    setRunning]    = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(DEFAULTS.focusMin * 60)
@@ -108,6 +127,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     const s = loadState()
     setSettings(s.settings)
     setTaskId(s.taskId)
+    if (s.courseTag) setCourseTag(s.courseTag)
     setSessionsToday(s.sessionsToday)
     setFocusSecondsToday(s.focusSecondsToday)
     setSecondsLeft(s.settings.focusMin * 60)
@@ -119,10 +139,10 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     if (!hydrated) return
     try {
       localStorage.setItem('lv-focus', JSON.stringify({
-        settings, taskId, day: todayStr(), sessionsToday, focusSecondsToday,
+        settings, taskId, courseTag, day: todayStr(), sessionsToday, focusSecondsToday,
       }))
     } catch {}
-  }, [hydrated, settings, taskId, sessionsToday, focusSecondsToday])
+  }, [hydrated, settings, taskId, courseTag, sessionsToday, focusSecondsToday])
 
   /* ── If not running, keep the displayed time in sync with the phase length ── */
   useEffect(() => {
@@ -200,6 +220,15 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       const newCount = sessionsToday + 1
       setSessionsToday(newCount)
       setFocusSecondsToday(s => s + elapsed)
+
+      // Persist completed session for study time tracking
+      saveStudySession({
+        id:          `fs-${endMs}`,
+        courseId:    courseTag?.courseId   ?? null,
+        courseName:  courseTag?.courseName ?? null,
+        durationSec: elapsed,
+        date:        todayStr(),
+      })
 
       // Accumulate focus time on the task (additive field, ignored elsewhere)
       if (linkedTarget) {
@@ -389,6 +418,44 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     )
   }
 
+  // Build unique course list: Canvas courses + any manual classes from canvasAssignments
+  const courseOptions = useMemo(() => {
+    const seen = new Map()
+    for (const a of canvasAssignments) {
+      if (a.courseId && !seen.has(String(a.courseId))) {
+        seen.set(String(a.courseId), a.courseName || String(a.courseId))
+      }
+    }
+    const opts = [{ value: '', label: 'None' }]
+    for (const [id, name] of seen) {
+      opts.push({ value: id, label: name })
+    }
+    return opts
+  }, [canvasAssignments])
+
+  function CoursePicker({ light }) {
+    const curVal = courseTag?.courseId ? String(courseTag.courseId) : ''
+    return (
+      <div>
+        <label style={{ fontSize: '0.62rem', fontWeight: 700, color: light ? 'rgba(255,255,255,0.5)' : 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Course tag
+        </label>
+        <div style={{ marginTop: 5 }}>
+          <Select
+            value={curVal}
+            onChange={v => {
+              if (!v) { setCourseTag(null); return }
+              const name = courseOptions.find(o => o.value === v)?.label ?? v
+              setCourseTag({ courseId: v, courseName: name })
+            }}
+            options={courseOptions}
+            placeholder="None"
+          />
+        </div>
+      </div>
+    )
+  }
+
   function TaskPicker({ light }) {
     const focusOptions = [
       { value: '', label: 'No specific task' },
@@ -487,6 +554,9 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <IconBtn title="Done" onClick={() => setShowSettings(false)}><X size={16} /></IconBtn>
                 </div>
                 <div style={{ marginBottom: 12 }}>{TaskPicker({})}</div>
+                {courseOptions.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>{CoursePicker({})}</div>
+                )}
                 {SettingsContent({})}
               </div>
             </div>
@@ -583,6 +653,11 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
 
         {/* Task picker */}
         <div style={{ padding: '0 14px 10px' }}>{TaskPicker({})}</div>
+
+        {/* Course tag picker */}
+        {courseOptions.length > 1 && (
+          <div style={{ padding: '0 14px 10px' }}>{CoursePicker({})}</div>
+        )}
 
         {/* Settings drawer */}
         {showSettings && (
