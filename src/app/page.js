@@ -3,7 +3,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft } from 'lucide-react'
+import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import ShortcutsHelp from '@/components/ShortcutsHelp'
+import AgendaView from '@/components/AgendaView'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -74,6 +77,7 @@ export default function Home() {
   const [corvusFloat,   setCorvusFloat]   = useState(false)
   const [focusOpen,     setFocusOpen]     = useState(false)
   const [showAddMenu,   setShowAddMenu]   = useState(false)
+  const [showHelpOverlay,   setShowHelpOverlay]   = useState(false)
   const [showSearchPopup,   setShowSearchPopup]   = useState(false)
   const [searchClosing,     setSearchClosing]     = useState(false)
   const [searchQuery,       setSearchQuery]       = useState('')
@@ -148,6 +152,27 @@ export default function Home() {
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
   const isTablet  = windowWidth >= 640 && windowWidth < 1100
+
+  // ── Global keyboard shortcuts ──────────────────────────────────────────────
+  // anyModalOpen suppresses non-Escape shortcuts while a blocking overlay is visible.
+  const anyModalOpen = eventModal.open || showTodoModal || showGoogleSettings || showCanvasSettings || showClassModal || canvasTodoModal || showSearchPopup || showHelpOverlay
+  useKeyboardShortcuts(
+    {
+      onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
+      onNewTask:     () => { setShowTodoModal(true); setEditingTodo(null) },
+      onSearch:      () => openSearchPopup(),
+      onToggleFocus: () => setFocusOpen(v => !v),
+      onShowHelp:    () => setShowHelpOverlay(true),
+      onEscape:      () => {
+        if (showHelpOverlay)   { setShowHelpOverlay(false); return }
+        if (focusOpen)         { setFocusOpen(false);       return }
+        if (showSearchPopup)   { closeSearchPopup();        return }
+        if (corvusFloat)       { setCorvusFloat(false);     return }
+      },
+    },
+    anyModalOpen,
+  )
+
   // Count events that are actively hidden — local OR google, not stale localStorage entries
   const hiddenEventCount = useMemo(
     () => [...events, ...googleEvents].filter(e => eventPrefs[e.id]?.hidden).length,
@@ -1362,6 +1387,7 @@ export default function Home() {
   const canvasConnected = canvasAssignments.length > 0
   const NAV_ITEMS = [
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
+    { id: 'agenda',   label: 'Agenda',   icon: <AlignLeft size={22}/> },
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
     { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
     ...(canvasConnected
@@ -1704,6 +1730,44 @@ export default function Home() {
           </main>
         )}
 
+        {activeNav === 'agenda' && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {/* Header */}
+            <div style={{
+              padding: isMobile ? '14px 16px 10px' : '18px 20px 12px',
+              borderBottom: '1px solid var(--border)',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <AlignLeft size={17} style={{ color: 'var(--blue)' }} />
+                  Agenda
+                </div>
+                <div style={{ fontSize: '0.74rem', color: 'var(--text-3)', marginTop: 2 }}>
+                  Next 14 days — events, tasks, and Canvas assignments
+                </div>
+              </div>
+            </div>
+            <ErrorBoundary>
+              <AgendaView
+                events={visibleEvents}
+                todos={todos}
+                canvasAssignments={canvasAssignments}
+                canvasClassEvents={canvasClassEvents}
+                todoCategories={todoCategories}
+                eventCategories={EVENT_CATEGORIES}
+                onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
+                onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
+                onCanvasClick={(a) => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                isMobile={isMobile}
+              />
+            </ErrorBoundary>
+          </main>
+        )}
+
         {activeNav === 'courses' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
             <ErrorBoundary>
@@ -1924,6 +1988,8 @@ export default function Home() {
         <EventModal event={eventModal.event} initialDate={eventModal.date}
                     categories={EVENT_CATEGORIES} onSave={saveEvent} onDelete={deleteEvent}
                     onHide={hideEvent}
+                    existingEvents={events}
+                    canvasClasses={canvasClasses}
                     onClose={() => setEventModal({ open: false, event: null, date: null })} />
       )}
       {showTodoModal && (
@@ -1979,6 +2045,11 @@ export default function Home() {
           onEdit={() => {}}
           onClose={() => { setCanvasTodoModal(false); setEditingCanvas(null) }}
         />
+      )}
+
+      {/* Keyboard shortcuts help overlay */}
+      {showHelpOverlay && (
+        <ShortcutsHelp onClose={() => setShowHelpOverlay(false)} />
       )}
 
       {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
