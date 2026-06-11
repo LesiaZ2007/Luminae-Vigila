@@ -330,6 +330,23 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     setSecondsLeft(phaseDurMin(p) * 60)
   }
 
+  // Build unique course list: Canvas courses + any manual classes from canvasAssignments.
+  // MUST stay above the `if (!open)` early return so hook order is stable when the timer
+  // is closed vs open.
+  const courseOptions = useMemo(() => {
+    const seen = new Map()
+    for (const a of canvasAssignments) {
+      if (a.courseId && !seen.has(String(a.courseId))) {
+        seen.set(String(a.courseId), a.courseName || String(a.courseId))
+      }
+    }
+    const opts = [{ value: '', label: 'None' }]
+    for (const [id, name] of seen) {
+      opts.push({ value: id, label: name })
+    }
+    return opts
+  }, [canvasAssignments])
+
   if (!open) {
     return burst ? <Confetti priority="high" x={burst.x} y={burst.y} /> : null
   }
@@ -420,21 +437,6 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       </div>
     )
   }
-
-  // Build unique course list: Canvas courses + any manual classes from canvasAssignments
-  const courseOptions = useMemo(() => {
-    const seen = new Map()
-    for (const a of canvasAssignments) {
-      if (a.courseId && !seen.has(String(a.courseId))) {
-        seen.set(String(a.courseId), a.courseName || String(a.courseId))
-      }
-    }
-    const opts = [{ value: '', label: 'None' }]
-    for (const [id, name] of seen) {
-      opts.push({ value: id, label: name })
-    }
-    return opts
-  }, [canvasAssignments])
 
   function CoursePicker({ light }) {
     const curVal = courseTag?.courseId ? String(courseTag.courseId) : ''
