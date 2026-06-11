@@ -20,7 +20,7 @@ export function CanvasLogo({ size = 16 }) {
   )
 }
 
-export default function CanvasSettingsModal({ onClose, onSync, onColorsChange }) {
+export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, onIcsSync }) {
   const [connected,    setConnected]    = useState(false)
   const [baseUrl,      setBaseUrl]      = useState('')
   const [token,        setToken]        = useState('')
@@ -34,6 +34,18 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange })
   const [closing,      setClosing]      = useState(false)
   const [syncing,      setSyncing]      = useState(false)
   const [colorPickerFor, setColorPickerFor] = useState(null) // courseId with open color picker
+  // ICS feed state — initialised directly from localStorage to avoid an effect
+  const [icsUrl,       setIcsUrl]       = useState(() => {
+    try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}').icsUrl ?? '' }
+    catch { return '' }
+  })
+  const [icsInput,     setIcsInput]     = useState(() => {
+    try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}').icsUrl ?? '' }
+    catch { return '' }
+  })
+  const [icsSaving,    setIcsSaving]    = useState(false)
+  const [icsError,     setIcsError]     = useState('')
+  const [icsSuccess,   setIcsSuccess]   = useState(false)
   const [prefs,        setPrefs]        = useState(() => {
     try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}') }
     catch { return {} }
@@ -51,6 +63,50 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange })
   useEffect(() => {
     localStorage.setItem('lv-canvas-prefs', JSON.stringify(prefs))
   }, [prefs])
+
+  async function handleIcsSave() {
+    const trimmed = icsInput.trim()
+    if (!trimmed) { setIcsError('Please enter a URL.'); return }
+    setIcsSaving(true)
+    setIcsError('')
+    setIcsSuccess(false)
+    try {
+      const res  = await fetch('/api/canvas/ics', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ url: trimmed }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setIcsError(data.error || 'Could not load the calendar feed.')
+        return
+      }
+      // Persist the URL
+      const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      localStorage.setItem('lv-canvas-prefs', JSON.stringify({ ...lsPref, icsUrl: trimmed }))
+      setIcsUrl(trimmed)
+      setIcsSuccess(true)
+      setTimeout(() => setIcsSuccess(false), 3000)
+      // Trigger a sync so events appear immediately
+      onIcsSync?.()
+    } catch (err) {
+      setIcsError(`Error: ${err.message}`)
+    } finally {
+      setIcsSaving(false)
+    }
+  }
+
+  function handleIcsRemove() {
+    const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    delete lsPref.icsUrl
+    localStorage.setItem('lv-canvas-prefs', JSON.stringify(lsPref))
+    localStorage.removeItem('lv-canvas-ics-events')
+    setIcsUrl('')
+    setIcsInput('')
+    setIcsError('')
+    setIcsSuccess(false)
+    onIcsSync?.()
+  }
 
   // Load connection status on mount
   useEffect(() => {
@@ -269,6 +325,13 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange })
                 )}
               </div>
 
+              {/* Canvas Calendar Feed (no token needed) */}
+              <IcsFeedSection
+                icsUrl={icsUrl} icsInput={icsInput} setIcsInput={setIcsInput}
+                icsSaving={icsSaving} icsError={icsError} icsSuccess={icsSuccess}
+                onSave={handleIcsSave} onRemove={handleIcsRemove}
+              />
+
               {/* Disconnect */}
               <button
                 type="button" onClick={handleDisconnect}
@@ -285,6 +348,13 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange })
               <p style={{ fontSize: '0.82rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
                 Connect your Canvas account to sync assignments, due dates, and course events. Uses a personal access token — no institution approval needed.
               </p>
+
+              {/* ── ICS feed in not-connected state too ── */}
+              <IcsFeedSection
+                icsUrl={icsUrl} icsInput={icsInput} setIcsInput={setIcsInput}
+                icsSaving={icsSaving} icsError={icsError} icsSuccess={icsSuccess}
+                onSave={handleIcsSave} onRemove={handleIcsRemove}
+              />
 
               {/* How to get a token */}
               <div style={{ padding: '10px 14px', borderRadius: 10, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: '0.75rem', color: 'var(--text-2)', lineHeight: 1.6 }}>
@@ -340,6 +410,110 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange })
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Reusable ICS feed section — shown in both connected and not-connected states.
+ */
+function IcsFeedSection({ icsUrl, icsInput, setIcsInput, icsSaving, icsError, icsSuccess, onSave, onRemove }) {
+  return (
+    <div style={{ padding: '14px', borderRadius: 12, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+      {/* Section header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+        <CanvasLogo size={14} />
+        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)' }}>
+          Canvas Calendar Feed
+        </span>
+        <span style={{ fontSize: '0.65rem', fontWeight: 600, background: 'rgba(232,117,26,.15)', color: '#E8751A', padding: '2px 7px', borderRadius: 999, border: '1px solid rgba(232,117,26,.3)' }}>
+          no token needed
+        </span>
+      </div>
+
+      <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', margin: '0 0 10px', lineHeight: 1.5 }}>
+        In Canvas: <strong style={{ color: 'var(--text-2)' }}>Calendar → Calendar Feed</strong> → copy the URL.
+        Works for any public .ics subscription feed too.
+      </p>
+
+      {icsUrl ? (
+        /* Feed is saved */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 9, background: 'rgba(16,185,129,.08)', border: '1px solid rgba(16,185,129,.2)' }}>
+            <span style={{ fontSize: '0.82rem' }}>✓</span>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981' }}>Feed connected</div>
+              <div style={{ fontSize: '0.64rem', color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{icsUrl}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="url"
+              value={icsInput}
+              onChange={e => setIcsInput(e.target.value)}
+              placeholder="Paste a new URL to replace"
+              className="field"
+              style={{ flex: 1, fontSize: '0.75rem' }}
+            />
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={icsSaving}
+              style={{ padding: '8px 12px', borderRadius: 9, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 700, cursor: icsSaving ? 'default' : 'pointer', opacity: icsSaving ? 0.7 : 1, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {icsSaving ? 'Saving…' : 'Update'}
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              style={{ padding: '8px 12px', borderRadius: 9, border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.06)', color: 'var(--red)', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, transition: 'all .13s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,.12)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,.5)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,.06)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,.3)' }}
+            >
+              Remove
+            </button>
+          </div>
+          {icsSuccess && (
+            <div style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600 }}>
+              ✓ Calendar feed updated and synced.
+            </div>
+          )}
+          {icsError && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--red)', lineHeight: 1.45 }}>⚠ {icsError}</div>
+          )}
+        </div>
+      ) : (
+        /* No feed saved yet */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="url"
+              value={icsInput}
+              onChange={e => setIcsInput(e.target.value)}
+              placeholder="https://myschool.instructure.com/feeds/calendars/…"
+              className="field"
+              style={{ flex: 1, fontSize: '0.75rem' }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSave() } }}
+            />
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={icsSaving}
+              style={{ padding: '8px 14px', borderRadius: 9, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 700, cursor: icsSaving ? 'default' : 'pointer', opacity: icsSaving ? 0.7 : 1, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {icsSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {icsSuccess && (
+            <div style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600 }}>
+              ✓ Calendar feed saved and synced.
+            </div>
+          )}
+          {icsError && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--red)', lineHeight: 1.45 }}>⚠ {icsError}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

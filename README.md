@@ -40,6 +40,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 🟠 Canvas LMS
 - Connect with your Canvas API token + institution URL (no IT setup needed)
+- **Canvas Calendar Feed (no token needed)** — paste your personal iCal feed URL (Canvas → Calendar → Calendar Feed) to pull assignment due dates and events without an API token; works for any public `.ics` subscription URL too; events appear in Canvas orange on the calendar
 - **Assignments on the calendar** — due dates appear as all-day task markers alongside your own events
 - **Per-course toggles** — enable/disable individual courses; updates apply instantly to the calendar
 - **Courses tab** — appears automatically when Canvas is connected, showing:
@@ -69,6 +70,10 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course
 - Fully independent of Canvas
 
+### ☁️ Cloud Sync — Reliability & Manual Refresh
+- **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
+- **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.
+
 ### 🔐 Sign In *(optional)*
 - **Local-first by default** — events and tasks live in your browser's local storage, no account needed
 - **Sign in with Google** to sync your identity across devices
@@ -87,6 +92,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Add events and tasks**, edit them, and mark things complete — all via natural language
 - **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
+- **Server-side rate limited** to 20 requests per minute per user to protect the Groq API key; exceeding the limit returns a 429 with a 30-second retry hint
 
 ### 🔍 Search
 - Search across events, tasks, and Canvas assignments with scope and status filters
@@ -166,6 +172,16 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 
 ## 📲 Install / Play Store
 
+luminaeVigila is a fully installable **Progressive Web App (PWA)** — Android-first. On Android Chrome an install banner appears automatically once the browser's installability heuristics are met; on desktop Chrome/Edge an install icon appears in the address bar.
+
+### Install on Android (primary path)
+
+**Android Chrome** is the recommended way to install luminaeVigila:
+
+1. Open [luminae-vigila.vercel.app](https://luminae-vigila.vercel.app) in Chrome on Android.
+2. When the *"Add to Home screen"* banner appears, tap **Add** — or open the Chrome menu (⋮) and choose **Add to Home screen** / **Install app** at any time.
+3. The app installs as a standalone icon on your home screen and launcher with no browser chrome, just like a native app.
+4. Background push notifications (event and task reminders) work out of the box once you grant notification permission at sign-in.
 luminaeVigila is a fully installable **Progressive Web App (PWA)**. On mobile, browsers will prompt to "Add to Home Screen"; on desktop Chrome/Edge, an install icon appears in the address bar.
 
 ### Adding to Home Screen (iOS / Android)
@@ -177,6 +193,19 @@ luminaeVigila is a fully installable **Progressive Web App (PWA)**. On mobile, b
 
 To distribute on the Play Store via a TWA (e.g. using [PWABuilder](https://www.pwabuilder.com) or [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap)):
 
+1. **Generate the signed AAB** — use PWABuilder (easiest: paste your URL, download the `.aab`) or Bubblewrap CLI. Both tools output the signing key details you need in the next step.
+2. **Fill in Digital Asset Links** — replace the placeholder values in `public/.well-known/assetlinks.json` with your app's:
+   - `package_name` — e.g. `org.luminae.vigila`
+   - `sha256_cert_fingerprints` — the SHA-256 fingerprint of your signing keystore (shown by PWABuilder / Bubblewrap during build, or via `keytool -list -v -keystore release.jks`)
+3. **Deploy** — ensure `https://your-domain/.well-known/assetlinks.json` is publicly accessible (no redirect, `Content-Type: application/json`). This is what tells Android Chrome that the TWA is verified, enabling it to run without the browser URL bar.
+4. **Add real PNG icons** — add `public/icon-192.png` (192×192 px) and `public/icon-512.png` (512×512 px) before Play Store submission. The manifest already references these paths. The SVG entry remains for browser-based installs; Play Store requires at least a 512 px PNG.
+5. **Play Console requirements** — you will need a privacy policy URL and a completed data-safety form before your listing can go live.
+
+> The SVG icon at `/icon.svg` works for browser-based installs (Chrome, Edge). Real 192 px and 512 px PNG files are required before submitting to the Google Play Store.
+
+### Install on iOS (secondary)
+
+On iOS Safari, tap the Share button → *Add to Home Screen*. The app runs in standalone mode and supports background push notifications on iOS 16.4+. iOS is not the primary target; Android Chrome covers the main use case.
 1. **Generate the APK / AAB** — use PWABuilder (easiest) or Bubblewrap CLI with your app's URL.
 2. **Fill in Digital Asset Links** — replace the placeholder values in `public/.well-known/assetlinks.json` with your app's:
    - `package_name` — e.g. `org.luminae.vigila`
@@ -207,6 +236,20 @@ To distribute on the Play Store via a TWA (e.g. using [PWABuilder](https://www.p
 | **Deployment** | [Vercel](https://vercel.com) |
 
 </div>
+
+---
+
+## 🧪 Testing
+
+```bash
+npm install   # required before running tests (node_modules is not committed)
+npm test      # run all unit tests once (vitest run)
+npm run test:watch  # watch mode
+```
+
+Tests live in `src/lib/` alongside the modules they cover:
+- `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
+- `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 
 ---
 
@@ -248,6 +291,12 @@ NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
 VAPID_PRIVATE_KEY=your_vapid_private_key
 VAPID_SUBJECT=mailto:your@email.com
 ```
+
+> **Error tracking (optional):** A guarded Sentry scaffold lives on the `chore/error-tracking`
+> branch. It's kept out of the main build for now because `@sentry/nextjs@8` doesn't yet
+> declare Next.js 16 peer support. To enable it, install a Next-16-compatible `@sentry/nextjs`
+> and re-add the `instrumentation.js` / `src/instrumentation-client.js` hooks, then set
+> `SENTRY_DSN` + `NEXT_PUBLIC_SENTRY_DSN`.
 
 ### Database Setup
 

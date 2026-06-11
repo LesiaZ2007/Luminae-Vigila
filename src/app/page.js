@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -32,6 +32,7 @@ import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
 import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 import FocusTimer             from '@/components/FocusTimer'
+import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -50,78 +51,6 @@ const DEFAULT_TODO_CATS = [
   { id: 'work',     label: 'Work',     color: '#f59e0b' },
   { id: 'health',   label: 'Health',   color: '#ef4444' },
 ]
-
-/* ── Recurring event expansion ── */
-function expandRecurring(base) {
-  const { recurrence } = base
-  const newId = base.id || String(Date.now())
-  if (!recurrence) return [{ ...base, id: newId }]
-
-  const startDt  = new Date(base.start)
-  const endDt    = new Date(base.end)
-  const duration = endDt - startDt
-  const until    = new Date(recurrence.until + 'T23:59:59')
-  const results  = []
-  let cur = new Date(startDt)
-
-  while (cur <= until) {
-    const dow = cur.getDay()
-    const weekDiff = Math.round((cur - startDt) / (7 * 24 * 60 * 60 * 1000))
-    const include =
-      recurrence.type === 'daily' ||
-      (recurrence.type === 'weekly'   && dow === startDt.getDay()) ||
-      (recurrence.type === 'biweekly' && dow === startDt.getDay() && weekDiff % 2 === 0) ||
-      (recurrence.type === 'monthly'  && cur.getDate() === startDt.getDate()) ||
-      (recurrence.type === 'custom'   && recurrence.days.includes(dow))
-
-    if (include) {
-      const id = `${newId}-r-${cur.toISOString().slice(0,10)}`
-      results.push({
-        ...base,
-        id,
-        recurrenceGroupId: newId,
-        seriesRecurrence:  recurrence,   // preserved so EventModal can pre-populate "Edit all"
-        seriesStart:       base.start,   // first occurrence start for "Edit all" date reset
-        start: new Date(cur).toISOString(),
-        end:   new Date(cur.getTime() + duration).toISOString(),
-        recurrence: undefined,
-      })
-    }
-    cur.setDate(cur.getDate() + 1)
-  }
-  return results
-}
-
-// Expand a recurring todo into individual instances (up to 8 weeks ahead)
-function expandRecurringTodo(t) {
-  if (!t.dueDate) return []
-  if (!t.recurrence) return [t]
-
-  const { recurrence } = t
-  const startDt       = new Date(t.dueDate + 'T12:00:00')
-  const until         = recurrence.until
-    ? new Date(recurrence.until + 'T23:59:59')
-    : new Date(startDt.getTime() + 8 * 7 * 24 * 3600_000)
-  const completedDates = t.completedDates || []
-
-  const results = []
-  let cur = new Date(startDt)
-
-  while (cur <= until && results.length < 60) {
-    const dow     = cur.getDay()
-    const dateStr = cur.toISOString().slice(0, 10)
-    const include =
-      recurrence.type === 'daily' ||
-      (recurrence.type === 'weekly' && dow === startDt.getDay()) ||
-      (recurrence.type === 'custom' && recurrence.days?.includes(dow))
-
-    if (include && !completedDates.includes(dateStr)) {
-      results.push({ ...t, dueDate: dateStr, recurrenceGroupId: t.id, id: `${t.id}-r-${dateStr}` })
-    }
-    cur.setDate(cur.getDate() + 1)
-  }
-  return results
-}
 
 export default function Home() {
   const { theme, setTheme } = useTheme()
@@ -156,6 +85,7 @@ export default function Home() {
   const [googleEvents,       setGoogleEvents]       = useState([])
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
+  const [syncingCloud,       setSyncingCloud]       = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
@@ -192,6 +122,7 @@ export default function Home() {
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
   const [canvasClasses,      setCanvasClasses]      = useState([])
   const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
+  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
   const [showClassModal,     setShowClassModal]     = useState(false)
   const [editingClass,       setEditingClass]       = useState(null)
@@ -410,9 +341,11 @@ export default function Home() {
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
       const cce = localStorage.getItem('lv-canvas-cal-events')
+      const cie = localStorage.getItem('lv-canvas-ics-events')
       if (ca)  setCanvasAssignments(JSON.parse(ca))
       if (cc)  setCanvasClasses(JSON.parse(cc))
       if (cce) setCanvasCalEvents(JSON.parse(cce))
+      if (cie) setCanvasIcsEvents(JSON.parse(cie))
     } catch (_) {}
   }, [])
 
@@ -424,12 +357,49 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
   useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
+  useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
 
   const pushToast = useCallback((title, subtitle) => {
     const id = String(Date.now())
     setToasts(p => [...p, { id, title, subtitle }])
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000)
   }, [])
+
+  // ── Manual cloud refresh ─────────────────────────────────────────────────────
+  // Pulls the latest cloud state and merges it into local — cloud wins on conflicts,
+  // local-only items are preserved. Safe to call at any time; spinner while in flight.
+  const pullCloudSync = useCallback(async () => {
+    if (!currentUser || syncingCloud) return
+    setSyncingCloud(true)
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return
+      const cloud = await res.json()
+      if (!cloud) return
+
+      // cloud wins for ids present in both; local-only items kept
+      function mergeCloudWins(cloudArr, localArr) {
+        const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
+        const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
+        return Object.values({ ...localMap, ...cloudMap })
+      }
+
+      setEvents(local => mergeCloudWins(cloud.events, local))
+      setTodos(local => mergeCloudWins(cloud.todos, local))
+      setTodoCategories(local => {
+        const merged = mergeCloudWins(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
+      setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
+
+      pushToast('Synced', 'Latest data pulled from the cloud.')
+    } catch (_) {
+      // non-fatal — user can try again
+    } finally {
+      setSyncingCloud(false)
+    }
+  }, [currentUser, syncingCloud, pushToast])
 
   /* ── Reminder checker ── */
   useEffect(() => {
@@ -746,21 +716,58 @@ export default function Home() {
     })))
   }, [pushToast])
 
+  /* ── Canvas ICS feed sync (no token required) ── */
+  const syncCanvasIcs = useCallback(async () => {
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    const icsUrl = prefs.icsUrl
+    if (!icsUrl) return
+
+    try {
+      const res = await fetch('/api/canvas/ics', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ url: icsUrl }),
+      })
+      if (!res.ok) return
+      const { events: rawEvents } = await res.json()
+      if (!Array.isArray(rawEvents)) return
+
+      const mapped = rawEvents.map(e => ({
+        id:    `canvasics_${e.id}`,
+        title: e.title,
+        start: e.start,
+        end:   e.end || null,
+        allDay: e.allDay ?? false,
+        color:  '#E8751A',
+        extendedProps: {
+          source:      'canvas-ics',
+          location:    e.location    || null,
+          description: e.description || null,
+          htmlUrl:     e.htmlUrl     || null,
+        },
+      }))
+      setCanvasIcsEvents(mapped)
+    } catch (err) {
+      console.error('Canvas ICS sync failed:', err)
+    }
+  }, [])
+
   const syncCanvas = useCallback(async () => {
     setCvSyncing(true)
     try {
-      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents()])
+      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents(), syncCanvasIcs()])
     } catch (err) {
       console.error('Canvas sync failed:', err)
     } finally {
       setCvSyncing(false)
     }
-  }, [syncCanvasAssignments, syncCanvasCalEvents])
+  }, [syncCanvasAssignments, syncCanvasCalEvents, syncCanvasIcs])
 
   // Initial sync on mount
   useEffect(() => {
     const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
     if (prefs.connected) syncCanvas()
+    else if (prefs.icsUrl) syncCanvasIcs()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodic 15-min sync
@@ -768,9 +775,10 @@ export default function Home() {
     const id = setInterval(() => {
       const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
       if (prefs.connected) syncCanvas()
+      else if (prefs.icsUrl) syncCanvasIcs()
     }, 15 * 60_000)
     return () => clearInterval(id)
-  }, [syncCanvas])
+  }, [syncCanvas, syncCanvasIcs])
 
   /* ── Canvas calendar visibility prefs ── */
   const toggleCanvasOnCalendar = useCallback(() => {
@@ -918,6 +926,22 @@ export default function Home() {
       return
     }
 
+    // Canvas ICS feed events — show info toast (read-only)
+    if (info.event.extendedProps?.source === 'canvas-ics') {
+      const { location, htmlUrl, description } = info.event.extendedProps
+      const plain = description ? description.replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''
+      const subtitle = [location && `📍 ${location}`, plain].filter(Boolean).join('\n') || 'Canvas calendar event'
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        title: info.event.title,
+        subtitle: subtitle,
+        actions: htmlUrl ? [{ label: 'Open in Canvas', onClick: () => window.open(htmlUrl, '_blank') }] : [],
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
+      return
+    }
+
     // Google Calendar events are read-only – show a brief toast
     if (info.event.extendedProps?.source === 'google') {
       const desc = info.event.extendedProps.description
@@ -987,6 +1011,11 @@ export default function Home() {
     ),
   [canvasCalEvents, canvasCalPrefs])
 
+  // Canvas ICS feed events — shown when showOnCalendar is enabled (same toggle)
+  const visibleCanvasIcsEvents = useMemo(() =>
+    canvasCalPrefs.showOnCalendar ? canvasIcsEvents : [],
+  [canvasIcsEvents, canvasCalPrefs.showOnCalendar])
+
   // Map from Canvas courseId → class schedule color (for linked courses)
   const scheduleColorByCourseId = useMemo(() => {
     const map = {}
@@ -1024,6 +1053,7 @@ export default function Home() {
     ...hiddenGcalEvents,
     ...canvasClassEvents,
     ...visibleCanvasCalEvents,
+    ...visibleCanvasIcsEvents,
     ...canvasAssignmentTasks,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
@@ -1339,7 +1369,7 @@ export default function Home() {
       : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
     // Settings tab — mobile only (sidebar handles settings on desktop)
-    ...(isMobile ? [{ id: 'settings', label: 'Settings', icon: <Settings size={22}/> }] : []),
+    ...(isMobile ? [{ id: 'settings', label: 'More', icon: <Settings size={22}/> }] : []),
   ]
 
   return (
@@ -1483,6 +1513,12 @@ export default function Home() {
                 <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
                 <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
               </div>
+              <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                      style={{ background: 'none', border: 'none', padding: 4, cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s', flexShrink: 0 }}
+                      onMouseEnter={e => { if (!syncingCloud) e.currentTarget.style.color = '#93c5fd' }}
+                      onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
+                <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+              </button>
               <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
                 <button type="submit" title="Sign out"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
@@ -1775,6 +1811,10 @@ export default function Home() {
                     <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signed in as</div>
                     <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,.85)', fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
                   </div>
+                  <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                          style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+                  </button>
                   <form action="/api/auth/logout" method="POST">
                     <button type="submit" title="Sign out"
                             style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -1816,16 +1856,18 @@ export default function Home() {
 
             {/* Quick actions + theme */}
             <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-              <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Event
-              </button>
-              <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Task
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
+                  <Plus size={14}/> Event
+                </button>
+                <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(147,197,253,.3)', background: 'rgba(147,197,253,.1)', color: 'rgba(147,197,253,.85)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                  <Plus size={14}/> Task
+                </button>
+              </div>
               <button onClick={() => setFocusOpen(true)}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, var(--blue), #2d5a8a)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(58,111,168,.35)' }}>
                 <Timer size={14}/> Focus Timer
               </button>
               <ImportExportButton
@@ -1914,6 +1956,7 @@ export default function Home() {
           }}
           onSync={syncCanvas}
           onColorsChange={updateCourseColors}
+          onIcsSync={syncCanvasIcs}
         />
       )}
 

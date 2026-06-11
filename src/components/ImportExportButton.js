@@ -22,6 +22,7 @@
 
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
+import { parseIcs } from '@/lib/ics'
 
 // status shape:
 //   null              — idle
@@ -71,47 +72,6 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
 
     lines.push('END:VCALENDAR')
     return lines.join('\r\n')
-  }
-
-  function parseIcs(text) {
-    const unfold = text.replace(/\r?\n[ \t]/g, '')
-    const entries = unfold.split(/\r?\n(?=BEGIN:)/g)
-    const eventsFromIcs = []
-
-    for (const entry of entries) {
-      if (!entry.includes('BEGIN:VEVENT')) continue
-      const event = {}
-      const lines = entry.split(/\r?\n/)
-      for (const rawLine of lines) {
-        const [key, ...rest] = rawLine.split(':')
-        if (!key || rest.length === 0) continue
-        const value = rest.join(':')
-        if (key.startsWith('UID')) event.id = value.trim()
-        if (key.startsWith('DTSTART')) event.start = value.trim()
-        if (key.startsWith('DTEND')) event.end = value.trim()
-        if (key.startsWith('SUMMARY')) event.title = value.trim()
-        if (key.startsWith('DESCRIPTION')) event.description = value.trim().replace(/\\n/g, '\n')
-        if (key.startsWith('LOCATION')) event.location = value.trim()
-      }
-      if (event.start) {
-        const parseDate = (icstime) => {
-          const normalized = icstime.replace(/Z$/, '')
-          const year = normalized.slice(0, 4)
-          const month = normalized.slice(4, 6)
-          const day = normalized.slice(6, 8)
-          const hour = normalized.slice(9, 11) || '00'
-          const minute = normalized.slice(11, 13) || '00'
-          const second = normalized.slice(13, 15) || '00'
-          return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).toISOString()
-        }
-        event.start = parseDate(event.start)
-        if (event.end) event.end = parseDate(event.end)
-        event.title = event.title || 'Untitled event'
-        event.id = event.id || `ics-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-        eventsFromIcs.push(event)
-      }
-    }
-    return eventsFromIcs
   }
 
   function initiateExport(format = 'json') {

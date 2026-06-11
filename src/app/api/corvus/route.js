@@ -3,6 +3,35 @@ import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
+// ---------------------------------------------------------------------------
+// Sliding-window rate limiter — per-server-instance in-memory Map.
+// This is best-effort abuse mitigation; the Map resets on every redeploy.
+// Key: signed-in userId, or the first value of x-forwarded-for, or 'anon'.
+// Limit: 20 requests per rolling 60-second window.
+// ---------------------------------------------------------------------------
+const RATE_LIMIT_MAX    = 20          // max requests …
+const RATE_LIMIT_WINDOW = 60 * 1000  // … per this many milliseconds
+
+/** @type {Map<string, number[]>} Maps rate-limit key → array of request timestamps */
+const rateLimitMap = new Map()
+
+/**
+ * Returns true when the caller is within the allowed rate, false when exceeded.
+ * Automatically prunes timestamps outside the current window to prevent unbounded growth.
+ */
+function checkRateLimit(key) {
+  const now  = Date.now()
+  const cutoff = now - RATE_LIMIT_WINDOW
+  const timestamps = (rateLimitMap.get(key) ?? []).filter(t => t > cutoff)
+  if (timestamps.length >= RATE_LIMIT_MAX) {
+    rateLimitMap.set(key, timestamps) // store pruned list (don't push)
+    return false
+  }
+  timestamps.push(now)
+  rateLimitMap.set(key, timestamps)
+  return true
+}
+
 const TOOLS = [
   {
     type: 'function',
@@ -167,6 +196,17 @@ function fromGroqMessage(msg) {
 export async function POST(request) {
   const session = await getSession()
   if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Determine rate-limit key: prefer userId, fall back to client IP, then 'anon'
+  const rateLimitKey = session?.userId
+    ?? (request.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'anon')
+
+  if (!checkRateLimit(rateLimitKey)) {
+    return Response.json(
+      { error: "You're sending messages too quickly. Please wait a moment." },
+      { status: 429, headers: { 'Retry-After': '30' } },
+    )
+  }
 
   const { messages = [], events = [], todos = [], canvasAssignments = [], timezone = 'UTC' } = await request.json()
 
