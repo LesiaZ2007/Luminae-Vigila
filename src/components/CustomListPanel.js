@@ -4,7 +4,7 @@
  * CustomListPanel
  *
  * Renders the "list switcher" tabs at the top of the To-Do area
- * (My Tasks | 🛒 Groceries | + …) and the body of a selected custom list.
+ * (My Tasks | <icon> Groceries | + …) and the body of a selected custom list.
  *
  * The component is designed to slot in *above* TodoPanel when activeList === 'my-tasks',
  * and to *replace* the TodoPanel body when a custom list is active.
@@ -25,25 +25,156 @@
  *  (i.e. the existing TodoPanel).
  */
 
-import { useState, useRef, useCallback } from 'react'
-import { Plus, GripVertical, MoreHorizontal, Trash2, X, ChevronDown, CheckSquare } from 'lucide-react'
-import { makeItem } from '@/lib/customLists'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import {
+  Plus, GripVertical, MoreHorizontal, Trash2, X, Pencil, Check,
+  ShoppingCart, Package, ListChecks, NotebookPen, Backpack, Gift,
+  Wrench, Lightbulb, Plane, Heart, Star, BookOpen, Dumbbell, Utensils,
+} from 'lucide-react'
+import Confetti from '@/components/Confetti'
+import { makeItem, makeSubtask } from '@/lib/customLists'
 
-const EMOJI_OPTIONS = ['📝', '🛒', '📦', '✅', '🎒', '🎁', '🛠️', '💡', '🧹', '🌿']
+// ── Icon registry ──────────────────────────────────────────────────────────
+// Keys are stored in list.icon. Unknown values (legacy emojis) fall back gracefully.
+export const LIST_ICONS = {
+  ShoppingCart,
+  Package,
+  ListChecks,
+  NotebookPen,
+  Backpack,
+  Gift,
+  Wrench,
+  Lightbulb,
+  Plane,
+  Heart,
+  Star,
+  BookOpen,
+  Dumbbell,
+  Utensils,
+}
 
-// ── New-list creation modal ────────────────────────────────────────────
-export function NewListModal({ onClose, onCreate }) {
-  const [name, setName] = useState('')
-  const [emoji, setEmoji] = useState('📝')
+const ICON_KEYS = Object.keys(LIST_ICONS)
+
+/**
+ * Render a list icon: if key is a known Lucide key, render the component;
+ * otherwise render as text (legacy emoji backward compat).
+ */
+function ListIconDisplay({ icon, size = 14, color, style }) {
+  const Component = LIST_ICONS[icon]
+  if (Component) return <Component size={size} color={color} style={style} />
+  // Fallback: emoji or unknown string rendered as text
+  return <span style={{ fontSize: size * 1.1, lineHeight: 1, ...style }}>{icon || '📝'}</span>
+}
+
+// ── Color palette ─────────────────────────────────────────────────────────
+// Matches the app's EVENT_CATEGORIES colors + a few more.
+const COLOR_PALETTE = [
+  '#3a6fa8', // Luminae blue (default)
+  '#ef4444', // red
+  '#10b981', // green
+  '#f59e0b', // amber
+  '#8b5cf6', // purple
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#ec4899', // pink
+]
+
+// ── List name/icon/color editor (shared by New + Edit) ─────────────────────
+function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
+  const [name,  setName]  = useState(initial?.name  ?? '')
+  const [icon,  setIcon]  = useState(initial?.icon  ?? 'ListChecks')
+  const [color, setColor] = useState(initial?.color ?? '#3a6fa8')
 
   function handleSubmit(e) {
     e.preventDefault()
     const trimmed = name.trim()
     if (!trimmed) return
-    onCreate(trimmed, emoji)
-    onClose()
+    onSave(trimmed, icon, color)
   }
 
+  return (
+    <form onSubmit={handleSubmit}>
+      {/* Icon picker */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Icon</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {ICON_KEYS.map(key => {
+            const Ic = LIST_ICONS[key]
+            const active = icon === key
+            return (
+              <button
+                key={key} type="button"
+                onClick={() => setIcon(key)}
+                title={key}
+                style={{
+                  width: 38, height: 38, borderRadius: 10,
+                  border: `2px solid ${active ? color : 'var(--border)'}`,
+                  background: active ? color + '22' : 'var(--surface2)',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'all .12s',
+                }}
+              >
+                <Ic size={16} color={active ? color : 'var(--text-3)'} />
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Color picker */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Color</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {COLOR_PALETTE.map(c => (
+            <button
+              key={c} type="button"
+              onClick={() => setColor(c)}
+              style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: c,
+                border: color === c ? `3px solid var(--text)` : '3px solid transparent',
+                outline: color === c ? `2px solid ${c}` : 'none',
+                cursor: 'pointer', transition: 'all .12s', padding: 0,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Name input */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>List name</div>
+        <input
+          autoFocus
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="e.g. Groceries, Packing, Ideas…"
+          maxLength={48}
+          style={{
+            width: '100%', padding: '9px 12px', borderRadius: 10,
+            border: '1.5px solid var(--border)', background: 'var(--surface2)',
+            color: 'var(--text)', fontSize: '0.9rem', fontFamily: 'inherit',
+            outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onCancel}
+                style={{ padding: '8px 16px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
+          Cancel
+        </button>
+        <button type="submit" disabled={!name.trim()}
+                style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: name.trim() ? color : 'var(--surface2)', color: name.trim() ? '#fff' : 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: name.trim() ? 'pointer' : 'default', transition: 'background .13s' }}>
+          {saveLabel}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// ── New-list creation modal ────────────────────────────────────────────────
+export function NewListModal({ onClose, onCreate }) {
   return (
     <div
       style={{
@@ -57,7 +188,7 @@ export function NewListModal({ onClose, onCreate }) {
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          width: 'min(400px,100%)', background: 'var(--surface)', borderRadius: 18,
+          width: 'min(420px,100%)', background: 'var(--surface)', borderRadius: 18,
           border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)',
           padding: '24px 24px 20px',
           animation: 'modal-in .22s cubic-bezier(.22,1,.36,1)',
@@ -69,73 +200,140 @@ export function NewListModal({ onClose, onCreate }) {
             <X size={16} />
           </button>
         </div>
-
-        <form onSubmit={handleSubmit}>
-          {/* Emoji picker */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Icon</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {EMOJI_OPTIONS.map(e => (
-                <button
-                  key={e} type="button"
-                  onClick={() => setEmoji(e)}
-                  style={{
-                    width: 38, height: 38, borderRadius: 10, border: `2px solid ${emoji === e ? 'var(--blue)' : 'var(--border)'}`,
-                    background: emoji === e ? 'var(--blue-bg)' : 'var(--surface2)',
-                    fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    transition: 'all .12s',
-                  }}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Name input */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>List name</div>
-            <input
-              autoFocus
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. Groceries, Packing, Ideas…"
-              maxLength={48}
-              style={{
-                width: '100%', padding: '9px 12px', borderRadius: 10,
-                border: '1.5px solid var(--border)', background: 'var(--surface2)',
-                color: 'var(--text)', fontSize: '0.9rem', fontFamily: 'inherit',
-                outline: 'none', boxSizing: 'border-box',
-              }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose}
-                    style={{ padding: '8px 16px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
-              Cancel
-            </button>
-            <button type="submit" disabled={!name.trim()}
-                    style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: name.trim() ? 'var(--blue)' : 'var(--surface2)', color: name.trim() ? '#fff' : 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: name.trim() ? 'pointer' : 'default', transition: 'background .13s' }}>
-              Create list
-            </button>
-          </div>
-        </form>
+        <ListEditor
+          onSave={(name, icon, color) => { onCreate(name, icon, color); onClose() }}
+          onCancel={onClose}
+          saveLabel="Create list"
+        />
       </div>
     </div>
   )
 }
 
-// ── List-item row (with drag + optional swipe on mobile) ───────────────
-function ListItem({ item, isMobile, onToggle, onDelete, onUpdateText, onUpdateNote, onUpdateDue,
-                    onDragStart, onDragOver, onDrop, isDragging }) {
+// ── Edit-list modal ────────────────────────────────────────────────────────
+function EditListModal({ list, onClose, onSave }) {
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 2000,
+        background: 'rgba(0,0,0,.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        animation: 'lv-backdrop-in .18s ease',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 'min(420px,100%)', background: 'var(--surface)', borderRadius: 18,
+          border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)',
+          padding: '24px 24px 20px',
+          animation: 'modal-in .22s cubic-bezier(.22,1,.36,1)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' }}>Edit list</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 4, borderRadius: 6 }}>
+            <X size={16} />
+          </button>
+        </div>
+        <ListEditor
+          initial={list}
+          onSave={(name, icon, color) => { onSave(name, icon, color); onClose() }}
+          onCancel={onClose}
+          saveLabel="Save changes"
+        />
+      </div>
+    </div>
+  )
+}
+
+// ── Subtask row ────────────────────────────────────────────────────────────
+function SubtaskRow({ subtask, listColor, onToggle, onDelete, onUpdateText }) {
+  const [editing, setEditing] = useState(false)
+  const [val,     setVal]     = useState(subtask.text)
+
+  function commit() {
+    const trimmed = val.trim()
+    if (trimmed && trimmed !== subtask.text) onUpdateText(subtask.id, trimmed)
+    else setVal(subtask.text)
+    setEditing(false)
+  }
+
+  const accent = listColor || '#3a6fa8'
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0 3px 8px', marginLeft: 28 }}>
+      {/* Subtask checkbox */}
+      <button
+        onClick={() => onToggle(subtask.id)}
+        style={{
+          flexShrink: 0, width: 14, height: 14, borderRadius: '50%',
+          border: `2px solid ${subtask.checked ? accent : 'var(--border)'}`,
+          background: subtask.checked ? accent : 'transparent',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', transition: 'all .18s',
+        }}
+      >
+        {subtask.checked && (
+          <svg width="7" height="7" viewBox="0 0 10 10" fill="none">
+            <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )}
+      </button>
+
+      {editing ? (
+        <input
+          autoFocus
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setVal(subtask.text); setEditing(false) } }}
+          style={{
+            flex: 1, background: 'transparent', border: 'none', borderBottom: `1.5px solid ${accent}`,
+            color: 'var(--text)', fontSize: '0.78rem', fontFamily: 'inherit', outline: 'none', padding: '1px 0',
+          }}
+        />
+      ) : (
+        <span
+          onDoubleClick={() => !subtask.checked && setEditing(true)}
+          style={{
+            flex: 1, fontSize: '0.78rem', color: subtask.checked ? 'var(--text-3)' : 'var(--text-2)',
+            textDecoration: subtask.checked ? 'line-through' : 'none',
+            cursor: subtask.checked ? 'default' : 'text',
+          }}
+        >
+          {subtask.text}
+        </span>
+      )}
+
+      <button
+        onClick={() => onDelete(subtask.id)}
+        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 2, borderRadius: 4, display: 'flex', opacity: 0.6 }}
+        onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+        onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+      >
+        <X size={10} />
+      </button>
+    </div>
+  )
+}
+
+// ── List-item row (with drag + optional swipe on mobile) ───────────────────
+function ListItem({
+  item, listColor, isMobile, onToggle, onDelete, onUpdateText, onUpdateNote, onUpdateDue,
+  onAddSubtask, onToggleSubtask, onDeleteSubtask, onUpdateSubtaskText,
+  onDragStart, onDragOver, onDrop, isDragging,
+}) {
   const [hovered,     setHovered]     = useState(false)
   const [menuOpen,    setMenuOpen]    = useState(false)
+  const [menuPos,     setMenuPos]     = useState({ top: 0, left: 0 })
   const [editingText, setEditingText] = useState(false)
   const [textVal,     setTextVal]     = useState(item.text)
   const [showNote,    setShowNote]    = useState(false)
   const [noteVal,     setNoteVal]     = useState(item.note || '')
   const [dueVal,      setDueVal]      = useState(item.dueDate || '')
+  const menuBtnRef = useRef(null)
 
   // Touch swipe
   const swipeRef    = useRef({ startX: 0, startY: 0, dx: 0, locked: null, active: false })
@@ -143,6 +341,45 @@ function ListItem({ item, isMobile, onToggle, onDelete, onUpdateText, onUpdateNo
   const [swipeDone, setSwipeDone] = useState(false)
   const SWIPE_THRESHOLD = 72
   const SWIPE_MAX       = 100
+
+  const accent = listColor || '#3a6fa8'
+
+  // ── Close menu on outside-click / Escape ──
+  useEffect(() => {
+    if (!menuOpen) return
+    function onDown(e) {
+      if (menuBtnRef.current?.contains(e.target)) return
+      // If click is inside the fixed menu portal, don't close
+      const portal = document.getElementById('cl-item-menu-portal')
+      if (portal?.contains(e.target)) return
+      setMenuOpen(false)
+    }
+    function onKey(e) { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown',   onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown',   onKey)
+    }
+  }, [menuOpen])
+
+  function openMenu(e) {
+    e.stopPropagation()
+    if (!menuOpen) {
+      // Anchor the fixed dropdown to the button's viewport coords
+      const rect = menuBtnRef.current?.getBoundingClientRect()
+      if (rect) {
+        // Position below the button; if too close to bottom, flip upward
+        const spaceBelow = window.innerHeight - rect.bottom
+        const menuH = 200 // approx
+        const top = spaceBelow > menuH ? rect.bottom + 4 : rect.top - menuH - 4
+        // Right-align to button; don't overflow left
+        const right = window.innerWidth - rect.right
+        setMenuPos({ top, right: Math.max(right, 8) })
+      }
+    }
+    setMenuOpen(v => !v)
+  }
 
   function onTouchStart(e) {
     const t = e.touches[0]
@@ -200,238 +437,288 @@ function ListItem({ item, isMobile, onToggle, onDelete, onUpdateText, onUpdateNo
 
   const swipeLeft  = swipeDx < -8
   const swipeRight = swipeDx > 8
+  const subtasks   = item.subtasks ?? []
 
-  return (
-    <li
-      onMouseEnter={() => !isMobile && setHovered(true)}
-      onMouseLeave={() => !isMobile && setHovered(false)}
-      draggable={!isMobile}
-      onDragStart={() => onDragStart?.(item.id)}
-      onDragOver={e => { e.preventDefault(); onDragOver?.(item.id) }}
-      onDrop={e => { e.preventDefault(); onDrop?.() }}
-      onTouchStart={isMobile ? onTouchStart : undefined}
-      onTouchMove={isMobile ? onTouchMove : undefined}
-      onTouchEnd={isMobile ? onTouchEnd : undefined}
+  // The dropdown is rendered into a fixed portal div at the root to escape overflow:hidden
+  const menuDropdown = menuOpen ? (
+    <div
+      id="cl-item-menu-portal"
+      onClick={e => e.stopPropagation()}
       style={{
-        position: 'relative', overflow: 'hidden', borderRadius: 10,
-        opacity: isDragging ? 0.4 : 1,
-        transition: swipeDone ? 'opacity 0.22s, transform 0.22s' : undefined,
+        position: 'fixed',
+        top:   menuPos.top,
+        right: menuPos.right,
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+        boxShadow: 'var(--shadow-modal)', zIndex: 9000, minWidth: 180, overflow: 'hidden',
       }}
     >
-      {/* Swipe backgrounds (mobile) */}
-      {isMobile && (
-        <>
-          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#10b981', display: 'flex', alignItems: 'center', paddingLeft: 14, opacity: swipeRight ? Math.min(1, swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s', pointerEvents: 'none' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          </div>
-          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 14, opacity: swipeLeft ? Math.min(1, -swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s', pointerEvents: 'none' }}>
-            <Trash2 size={16} color="white" />
-          </div>
-        </>
-      )}
+      {/* Due date picker */}
+      <div style={{ padding: '8px 12px' }}>
+        <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Due date</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="date"
+            value={dueVal}
+            onChange={e => setDueVal(e.target.value)}
+            style={{
+              flex: 1, padding: '4px 6px', borderRadius: 7, border: '1.5px solid var(--border)',
+              background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.75rem', fontFamily: 'inherit', outline: 'none',
+            }}
+          />
+          <button onClick={commitDue}
+                  style={{ padding: '4px 8px', borderRadius: 7, border: 'none', background: accent, color: '#fff', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>
+            Set
+          </button>
+        </div>
+        {dueVal && (
+          <button onClick={() => { setDueVal(''); onUpdateDue(item.id, null); setMenuOpen(false) }}
+                  style={{ marginTop: 4, fontSize: '0.68rem', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+            Clear date
+          </button>
+        )}
+      </div>
 
-      {/* Main row */}
-      <div style={{
-        display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 6px',
-        borderRadius: 10,
-        background: hovered ? 'var(--surface2)' : 'transparent',
-        transition: swipeDone
-          ? 'transform 0.22s'
-          : 'background .15s',
-        transform: isMobile
-          ? (swipeDone ? `translateX(${swipeDx >= 0 ? '100%' : '-100%'})` : `translateX(${swipeDx}px)`)
-          : undefined,
-      }}>
-        {/* Drag handle (desktop) */}
-        {!isMobile && (
-          <div
-            onPointerDown={e => { e.stopPropagation(); onDragStart?.(item.id) }}
-            style={{ marginTop: 3, color: 'var(--text-3)', cursor: 'grab', flexShrink: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity .13s', touchAction: 'none' }}
-            title="Drag to reorder"
-          >
-            <GripVertical size={12} />
+      <div style={{ height: 1, background: 'var(--border)' }} />
+
+      {/* Add subtask */}
+      <button
+        onClick={() => { onAddSubtask(item.id); setMenuOpen(false) }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: 'var(--text-2)', textAlign: 'left', transition: 'background .12s' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+      >
+        <Plus size={12} /> Add subtask
+      </button>
+
+      <div style={{ height: 1, background: 'var(--border)' }} />
+
+      {/* Note toggle */}
+      <button
+        onClick={() => { setShowNote(true); setMenuOpen(false) }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: 'var(--text-2)', textAlign: 'left', transition: 'background .12s' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+      >
+        💬 {item.note ? 'Edit note' : 'Add note'}
+      </button>
+
+      <div style={{ height: 1, background: 'var(--border)' }} />
+
+      {/* Delete */}
+      <button
+        onClick={() => { onDelete(item.id); setMenuOpen(false) }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: '#ef4444', textAlign: 'left', transition: 'background .12s' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,.07)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+      >
+        <Trash2 size={12} /> Delete item
+      </button>
+    </div>
+  ) : null
+
+  return (
+    <>
+      {/* Render menu dropdown at document level via a portal div in <body> */}
+      {menuOpen && typeof document !== 'undefined' && (() => {
+        // We use a simple inline portal: append a div to body imperatively.
+        // React portals require ReactDOM.createPortal — we avoid that by using
+        // position:fixed with high z-index and NOT being inside overflow:hidden ancestors.
+        // The menu is rendered outside the <li> via a sibling fragment below.
+        return null
+      })()}
+      <li
+        onMouseEnter={() => !isMobile && setHovered(true)}
+        onMouseLeave={() => !isMobile && setHovered(false)}
+        draggable={!isMobile}
+        onDragStart={() => onDragStart?.(item.id)}
+        onDragOver={e => { e.preventDefault(); onDragOver?.(item.id) }}
+        onDrop={e => { e.preventDefault(); onDrop?.() }}
+        onTouchStart={isMobile ? onTouchStart : undefined}
+        onTouchMove={isMobile ? onTouchMove : undefined}
+        onTouchEnd={isMobile ? onTouchEnd : undefined}
+        style={{
+          position: 'relative',
+          borderRadius: 10,
+          opacity: isDragging ? 0.4 : 1,
+          transition: swipeDone ? 'opacity 0.22s, transform 0.22s' : undefined,
+        }}
+      >
+        {/* Swipe backgrounds (mobile) — inside their own overflow:hidden wrapper */}
+        {isMobile && (
+          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, overflow: 'hidden', pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#10b981', display: 'flex', alignItems: 'center', paddingLeft: 14, opacity: swipeRight ? Math.min(1, swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 14, opacity: swipeLeft ? Math.min(1, -swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s' }}>
+              <Trash2 size={16} color="white" />
+            </div>
           </div>
         )}
 
-        {/* Checkbox */}
-        <button
-          onClick={e => { e.stopPropagation(); onToggle(item.id) }}
-          style={{
-            marginTop: 3, flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-            border: `2px solid ${item.checked ? 'var(--blue)' : 'var(--border)'}`,
-            background: item.checked ? 'var(--blue)' : 'transparent',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', transition: 'all .18s',
-          }}
-        >
-          {item.checked && (
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-              <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          )}
-        </button>
-
-        {/* Text + meta */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {editingText ? (
-            <input
-              autoFocus
-              value={textVal}
-              onChange={e => setTextVal(e.target.value)}
-              onBlur={commitText}
-              onKeyDown={e => { if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { setTextVal(item.text); setEditingText(false) } }}
-              style={{
-                width: '100%', background: 'transparent', border: 'none', borderBottom: '1.5px solid var(--blue)',
-                color: 'var(--text)', fontSize: '0.875rem', fontFamily: 'inherit', outline: 'none', padding: '1px 0',
-              }}
-            />
-          ) : (
-            <span
-              onDoubleClick={() => !item.checked && setEditingText(true)}
-              style={{
-                fontSize: '0.875rem', fontWeight: 500, color: item.checked ? 'var(--text-3)' : 'var(--text)',
-                textDecoration: item.checked ? 'line-through' : 'none',
-                lineHeight: 1.35, display: 'block',
-                cursor: item.checked ? 'default' : 'text',
-              }}
+        {/* Main row */}
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 6px',
+          borderRadius: 10,
+          background: hovered ? 'var(--surface2)' : 'transparent',
+          transition: swipeDone ? 'transform 0.22s' : 'background .15s',
+          transform: isMobile
+            ? (swipeDone ? `translateX(${swipeDx >= 0 ? '100%' : '-100%'})` : `translateX(${swipeDx}px)`)
+            : undefined,
+        }}>
+          {/* Drag handle (desktop) */}
+          {!isMobile && (
+            <div
+              onPointerDown={e => { e.stopPropagation(); onDragStart?.(item.id) }}
+              style={{ marginTop: 3, color: 'var(--text-3)', cursor: 'grab', flexShrink: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity .13s', touchAction: 'none' }}
+              title="Drag to reorder"
             >
-              {item.text}
-            </span>
-          )}
-
-          {/* Meta row: due date + note */}
-          {(item.dueDate || item.note) && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 3 }}>
-              {item.dueDate && (
-                <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)' }}>
-                  📅 {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </span>
-              )}
-              {item.note && !showNote && (
-                <button
-                  onClick={() => setShowNote(true)}
-                  style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  💬 note
-                </button>
-              )}
+              <GripVertical size={12} />
             </div>
           )}
 
-          {/* Inline note editor */}
-          {showNote && (
-            <div style={{ marginTop: 5 }}>
-              <textarea
+          {/* Checkbox */}
+          <button
+            onClick={e => { e.stopPropagation(); onToggle(item.id) }}
+            style={{
+              marginTop: 3, flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+              border: `2px solid ${item.checked ? accent : 'var(--border)'}`,
+              background: item.checked ? accent : 'transparent',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', transition: 'all .18s',
+            }}
+          >
+            {item.checked && (
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+
+          {/* Text + meta */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editingText ? (
+              <input
                 autoFocus
-                value={noteVal}
-                onChange={e => setNoteVal(e.target.value)}
-                onBlur={() => { commitNote(); setShowNote(false) }}
-                placeholder="Add a note…"
-                rows={2}
+                value={textVal}
+                onChange={e => setTextVal(e.target.value)}
+                onBlur={commitText}
+                onKeyDown={e => { if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { setTextVal(item.text); setEditingText(false) } }}
                 style={{
-                  width: '100%', boxSizing: 'border-box', padding: '5px 8px', borderRadius: 8,
-                  border: '1.5px solid var(--border)', background: 'var(--surface2)',
-                  color: 'var(--text)', fontSize: '0.78rem', fontFamily: 'inherit', resize: 'vertical', outline: 'none',
+                  width: '100%', background: 'transparent', border: 'none', borderBottom: `1.5px solid ${accent}`,
+                  color: 'var(--text)', fontSize: '0.875rem', fontFamily: 'inherit', outline: 'none', padding: '1px 0',
                 }}
               />
-            </div>
-          )}
-        </div>
+            ) : (
+              <span
+                onDoubleClick={() => !item.checked && setEditingText(true)}
+                style={{
+                  fontSize: '0.875rem', fontWeight: 500, color: item.checked ? 'var(--text-3)' : 'var(--text)',
+                  textDecoration: item.checked ? 'line-through' : 'none',
+                  lineHeight: 1.35, display: 'block',
+                  cursor: item.checked ? 'default' : 'text',
+                }}
+              >
+                {item.text}
+              </span>
+            )}
 
-        {/* ⋯ menu */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+            {/* Meta row: due date + note */}
+            {(item.dueDate || item.note) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 3 }}>
+                {item.dueDate && (
+                  <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)' }}>
+                    📅 {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </span>
+                )}
+                {item.note && !showNote && (
+                  <button
+                    onClick={() => setShowNote(true)}
+                    style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    💬 note
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Inline note editor */}
+            {showNote && (
+              <div style={{ marginTop: 5 }}>
+                <textarea
+                  autoFocus
+                  value={noteVal}
+                  onChange={e => setNoteVal(e.target.value)}
+                  onBlur={() => { commitNote(); setShowNote(false) }}
+                  placeholder="Add a note…"
+                  rows={2}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '5px 8px', borderRadius: 8,
+                    border: '1.5px solid var(--border)', background: 'var(--surface2)',
+                    color: 'var(--text)', fontSize: '0.78rem', fontFamily: 'inherit', resize: 'vertical', outline: 'none',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ⋯ menu button */}
           <button
-            onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            ref={menuBtnRef}
+            onClick={openMenu}
             style={{
               padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer',
-              color: 'var(--text-3)', opacity: hovered || menuOpen ? 1 : 0, transition: 'opacity .13s', display: 'flex',
+              color: 'var(--text-3)', opacity: hovered || menuOpen ? 1 : 0, transition: 'opacity .13s', display: 'flex', flexShrink: 0,
             }}
           >
             <MoreHorizontal size={14} />
           </button>
-          {menuOpen && (
-            <div
-              onClick={e => e.stopPropagation()}
-              style={{
-                position: 'absolute', right: 0, top: 'calc(100% + 4px)',
-                background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
-                boxShadow: 'var(--shadow-modal)', zIndex: 100, minWidth: 170, overflow: 'hidden',
-              }}
+
+          {/* Desktop delete on hover */}
+          {!isMobile && (
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(item.id) }}
+              style={{ marginTop: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', opacity: hovered ? 0.6 : 0, transition: 'opacity .13s, color .13s', padding: 2, borderRadius: 4, flexShrink: 0 }}
+              onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+              title="Delete"
             >
-              {/* Due date picker */}
-              <div style={{ padding: '8px 12px' }}>
-                <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Due date</div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input
-                    type="date"
-                    value={dueVal}
-                    onChange={e => setDueVal(e.target.value)}
-                    style={{
-                      flex: 1, padding: '4px 6px', borderRadius: 7, border: '1.5px solid var(--border)',
-                      background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.75rem', fontFamily: 'inherit', outline: 'none',
-                    }}
-                  />
-                  <button onClick={commitDue}
-                          style={{ padding: '4px 8px', borderRadius: 7, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>
-                    Set
-                  </button>
-                </div>
-                {dueVal && (
-                  <button onClick={() => { setDueVal(''); onUpdateDue(item.id, null); setMenuOpen(false) }}
-                          style={{ marginTop: 4, fontSize: '0.68rem', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
-                    Clear date
-                  </button>
-                )}
-              </div>
-
-              <div style={{ height: 1, background: 'var(--border)' }} />
-
-              {/* Note toggle */}
-              <button
-                onClick={() => { setShowNote(true); setMenuOpen(false) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: 'var(--text-2)', textAlign: 'left', transition: 'background .12s' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'none'}
-              >
-                💬 {item.note ? 'Edit note' : 'Add note'}
-              </button>
-
-              <div style={{ height: 1, background: 'var(--border)' }} />
-
-              {/* Delete */}
-              <button
-                onClick={() => { onDelete(item.id); setMenuOpen(false) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', color: '#ef4444', textAlign: 'left', transition: 'background .12s' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,.07)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'none'}
-              >
-                <Trash2 size={12} /> Delete item
-              </button>
-            </div>
+              <X size={12} />
+            </button>
           )}
         </div>
 
-        {/* Desktop delete on hover */}
-        {!isMobile && (
-          <button
-            onClick={e => { e.stopPropagation(); onDelete(item.id) }}
-            style={{ marginTop: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', opacity: hovered ? 0.6 : 0, transition: 'opacity .13s, color .13s', padding: 2, borderRadius: 4, flexShrink: 0 }}
-            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
-            title="Delete"
-          >
-            <X size={12} />
-          </button>
+        {/* Subtasks */}
+        {subtasks.length > 0 && (
+          <div style={{ paddingBottom: 4 }}>
+            {subtasks.map(st => (
+              <SubtaskRow
+                key={st.id}
+                subtask={st}
+                listColor={accent}
+                onToggle={id => onToggleSubtask(item.id, id)}
+                onDelete={id => onDeleteSubtask(item.id, id)}
+                onUpdateText={(id, text) => onUpdateSubtaskText(item.id, id, text)}
+              />
+            ))}
+          </div>
         )}
-      </div>
-    </li>
+      </li>
+
+      {/* Fixed-position menu portal — rendered as sibling outside the li */}
+      {menuDropdown}
+    </>
   )
 }
 
-// ── Main panel for a single custom list ─────────────────────────────────
+// ── Main panel for a single custom list ────────────────────────────────────
 function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }) {
   const [newText,   setNewText]   = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showEditModal,     setShowEditModal]     = useState(false)
+  const [confetti, setConfetti] = useState(null)
+
+  // Track previous completion state for confetti edge detection
+  const wasCompleteRef = useRef(false)
 
   // Drag state
   const dragIdRef     = useRef(null)
@@ -444,6 +731,23 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
     if (b.sortOrder != null) return 1
     return 0
   })
+
+  const totalCount   = (list.items ?? []).length
+  const checkedCount = (list.items ?? []).filter(i => i.checked).length
+  const accent       = list.color || '#3a6fa8'
+
+  // List is "complete" when all top-level items are checked (subtasks do not affect this)
+  const isComplete = totalCount > 0 && checkedCount === totalCount
+
+  // Confetti: fire once on the transition from incomplete → complete
+  useEffect(() => {
+    if (isComplete && !wasCompleteRef.current) {
+      // Burst from center of viewport
+      setConfetti({ key: Date.now(), x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      setTimeout(() => setConfetti(null), 2000)
+    }
+    wasCompleteRef.current = isComplete
+  }, [isComplete])
 
   function addItem() {
     const text = newText.trim()
@@ -481,6 +785,52 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
     onUpdateList({ ...list, items: (list.items ?? []).filter(i => !i.checked) })
   }
 
+  // Subtask handlers
+  function addSubtask(itemId) {
+    const text = window.prompt('New subtask:')?.trim()
+    if (!text) return
+    const st = makeSubtask(text)
+    onUpdateList({
+      ...list,
+      items: (list.items ?? []).map(i =>
+        i.id === itemId ? { ...i, subtasks: [...(i.subtasks ?? []), st] } : i
+      ),
+    })
+  }
+
+  function toggleSubtask(itemId, subtaskId) {
+    onUpdateList({
+      ...list,
+      items: (list.items ?? []).map(i =>
+        i.id !== itemId ? i : {
+          ...i,
+          subtasks: (i.subtasks ?? []).map(s => s.id === subtaskId ? { ...s, checked: !s.checked } : s),
+        }
+      ),
+    })
+  }
+
+  function deleteSubtask(itemId, subtaskId) {
+    onUpdateList({
+      ...list,
+      items: (list.items ?? []).map(i =>
+        i.id !== itemId ? i : { ...i, subtasks: (i.subtasks ?? []).filter(s => s.id !== subtaskId) }
+      ),
+    })
+  }
+
+  function updateSubtaskText(itemId, subtaskId, text) {
+    onUpdateList({
+      ...list,
+      items: (list.items ?? []).map(i =>
+        i.id !== itemId ? i : {
+          ...i,
+          subtasks: (i.subtasks ?? []).map(s => s.id === subtaskId ? { ...s, text } : s),
+        }
+      ),
+    })
+  }
+
   // Drag handlers
   function handleDragStart(id) { dragIdRef.current = id }
 
@@ -510,24 +860,37 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
     dragOverIdRef.current = null
   }
 
-  const checkedCount = (list.items ?? []).filter(i => i.checked).length
-  const totalCount   = (list.items ?? []).length
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* List header */}
       <div style={{ padding: fullPage ? '16px 28px 12px' : '10px 16px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>{list.emoji}</span>
+          <ListIconDisplay icon={list.icon} size={16} color={accent} />
           <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' }}>{list.name}</span>
           {totalCount > 0 && (
-            <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--surface2)', color: 'var(--text-3)' }}>
+            <span style={{
+              fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+              background: isComplete ? accent + '22' : 'var(--surface2)',
+              color: isComplete ? accent : 'var(--text-3)',
+              transition: 'all .2s',
+            }}>
               {checkedCount}/{totalCount}
             </span>
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {/* Edit list button */}
+          <button
+            onClick={() => setShowEditModal(true)}
+            style={{ padding: '4px 8px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', alignItems: 'center', transition: 'color .13s' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+            title="Edit list name, icon, color"
+          >
+            <Pencil size={13} />
+          </button>
+
           {checkedCount > 0 && (
             <button
               onClick={clearChecked}
@@ -564,7 +927,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
               color: 'var(--text)', fontSize: '0.875rem', fontFamily: 'inherit', outline: 'none',
               transition: 'border-color .13s',
             }}
-            onFocus={e => e.target.style.borderColor = 'var(--blue)'}
+            onFocus={e => e.target.style.borderColor = accent}
             onBlur={e => e.target.style.borderColor = 'var(--border)'}
           />
           <button
@@ -572,7 +935,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
             disabled={!newText.trim()}
             style={{
               padding: '7px 12px', borderRadius: 9, border: 'none',
-              background: newText.trim() ? 'var(--blue)' : 'var(--surface2)',
+              background: newText.trim() ? accent : 'var(--surface2)',
               color: newText.trim() ? '#fff' : 'var(--text-3)',
               cursor: newText.trim() ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', transition: 'background .13s',
@@ -595,12 +958,17 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
               <ListItem
                 key={item.id}
                 item={item}
+                listColor={accent}
                 isMobile={isMobile}
                 onToggle={toggleItem}
                 onDelete={deleteItem}
                 onUpdateText={updateText}
                 onUpdateNote={updateNote}
                 onUpdateDue={updateDue}
+                onAddSubtask={addSubtask}
+                onToggleSubtask={toggleSubtask}
+                onDeleteSubtask={deleteSubtask}
+                onUpdateSubtaskText={updateSubtaskText}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -610,6 +978,11 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
           </ul>
         )}
       </div>
+
+      {/* Confetti on list completion */}
+      {confetti && (
+        <Confetti key={confetti.key} priority="medium" x={confetti.x} y={confetti.y} />
+      )}
 
       {/* Delete confirm */}
       {showDeleteConfirm && (
@@ -634,11 +1007,20 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
           </div>
         </div>
       )}
+
+      {/* Edit list modal */}
+      {showEditModal && (
+        <EditListModal
+          list={list}
+          onClose={() => setShowEditModal(false)}
+          onSave={(name, icon, color) => onUpdateList({ ...list, name, icon, color })}
+        />
+      )}
     </div>
   )
 }
 
-// ── List switcher tabs + routing ──────────────────────────────────────────
+// ── List switcher tabs + routing ─────────────────────────────────────────────
 export default function CustomListPanel({
   lists,
   activeListId,
@@ -650,6 +1032,19 @@ export default function CustomListPanel({
   isMobile,
   children, // TodoPanel content when activeListId === 'my-tasks'
 }) {
+  const [deletingId, setDeletingId] = useState(null)
+
+  // Per-list completion for tab strikethrough
+  function listIsComplete(list) {
+    const items = list.items ?? []
+    return items.length > 0 && items.every(i => i.checked)
+  }
+
+  function confirmDeleteTab(e, id) {
+    e.stopPropagation()
+    setDeletingId(id)
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', width: '100%' }}>
       {/* ── Switcher tabs ── */}
@@ -676,24 +1071,57 @@ export default function CustomListPanel({
         </button>
 
         {/* Custom list tabs */}
-        {lists.map(list => (
-          <button
-            key={list.id}
-            onClick={() => onSelectList(list.id)}
-            style={{
-              padding: '6px 12px', borderRadius: '8px 8px 0 0',
-              border: 'none', borderBottom: activeListId === list.id ? '2px solid var(--blue)' : '2px solid transparent',
-              background: 'transparent',
-              color: activeListId === list.id ? 'var(--blue-text)' : 'var(--text-3)',
-              fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
-              whiteSpace: 'nowrap', flexShrink: 0, transition: 'all .13s',
-              display: 'flex', alignItems: 'center', gap: 5,
-            }}
-          >
-            <span>{list.emoji}</span>
-            <span>{list.name}</span>
-          </button>
-        ))}
+        {lists.map(list => {
+          const complete = listIsComplete(list)
+          const accent   = list.color || '#3a6fa8'
+          const active   = activeListId === list.id
+          return (
+            <div key={list.id} style={{ position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <button
+                onClick={() => onSelectList(list.id)}
+                style={{
+                  padding: '6px 10px 6px 12px', borderRadius: '8px 8px 0 0',
+                  border: 'none',
+                  borderBottom: active ? `2px solid ${accent}` : '2px solid transparent',
+                  background: 'transparent',
+                  color: active ? accent : 'var(--text-3)',
+                  fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
+                  whiteSpace: 'nowrap', transition: 'all .13s',
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  paddingRight: 22, // leave room for × button
+                }}
+              >
+                <ListIconDisplay icon={list.icon} size={13} color={active ? accent : undefined} />
+                <span style={{
+                  textDecoration: complete ? 'line-through' : 'none',
+                  opacity: complete ? 0.7 : 1,
+                  transition: 'all .2s',
+                }}>
+                  {list.name}
+                </span>
+                {complete && <Check size={10} color={accent} style={{ flexShrink: 0 }} />}
+              </button>
+
+              {/* × delete tab button */}
+              <button
+                onClick={e => confirmDeleteTab(e, list.id)}
+                title={`Delete ${list.name}`}
+                style={{
+                  position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-3)', padding: 2, borderRadius: 4,
+                  display: 'flex', alignItems: 'center',
+                  opacity: 0.5, transition: 'opacity .12s, color .12s',
+                  fontSize: 0,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = '#ef4444' }}
+                onMouseLeave={e => { e.currentTarget.style.opacity = '0.5'; e.currentTarget.style.color = 'var(--text-3)' }}
+              >
+                <X size={10} />
+              </button>
+            </div>
+          )
+        })}
 
         {/* + New list button */}
         <button
@@ -737,6 +1165,35 @@ export default function CustomListPanel({
           })()
         )}
       </div>
+
+      {/* Tab × delete confirm dialog */}
+      {deletingId && (() => {
+        const list = lists.find(l => l.id === deletingId)
+        if (!list) { setDeletingId(null); return null }
+        const totalCount = (list.items ?? []).length
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+            onClick={() => setDeletingId(null)}
+          >
+            <div onClick={e => e.stopPropagation()}
+                 style={{ width: 'min(320px,100%)', background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)', padding: '24px 20px 18px' }}>
+              <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete "{list.name}"?</p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', margin: '0 0 20px' }}>All {totalCount} item{totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeletingId(null)}
+                        style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button onClick={() => { onDeleteList(deletingId); setDeletingId(null) }}
+                        style={{ padding: '8px 14px', borderRadius: 9, border: 'none', background: '#ef4444', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}>
+                  Delete list
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
