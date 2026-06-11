@@ -137,7 +137,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
 - **Built-in help** — a lightbulb in the header toggles a short, dismissible note explaining the flow and whether phases auto-advance
 - **Log to calendar** — optionally drop each finished focus session onto the calendar as a real, editable time-block (this is how tasks become *time-blocking*)
-- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Stars**, **Snow**, **Aurora**, **Rain** (diagonal streaks), **Fireflies** (warm drifting glowing dots), or **Ocean** (wave bands) — all pure CSS/JS animation, no assets (Esc to exit)
+- **Full-screen "zen" mode** — a large glowing progress ring with a selectable ambient background: **Snow**, **Aurora**, **Rain** (diagonal streaks), or **Fireflies** (warm drifting glowing dots) — all pure CSS/JS animation, no assets (Esc to exit)
 - A gentle two-note chime + confetti celebrate each completed session (chime can be muted); reminders also fire via the existing notification + push pipeline
 - Completed sessions are saved to `localStorage` (`lv-study-sessions`) for the Study Time panel
 - Self-contained — adds `lv-focus` and `lv-study-sessions` localStorage keys; never alters existing events or tasks

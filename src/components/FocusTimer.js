@@ -10,7 +10,7 @@
  * Two surfaces:
  *   - Compact panel anchored to a FAB (desktop) / opened from Settings (mobile)
  *   - Full-screen "zen" mode with a depleting glow ring and a selectable ambient
- *     background (stars, snow, or a slow aurora) for distraction-free focus
+ *     background (snow, aurora, rain, or fireflies) for distraction-free focus
  *
  * Time-blocking tie-in (no fragile drag-and-drop):
  *   - Toggle "Log to calendar" and every completed focus session is dropped onto the
@@ -37,7 +37,7 @@ const DEFAULTS = {
   autoStartNext: false,
   sound: true,
   logToCalendar: false,
-  fx: 'stars',           // ambient background in full-screen: 'none' | 'stars' | 'snow' | 'aurora'
+  fx: 'snow',            // ambient background in full-screen: 'none' | 'snow' | 'aurora' | 'rain' | 'fireflies'
   showInfo: true,        // show the "how it works" note in the compact panel
   customDefaults: null,  // {focusMin, shortMin, longMin} saved as the user's personal default
 }
@@ -53,12 +53,10 @@ const PHASES = {
 
 const FX_OPTIONS = [
   { id: 'none',       label: 'None'       },
-  { id: 'stars',      label: 'Stars'      },
   { id: 'snow',       label: 'Snow'       },
   { id: 'aurora',     label: 'Aurora'     },
   { id: 'rain',       label: 'Rain'       },
   { id: 'fireflies',  label: 'Fireflies'  },
-  { id: 'ocean',      label: 'Ocean'      },
 ]
 
 function todayStr() {
@@ -70,6 +68,8 @@ function loadState() {
   try {
     const raw = JSON.parse(localStorage.getItem('lv-focus') ?? '{}')
     const settings = { ...DEFAULTS, ...(raw.settings ?? {}) }
+    // Migrate retired backgrounds (stars / ocean) to a still-supported one.
+    if (settings.fx === 'stars' || settings.fx === 'ocean') settings.fx = 'snow'
     const isToday = raw.day === todayStr()
     return {
       settings,
@@ -725,7 +725,6 @@ function BackgroundFX({ type, accent }) {
 
   if (type === 'rain') return <RainFX />
   if (type === 'fireflies') return <FirefliesFX />
-  if (type === 'ocean') return <OceanFX />
   return <ParticleFX type={type} />
 }
 
@@ -807,67 +806,6 @@ function FirefliesFX() {
             ].join(', '),
           }} />
         ))}
-      </div>
-    )
-}
-
-// ── Ocean ──
-// Three sinusoidal wave bands rendered as large rounded rectangles that
-// slowly oscillate horizontally.  Deep blue palette, feels calm and meditative.
-function OceanFX() {
-    return (
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
-        {/* Sky gradient */}
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'linear-gradient(180deg, #0a1628 0%, #0d2040 40%, #0e3060 70%, #1a4a7a 100%)',
-        }} />
-        {/* Foam / crest sparkles — subtle dots near the wave tops */}
-        {[15, 35, 58, 72, 88].map((l, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: `${l}%`, bottom: `${42 + (i % 2) * 6}%`,
-            width: 3, height: 3, borderRadius: '50%',
-            background: 'rgba(255,255,255,0.55)',
-            animation: `lv-twinkle ${2 + i * 0.4}s ease-in-out ${i * -0.7}s infinite`,
-          }} />
-        ))}
-        {/* Wave band 3 — back (darkest) */}
-        <div style={{
-          position: 'absolute', bottom: '38%', left: '-10%', right: '-10%', height: '60%',
-          borderRadius: '50% 50% 0 0 / 30px 30px 0 0',
-          background: 'linear-gradient(180deg, #1e4d7a 0%, #0e2c55 100%)',
-          animation: 'lv-wave3 9s ease-in-out infinite',
-          willChange: 'transform',
-        }} />
-        {/* Wave band 2 — mid */}
-        <div style={{
-          position: 'absolute', bottom: '28%', left: '-10%', right: '-10%', height: '60%',
-          borderRadius: '55% 45% 0 0 / 28px 28px 0 0',
-          background: 'linear-gradient(180deg, #1a5e8f 0%, #0c3560 100%)',
-          animation: 'lv-wave2 7s ease-in-out 0.5s infinite',
-          willChange: 'transform',
-        }} />
-        {/* Wave band 1 — front (brightest) */}
-        <div style={{
-          position: 'absolute', bottom: '18%', left: '-10%', right: '-10%', height: '60%',
-          borderRadius: '60% 40% 0 0 / 24px 24px 0 0',
-          background: 'linear-gradient(180deg, #2272ae 0%, #0f4070 100%)',
-          animation: 'lv-wave1 5.5s ease-in-out 1s infinite',
-          willChange: 'transform',
-        }} />
-        {/* Foreground water */}
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0, height: '20%',
-          background: 'linear-gradient(180deg, #2272ae 0%, #1a5580 100%)',
-        }} />
-        {/* Subtle foam line at the leading wave edge */}
-        <div style={{
-          position: 'absolute', bottom: '17.5%', left: '-10%', right: '-10%', height: 2,
-          background: 'rgba(200,235,255,0.25)',
-          borderRadius: 999,
-          animation: 'lv-wave1 5.5s ease-in-out 1s infinite',
-          willChange: 'transform',
-        }} />
       </div>
     )
 }
