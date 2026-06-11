@@ -103,6 +103,23 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Date range filter** — collapsible From / To date pickers filter all result types simultaneously
 - **Keyboard navigation** — arrow keys move focus through results; Enter opens the highlighted item
 
+### ✅ Tasks — Drag-to-Reorder
+- Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
+- Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
+- Tasks without a `sortOrder` fall back to date-based sorting; new items added before or after reordering work seamlessly
+
+### 👆 Tasks — Swipe Gestures *(mobile / touch)*
+- **Swipe right** on a task to mark it complete — triggers the existing confetti celebration
+- **Swipe left** on a task to delete it — reveals a red trash background as visual feedback
+- Axis is locked after 6 px of movement so horizontal swipes don't fight vertical scrolling
+- A 72 px threshold prevents accidental triggers; items snap back if the swipe falls short
+
+### ↩️ Undo Delete
+- Deleting a **task** or a **calendar event** shows a toast for ~6 seconds with an **Undo** button
+- Tapping Undo fully restores the item (including its synced state and any subtasks)
+- The deletion is "soft" — the item is removed from view immediately but todo/event unlinking is deferred until the undo window closes, so a full restore is always possible
+- Works for single events and "delete all in series" recurring event deletions
+
 ### 📋 Tasks — Subtasks
 - Add up to 20 subtasks to any to-do item in the Add/Edit modal
 - Each subtask can be checked off individually — matches CoursesPanel done style with strikethrough

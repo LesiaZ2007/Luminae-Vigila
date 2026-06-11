@@ -359,10 +359,11 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
   useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
 
-  const pushToast = useCallback((title, subtitle) => {
+  const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
     const id = String(Date.now())
-    setToasts(p => [...p, { id, title, subtitle }])
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 5000)
+    setToasts(p => [...p, { id, title, subtitle, ...(actions ? { actions } : {}), ...opts }])
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), actions ? 6000 : 5000)
+    return id
   }, [])
 
   // ── Manual cloud refresh ─────────────────────────────────────────────────────
@@ -460,13 +461,56 @@ export default function Home() {
   }, [events])
 
   const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
-    if (groupId && deleteAll) {
-      setEvents(prev => prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id))
-    } else {
-      setEvents(prev => prev.filter(e => e.id !== id))
-    }
-    setTodos(prev => prev.map(t => t.linkedEventId === id ? { ...t, linkedEventId: null } : t))
-  }, [])
+    // Capture the items being deleted so undo can restore them
+    setEvents(prev => {
+      const toDelete = deleteAll && groupId
+        ? prev.filter(e => e.recurrenceGroupId === groupId || e.id === id)
+        : prev.filter(e => e.id === id)
+      const remaining = deleteAll && groupId
+        ? prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id)
+        : prev.filter(e => e.id !== id)
+
+      const label = toDelete[0]?.title || 'Event'
+      const count = toDelete.length
+
+      // Soft-delete: items already removed from state; undo re-inserts them
+      const toastId = pushToast(
+        `${count > 1 ? `${count} events` : `"${label}"`} deleted`,
+        undefined,
+        [{
+          label: 'Undo',
+          dismiss: true,
+          onClick: () => {
+            setEvents(cur => {
+              // Re-insert the deleted events, avoiding duplicates
+              const curIds = new Set(cur.map(e => e.id))
+              return [...cur, ...toDelete.filter(e => !curIds.has(e.id))]
+            })
+          },
+        }],
+        { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+      )
+
+      // After toast expires, unlink todos that pointed at deleted events —
+      // but only if those events are still absent (i.e. undo was NOT used).
+      const deletedIds = new Set(toDelete.map(e => e.id))
+      setTimeout(() => {
+        setEvents(curEvs => {
+          // Check which deleted ids are still absent
+          const stillGone = new Set([...deletedIds].filter(eid => !curEvs.some(e => e.id === eid)))
+          if (stillGone.size > 0) {
+            setTodos(curTodos => curTodos.map(t =>
+              stillGone.has(t.linkedEventId) ? { ...t, linkedEventId: null } : t
+            ))
+          }
+          return curEvs // no change to events
+        })
+        setToasts(p => p.filter(t => t.id !== toastId))
+      }, 6200)
+
+      return remaining
+    })
+  }, [pushToast])
 
   // ── Drag-to-reschedule handlers ──────────────────────────────────────────
   const handleEventDrop = useCallback((info) => {
@@ -538,7 +582,37 @@ export default function Home() {
       setTodos(p => p.map(t => t.id === id ? { ...t, completed: !t.completed } : t))
     }
   }, [])
-  const deleteTodo = useCallback((id) => setTodos(p => p.filter(t => t.id !== id)), [])
+  const deleteTodo = useCallback((id) => {
+    setTodos(prev => {
+      const todo = prev.find(t => t.id === id)
+      if (!todo) return prev
+      const remaining = prev.filter(t => t.id !== id)
+
+      const toastId = pushToast(
+        `"${todo.title}" deleted`,
+        undefined,
+        [{
+          label: 'Undo',
+          dismiss: true,
+          onClick: () => {
+            setTodos(cur => {
+              if (cur.some(t => t.id === id)) return cur // already restored
+              return [...cur, todo]
+            })
+          },
+        }],
+        { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+      )
+
+      // Commit: nothing extra to do for todos (already removed from state)
+      // Just clean up toast reference after window
+      setTimeout(() => {
+        setToasts(p => p.filter(t => t.id !== toastId))
+      }, 6200)
+
+      return remaining
+    })
+  }, [pushToast])
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
   const toggleSubtask = useCallback((todoId, subtaskId) => {
     setTodos(prev => prev.map(t =>
@@ -549,6 +623,14 @@ export default function Home() {
         ),
       }
     ))
+  }, [])
+
+  // Accepts an array of todos already stamped with sortOrder by DraggableList
+  const reorderTodos = useCallback((reordered) => {
+    setTodos(prev => {
+      const orderMap = Object.fromEntries(reordered.map(t => [t.id, t.sortOrder]))
+      return prev.map(t => t.id in orderMap ? { ...t, sortOrder: orderMap[t.id] } : t)
+    })
   }, [])
 
   /* ── Import / Export ── */
@@ -1677,6 +1759,7 @@ export default function Home() {
                              onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                              onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                              onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                             onReorder={reorderTodos} isMobile={isMobile}
                              canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                              onToggleCanvas={toggleCanvasAssignment}
                              onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
@@ -1695,7 +1778,7 @@ export default function Home() {
                          onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                          onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                          onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
-                         fullPage isMobile={isMobile}
+                         onReorder={reorderTodos} fullPage isMobile={isMobile}
                          canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                          onToggleCanvas={toggleCanvasAssignment}
                          onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
