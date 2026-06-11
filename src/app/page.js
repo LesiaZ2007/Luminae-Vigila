@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer } from 'lucide-react'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -31,6 +31,7 @@ import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
 import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
+import FocusTimer             from '@/components/FocusTimer'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
 
@@ -142,6 +143,7 @@ export default function Home() {
   const [initialTodoDate, setInitialTodoDate] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
+  const [focusOpen,     setFocusOpen]     = useState(false)
   const [showAddMenu,   setShowAddMenu]   = useState(false)
   const [showSearchPopup,   setShowSearchPopup]   = useState(false)
   const [searchClosing,     setSearchClosing]     = useState(false)
@@ -1337,7 +1339,7 @@ export default function Home() {
       : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
     // Settings tab — mobile only (sidebar handles settings on desktop)
-    ...(isMobile ? [{ id: 'settings', label: 'Settings', icon: <Settings size={22}/> }] : []),
+    ...(isMobile ? [{ id: 'settings', label: 'More', icon: <Settings size={22}/> }] : []),
   ]
 
   return (
@@ -1814,13 +1816,19 @@ export default function Home() {
 
             {/* Quick actions + theme */}
             <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-              <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Event
-              </button>
-              <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.12)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
-                <Plus size={14}/> Add Task
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
+                  <Plus size={14}/> Event
+                </button>
+                <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(147,197,253,.3)', background: 'rgba(147,197,253,.1)', color: 'rgba(147,197,253,.85)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                  <Plus size={14}/> Task
+                </button>
+              </div>
+              <button onClick={() => setFocusOpen(true)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, var(--blue), #2d5a8a)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(58,111,168,.35)' }}>
+                <Timer size={14}/> Focus Timer
               </button>
               <ImportExportButton
                 events={events} todos={todos} todoCategories={todoCategories}
@@ -2006,6 +2014,42 @@ export default function Home() {
           todoCategories={todoCategories}
           onImport={handleImport}
         />
+      )}
+
+      {/* ── Focus Timer panel (Pomodoro tied to tasks) ── */}
+      <ErrorBoundary>
+        <FocusTimer
+          open={focusOpen}
+          onClose={() => setFocusOpen(false)}
+          isMobile={isMobile}
+          todos={todos}
+          canvasAssignments={canvasAssignments}
+          onUpdateTodo={updateTodo}
+          onUpdateCanvas={updateCanvasAssignment}
+          onSaveEvent={saveEvent}
+          pushToast={pushToast}
+        />
+      </ErrorBoundary>
+
+      {/* ── Focus Timer FAB (desktop only — mobile opens it from the Settings tab) ── */}
+      {!isMobile && (
+        <button
+          onClick={() => setFocusOpen(v => !v)}
+          title="Focus timer"
+          style={{
+            position: 'fixed', bottom: 24, right: 206,
+            width: 50, height: 50, borderRadius: '50%', border: '1px solid var(--border)',
+            background: focusOpen ? 'var(--blue-bg)' : 'var(--surface)',
+            color:      focusOpen ? 'var(--blue)'    : 'var(--text-2)',
+            cursor: 'pointer', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-md)', transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.color = 'var(--blue)'; e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = focusOpen ? 'var(--blue-bg)' : 'var(--surface)'; e.currentTarget.style.color = focusOpen ? 'var(--blue)' : 'var(--text-2)'; e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)' }}
+        >
+          <Timer size={20} />
+        </button>
       )}
 
       {/* ── Floating Corvus widget (desktop only) ── */}
