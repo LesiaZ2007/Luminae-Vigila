@@ -52,10 +52,13 @@ const PHASES = {
 }
 
 const FX_OPTIONS = [
-  { id: 'none',   label: 'None'   },
-  { id: 'stars',  label: 'Stars'  },
-  { id: 'snow',   label: 'Snow'   },
-  { id: 'aurora', label: 'Aurora' },
+  { id: 'none',       label: 'None'       },
+  { id: 'stars',      label: 'Stars'      },
+  { id: 'snow',       label: 'Snow'       },
+  { id: 'aurora',     label: 'Aurora'     },
+  { id: 'rain',       label: 'Rain'       },
+  { id: 'fireflies',  label: 'Fireflies'  },
+  { id: 'ocean',      label: 'Ocean'      },
 ]
 
 function todayStr() {
@@ -714,6 +717,148 @@ function BackgroundFX({ type, accent }) {
             animation: `lv-aurora ${b.dur}s ease-in-out ${i * -4}s infinite`,
           }} />
         ))}
+      </div>
+    )
+  }
+
+  // ── Rain ──
+  // Memoized on type. Each streak is a very thin tall rectangle with a negative
+  // skew so it looks like a diagonal rain streak.  Pure CSS animation, no images.
+  if (type === 'rain') {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const drops = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
+      id: i,
+      left:   Math.random() * 110 - 5,     // allow some off-screen starts
+      dur:    0.55 + Math.random() * 0.5,  // fast rain: 0.55–1.05s
+      delay:  -(Math.random() * 2),
+      height: 14 + Math.random() * 18,     // streak length in px
+      drift:  (Math.random() * 2 - 1) * 8, // subtle sideways jitter
+      opacity: 0.35 + Math.random() * 0.35,
+    })), [type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
+        {/* Subtle water-surface sheen at the very bottom */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '6px',
+          background: 'linear-gradient(180deg, transparent, rgba(180,220,255,0.08))',
+        }} />
+        {drops.map(p => (
+          <span key={p.id} style={{
+            position: 'absolute', left: `${p.left}%`, top: '-5%',
+            width: 1.5, height: p.height, borderRadius: 1,
+            background: 'rgba(180,220,255,0.65)',
+            willChange: 'transform, opacity',
+            ['--drift']: `${p.drift}px`,
+            animation: `lv-rain ${p.dur}s linear ${p.delay}s infinite`,
+          }} />
+        ))}
+      </div>
+    )
+  }
+
+  // ── Fireflies ──
+  // Warm glowing dots that drift randomly through the screen.
+  // Two separate animations run simultaneously: a slow drift path and a glow pulse.
+  if (type === 'fireflies') {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const flies = useMemo(() => Array.from({ length: 38 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 95,
+      top:  Math.random() * 90,
+      size: 3 + Math.random() * 4,
+      driftDur:  8 + Math.random() * 12,
+      glowDur:   1.5 + Math.random() * 2.5,
+      driftDelay: -(Math.random() * 16),
+      glowDelay:  -(Math.random() * 4),
+      // Four random waypoints for the drift path
+      fx:  (Math.random() * 80 - 40) + 'px',
+      fy:  (Math.random() * 60 - 30) + 'px',
+      fx2: (Math.random() * 80 - 40) + 'px',
+      fy2: (Math.random() * 60 - 30) + 'px',
+      fx3: (Math.random() * 80 - 40) + 'px',
+      fy3: (Math.random() * 60 - 30) + 'px',
+    })), [type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
+        {flies.map(f => (
+          <span key={f.id} style={{
+            position: 'absolute', left: `${f.left}%`, top: `${f.top}%`,
+            width: f.size, height: f.size, borderRadius: '50%',
+            background: 'rgba(255,225,80,0.9)',
+            willChange: 'transform, opacity, box-shadow',
+            ['--fx']:  f.fx,  ['--fy']:  f.fy,
+            ['--fx2']: f.fx2, ['--fy2']: f.fy2,
+            ['--fx3']: f.fx3, ['--fy3']: f.fy3,
+            // Stack both animations on the same element
+            animation: [
+              `lv-firefly-drift ${f.driftDur}s ease-in-out ${f.driftDelay}s infinite`,
+              `lv-firefly-glow  ${f.glowDur}s  ease-in-out ${f.glowDelay}s  infinite`,
+            ].join(', '),
+          }} />
+        ))}
+      </div>
+    )
+  }
+
+  // ── Ocean ──
+  // Three sinusoidal wave bands rendered as large rounded rectangles that
+  // slowly oscillate horizontally.  Deep blue palette, feels calm and meditative.
+  if (type === 'ocean') {
+    return (
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
+        {/* Sky gradient */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'linear-gradient(180deg, #0a1628 0%, #0d2040 40%, #0e3060 70%, #1a4a7a 100%)',
+        }} />
+        {/* Foam / crest sparkles — subtle dots near the wave tops */}
+        {[15, 35, 58, 72, 88].map((l, i) => (
+          <div key={i} style={{
+            position: 'absolute', left: `${l}%`, bottom: `${42 + (i % 2) * 6}%`,
+            width: 3, height: 3, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.55)',
+            animation: `lv-twinkle ${2 + i * 0.4}s ease-in-out ${i * -0.7}s infinite`,
+          }} />
+        ))}
+        {/* Wave band 3 — back (darkest) */}
+        <div style={{
+          position: 'absolute', bottom: '38%', left: '-10%', right: '-10%', height: '60%',
+          borderRadius: '50% 50% 0 0 / 30px 30px 0 0',
+          background: 'linear-gradient(180deg, #1e4d7a 0%, #0e2c55 100%)',
+          animation: 'lv-wave3 9s ease-in-out infinite',
+          willChange: 'transform',
+        }} />
+        {/* Wave band 2 — mid */}
+        <div style={{
+          position: 'absolute', bottom: '28%', left: '-10%', right: '-10%', height: '60%',
+          borderRadius: '55% 45% 0 0 / 28px 28px 0 0',
+          background: 'linear-gradient(180deg, #1a5e8f 0%, #0c3560 100%)',
+          animation: 'lv-wave2 7s ease-in-out 0.5s infinite',
+          willChange: 'transform',
+        }} />
+        {/* Wave band 1 — front (brightest) */}
+        <div style={{
+          position: 'absolute', bottom: '18%', left: '-10%', right: '-10%', height: '60%',
+          borderRadius: '60% 40% 0 0 / 24px 24px 0 0',
+          background: 'linear-gradient(180deg, #2272ae 0%, #0f4070 100%)',
+          animation: 'lv-wave1 5.5s ease-in-out 1s infinite',
+          willChange: 'transform',
+        }} />
+        {/* Foreground water */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '20%',
+          background: 'linear-gradient(180deg, #2272ae 0%, #1a5580 100%)',
+        }} />
+        {/* Subtle foam line at the leading wave edge */}
+        <div style={{
+          position: 'absolute', bottom: '17.5%', left: '-10%', right: '-10%', height: 2,
+          background: 'rgba(200,235,255,0.25)',
+          borderRadius: 999,
+          animation: 'lv-wave1 5.5s ease-in-out 1s infinite',
+          willChange: 'transform',
+        }} />
       </div>
     )
   }
