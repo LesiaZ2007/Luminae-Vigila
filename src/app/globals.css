@@ -6,6 +6,12 @@
 /* ══════════════════════════════════════════════
    COLOR SYSTEM
 ══════════════════════════════════════════════ */
+
+/* ── Accent color tokens (light mode defaults — Luminae Blue) ──
+   These are overridden per data-accent attribute on <html>.
+   Every component should use --blue / --blue-hover / --blue-bg /
+   --blue-text / --blue-ring / --sidebar rather than hard-coded hex.
+── */
 :root {
   --bg:          #f7f9fc;
   --surface:     #ffffff;
@@ -17,12 +23,12 @@
   --text-2:      #475569;
   --text-3:      #94a3b8;
 
+  /* Accent: Luminae Blue (default) */
   --blue:        #3a6fa8;
   --blue-hover:  #2d5a8a;
   --blue-bg:     #e8f0f8;
   --blue-text:   #2c517a;
   --blue-ring:   rgba(58, 111, 168, 0.18);
-
   --sidebar:     #243b55;
 
   --red:         #ef4444;
@@ -35,6 +41,59 @@
   --shadow-lg:   0 12px 48px rgba(0,0,0,.15);
 }
 
+/* ── Accent themes — light mode ── */
+
+/* Violet */
+[data-accent="violet"] {
+  --blue:       #7c3aed;
+  --blue-hover: #6d28d9;
+  --blue-bg:    #ede9fe;
+  --blue-text:  #5b21b6;
+  --blue-ring:  rgba(124, 58, 237, 0.18);
+  --sidebar:    #2d1b69;
+}
+
+/* Emerald */
+[data-accent="emerald"] {
+  --blue:       #059669;
+  --blue-hover: #047857;
+  --blue-bg:    #d1fae5;
+  --blue-text:  #065f46;
+  --blue-ring:  rgba(5, 150, 105, 0.18);
+  --sidebar:    #0c3326;
+}
+
+/* Rose */
+[data-accent="rose"] {
+  --blue:       #e11d48;
+  --blue-hover: #be123c;
+  --blue-bg:    #ffe4e6;
+  --blue-text:  #9f1239;
+  --blue-ring:  rgba(225, 29, 72, 0.18);
+  --sidebar:    #4c0519;
+}
+
+/* Amber */
+[data-accent="amber"] {
+  --blue:       #d97706;
+  --blue-hover: #b45309;
+  --blue-bg:    #fef3c7;
+  --blue-text:  #92400e;
+  --blue-ring:  rgba(217, 119, 6, 0.18);
+  --sidebar:    #451a03;
+}
+
+/* Slate */
+[data-accent="slate"] {
+  --blue:       #475569;
+  --blue-hover: #334155;
+  --blue-bg:    #f1f5f9;
+  --blue-text:  #1e293b;
+  --blue-ring:  rgba(71, 85, 105, 0.18);
+  --sidebar:    #1e293b;
+}
+
+/* ── Dark mode base ── */
 .dark {
   --bg:          #0a1628;
   --surface:     #0f1e36;
@@ -46,18 +105,65 @@
   --text-2:      #7a9cc0;
   --text-3:      #3a5a80;
 
+  /* Accent: Luminae Blue dark defaults */
   --blue:        #6fa8d8;
   --blue-hover:  #8bbde6;
   --blue-bg:     #1a3050;
   --blue-text:   #8bbde6;
   --blue-ring:   rgba(111, 168, 216, 0.22);
-
   --sidebar:     #1a2e40;
 
   --shadow:      0 1px 3px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.5);
   --shadow-md:   0 4px 16px rgba(0,0,0,.5);
   --shadow-modal:0 8px 40px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.4);
   --shadow-lg:   0 12px 48px rgba(0,0,0,.7);
+}
+
+/* ── Accent themes — dark mode overrides ── */
+
+.dark[data-accent="violet"] {
+  --blue:       #a78bfa;
+  --blue-hover: #c4b5fd;
+  --blue-bg:    #2e1065;
+  --blue-text:  #c4b5fd;
+  --blue-ring:  rgba(167, 139, 250, 0.22);
+  --sidebar:    #1e1040;
+}
+
+.dark[data-accent="emerald"] {
+  --blue:       #34d399;
+  --blue-hover: #6ee7b7;
+  --blue-bg:    #052e16;
+  --blue-text:  #6ee7b7;
+  --blue-ring:  rgba(52, 211, 153, 0.22);
+  --sidebar:    #031a0d;
+}
+
+.dark[data-accent="rose"] {
+  --blue:       #fb7185;
+  --blue-hover: #fda4af;
+  --blue-bg:    #4c0519;
+  --blue-text:  #fda4af;
+  --blue-ring:  rgba(251, 113, 133, 0.22);
+  --sidebar:    #2d0410;
+}
+
+.dark[data-accent="amber"] {
+  --blue:       #fbbf24;
+  --blue-hover: #fcd34d;
+  --blue-bg:    #451a03;
+  --blue-text:  #fcd34d;
+  --blue-ring:  rgba(251, 191, 36, 0.22);
+  --sidebar:    #291000;
+}
+
+.dark[data-accent="slate"] {
+  --blue:       #94a3b8;
+  --blue-hover: #cbd5e1;
+  --blue-bg:    #0f172a;
+  --blue-text:  #cbd5e1;
+  --blue-ring:  rgba(148, 163, 184, 0.22);
+  --sidebar:    #0f172a;
 }
 
 /* ══════════════════════════════════════════════
@@ -408,6 +514,41 @@ select option {
 @keyframes lv-aurora {
   0%, 100% { transform: translate(0, 0) scale(1);      opacity: 0.7; }
   50%      { transform: translate(4%, 6%) scale(1.18); opacity: 1;   }
+}
+/* Rain: fast diagonal streaks falling from top to bottom */
+@keyframes lv-rain {
+  0%   { transform: translate(0, -5vh)  skewX(-18deg); opacity: 0; }
+  8%   { opacity: 0.55; }
+  90%  { opacity: 0.55; }
+  100% { transform: translate(var(--drift, -30px), 105vh) skewX(-18deg); opacity: 0; }
+}
+/* Fireflies: gentle floating drift + warm glow pulse */
+@keyframes lv-firefly-drift {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(var(--fx, 20px),  var(--fy, -15px)); }
+  50%  { transform: translate(var(--fx2, -10px), var(--fy2, 20px)); }
+  75%  { transform: translate(var(--fx3, 15px),  var(--fy3, -10px)); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes lv-firefly-glow {
+  0%, 100% { opacity: 0.15; box-shadow: 0 0 4px 2px rgba(255,220,80,0.3); }
+  50%      { opacity: 0.95; box-shadow: 0 0 10px 5px rgba(255,220,80,0.7); }
+}
+/* Ocean waves: two large horizontal bands scrolling */
+@keyframes lv-wave1 {
+  0%   { transform: translateX(0)   scaleY(1); }
+  50%  { transform: translateX(-6%) scaleY(1.06); }
+  100% { transform: translateX(0)   scaleY(1); }
+}
+@keyframes lv-wave2 {
+  0%   { transform: translateX(0)   scaleY(1); }
+  50%  { transform: translateX(4%)  scaleY(0.95); }
+  100% { transform: translateX(0)   scaleY(1); }
+}
+@keyframes lv-wave3 {
+  0%   { transform: translateX(0)   scaleY(1); }
+  50%  { transform: translateX(-3%) scaleY(1.04); }
+  100% { transform: translateX(0)   scaleY(1); }
 }
 
 /* ══════════════════════════════════════════════
