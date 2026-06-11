@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { Settings, Sun, Moon, Check, Compass } from 'lucide-react'
+import { Settings, Check, Compass, Sun, Moon } from 'lucide-react'
 import { ACCENT_OPTIONS, applyAccent, getSavedAccent } from './AccentPicker'
 
 const ACCENT_STORAGE_KEY = 'lv-accent'
@@ -76,18 +76,13 @@ export default function SettingsMenu({ theme, onToggleTheme, onShowTour, /** 'si
             <div style={sectionLabel}>Appearance</div>
             <button
               onClick={onToggleTheme}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%',
-                padding: '8px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface2)',
-                color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 36, height: 36, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface2)',
+                color: 'var(--text-2)', cursor: 'pointer',
               }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                {theme === 'dark' ? <Moon size={13} /> : <Sun size={13} />}
-                {theme === 'dark' ? 'Dark mode' : 'Light mode'}
-              </span>
-              <span style={{ fontSize: '0.64rem', fontWeight: 700, color: 'var(--text-3)' }}>
-                {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-              </span>
+              {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
             </button>
           </div>
 
