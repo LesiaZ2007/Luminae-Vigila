@@ -830,8 +830,8 @@ export default function Home() {
   }, [])
 
   /* ── Custom Lists CRUD ── */
-  const createCustomList = useCallback((name, icon, color) => {
-    const list = makeList(name, icon, color)
+  const createCustomList = useCallback((name, icon, color, dueDate = null) => {
+    const list = { ...makeList(name, icon, color), dueDate: dueDate ?? null }
     setCustomLists(prev => [...prev, list])
   }, [])
 
@@ -1283,6 +1283,15 @@ export default function Home() {
       setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 12000)
       return
     }
+    // Custom list due-date markers — navigate to that list
+    if (info.event.extendedProps?.type === 'custom-list-due' ||
+        info.event.extendedProps?.type === 'custom-list-item-due') {
+      const { listId } = info.event.extendedProps
+      setActiveNav('todos')
+      setActiveListId(listId)
+      return
+    }
+
     setEventModal({ open: true, event: info.event, date: null })
   }, [todos, eventPrefs, hideEvent, unhideEvent, setGoogleEventColor])
 
@@ -1364,6 +1373,45 @@ export default function Home() {
       : [],
   [canvasAssignments, canvasCalPrefs, scheduleColorByCourseId])
 
+  // Custom list due-date markers (all-day, "Tasks" row)
+  const customListCalEvents = useMemo(() => {
+    const markers = []
+    for (const list of customLists) {
+      const accent = list.color || '#3a6fa8'
+      const items  = list.items ?? []
+      const totalCount   = items.length
+      const checkedCount = items.filter(i => i.checked).length
+      const isComplete   = totalCount > 0 && checkedCount === totalCount
+
+      // List-level due date — only when list is not fully complete
+      if (list.dueDate && !isComplete) {
+        markers.push({
+          id:     `cal-list-${list.id}`,
+          title:  list.name,
+          start:  list.dueDate,
+          allDay: true,
+          color:  accent,
+          extendedProps: { type: 'custom-list-due', listId: list.id },
+        })
+      }
+
+      // Item-level due dates — only unchecked items
+      for (const item of items) {
+        if (!item.checked && item.dueDate) {
+          markers.push({
+            id:     `cal-listitem-${list.id}-${item.id}`,
+            title:  item.text,
+            start:  item.dueDate,
+            allDay: true,
+            color:  accent,
+            extendedProps: { type: 'custom-list-item-due', listId: list.id, itemId: item.id },
+          })
+        }
+      }
+    }
+    return markers
+  }, [customLists])
+
   const allCalendarEvents = [
     ...visibleEvents,
     ...visibleGoogleEvents,
@@ -1372,6 +1420,7 @@ export default function Home() {
     ...visibleCanvasCalEvents,
     ...visibleCanvasIcsEvents,
     ...canvasAssignmentTasks,
+    ...customListCalEvents,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
@@ -2074,9 +2123,11 @@ export default function Home() {
                 canvasClassEvents={canvasClassEvents}
                 todoCategories={todoCategories}
                 eventCategories={EVENT_CATEGORIES}
+                customLists={customLists}
                 onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
                 onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onCanvasClick={(a) => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                onCustomListClick={(listId) => { setActiveNav('todos'); setActiveListId(listId) }}
                 isMobile={isMobile}
               />
             </ErrorBoundary>
