@@ -19,6 +19,8 @@ function useWindowWidth() {
   return w
 }
 import TodoPanel  from '@/components/TodoPanel'
+import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
+import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -101,6 +103,11 @@ export default function Home() {
   const [gcSyncing,          setGcSyncing]          = useState(false)
   const [syncingCloud,       setSyncingCloud]       = useState(false)
   const [eventPrefs,         setEventPrefs]         = useState({})
+
+  // ── Custom Lists ──
+  const [customLists,      setCustomLists]      = useState([])
+  const [activeListId,     setActiveListId]     = useState('my-tasks')
+  const [showNewListModal, setShowNewListModal] = useState(false)
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
   const openSearchPopup = useCallback(() => {
@@ -259,6 +266,7 @@ export default function Home() {
           const merged = mergeById(cloud.studySessions, local)
           return merged
         })
+        setCustomLists(local => mergeCustomLists(cloud.customLists ?? [], local))
 
         // Count how many local items weren't in the cloud (new uploads)
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
@@ -269,12 +277,13 @@ export default function Home() {
         setTimeout(() => {
           // Re-read from localStorage (already written by the effects below)
           try {
-            const mergedEvents    = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
-            const mergedTodos     = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
-            const mergedCats      = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
-            const mergedClasses   = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
-            const mergedPrefs     = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
-            const mergedSessions  = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
+            const mergedEvents      = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
+            const mergedTodos       = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
+            const mergedCats        = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
+            const mergedClasses     = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
+            const mergedPrefs       = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
+            const mergedSessions    = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
+            const mergedCustomLists = JSON.parse(localStorage.getItem('lv-custom-lists')    ?? '[]')
 
             const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
             const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
@@ -289,6 +298,7 @@ export default function Home() {
                 classSchedule:  mergedClasses,
                 eventPrefs:     mergedPrefs,
                 studySessions:  mergedSessions,
+                customLists:    mergedCustomLists,
               }),
             }).then(() => {
               if (newEvents + newTodos > 0) {
@@ -321,11 +331,12 @@ export default function Home() {
           classSchedule:  canvasClasses,
           eventPrefs,
           studySessions,
+          customLists,
         }),
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -390,6 +401,9 @@ export default function Home() {
       if (tc) setTodoCategories(JSON.parse(tc))
       if (ep) setEventPrefs(JSON.parse(ep))
       if (ss) setStudySessions(JSON.parse(ss))
+      // Custom Lists
+      const cl = localStorage.getItem('lv-custom-lists')
+      if (cl) setCustomLists(JSON.parse(cl))
       // Canvas
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
@@ -407,6 +421,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
   useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
   useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
+  useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customLists))    }, [customLists])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
@@ -489,6 +504,7 @@ export default function Home() {
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
       setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
+      setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
     } catch (_) {
@@ -811,6 +827,22 @@ export default function Home() {
         ),
       }
     ))
+  }, [])
+
+  /* ── Custom Lists CRUD ── */
+  const createCustomList = useCallback((name, icon, color, dueDate = null) => {
+    const list = { ...makeList(name, icon, color), dueDate: dueDate ?? null }
+    setCustomLists(prev => [...prev, list])
+  }, [])
+
+  const updateCustomList = useCallback((updated) => {
+    setCustomLists(prev => prev.map(l => l.id === updated.id ? updated : l))
+  }, [])
+
+  const deleteCustomList = useCallback((id) => {
+    setCustomLists(prev => prev.filter(l => l.id !== id))
+    // If currently viewing deleted list, go back to My Tasks
+    setActiveListId(cur => cur === id ? 'my-tasks' : cur)
   }, [])
 
   // Accepts an array of todos already stamped with sortOrder by DraggableList
@@ -1167,6 +1199,22 @@ export default function Home() {
       setActiveNav('todos')
       return
     }
+    // Any event currently marked hidden (shown semi-transparently via "Show hidden")
+    // → offer to unhide it, for ANY source. Without this, clicking a hidden local
+    // event just reopens the edit modal whose eye button only re-hides it, so the
+    // event could never be returned to normal.
+    if (eventPrefs[info.event.id]?.hidden) {
+      const id = String(Date.now())
+      setToasts(p => [...p, {
+        id,
+        eventId: info.event.id,
+        title: info.event.title,
+        subtitle: 'This event is hidden.',
+        actions: [{ label: 'Unhide event', onClick: () => unhideEvent(info.event.id) }],
+      }])
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
+      return
+    }
     // Canvas class schedule events — show info toast
     if (info.event.extendedProps?.source === 'canvas-class') {
       const { professor, location, courseName } = info.event.extendedProps
@@ -1235,6 +1283,15 @@ export default function Home() {
       setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 12000)
       return
     }
+    // Custom list due-date markers — navigate to that list
+    if (info.event.extendedProps?.type === 'custom-list-due' ||
+        info.event.extendedProps?.type === 'custom-list-item-due') {
+      const { listId } = info.event.extendedProps
+      setActiveNav('todos')
+      setActiveListId(listId)
+      return
+    }
+
     setEventModal({ open: true, event: info.event, date: null })
   }, [todos, eventPrefs, hideEvent, unhideEvent, setGoogleEventColor])
 
@@ -1259,7 +1316,6 @@ export default function Home() {
         .filter(e => eventPrefs[e.id]?.hidden)
         .map(e => ({
           ...e,
-          classNames: ['lv-hidden-event'],
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       const hiddenGcal = googleEvents
@@ -1267,7 +1323,6 @@ export default function Home() {
         .map(e => ({
           ...e,
           color: eventPrefs[e.id]?.color || e.color,
-          classNames: ['lv-hidden-event'],
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       return [...hiddenLocal, ...hiddenGcal]
@@ -1318,6 +1373,45 @@ export default function Home() {
       : [],
   [canvasAssignments, canvasCalPrefs, scheduleColorByCourseId])
 
+  // Custom list due-date markers (all-day, "Tasks" row)
+  const customListCalEvents = useMemo(() => {
+    const markers = []
+    for (const list of customLists) {
+      const accent = list.color || '#3a6fa8'
+      const items  = list.items ?? []
+      const totalCount   = items.length
+      const checkedCount = items.filter(i => i.checked).length
+      const isComplete   = totalCount > 0 && checkedCount === totalCount
+
+      // List-level due date — only when list is not fully complete
+      if (list.dueDate && !isComplete) {
+        markers.push({
+          id:     `cal-list-${list.id}`,
+          title:  list.name,
+          start:  list.dueDate,
+          allDay: true,
+          color:  accent,
+          extendedProps: { type: 'custom-list-due', listId: list.id },
+        })
+      }
+
+      // Item-level due dates — only unchecked items
+      for (const item of items) {
+        if (!item.checked && item.dueDate) {
+          markers.push({
+            id:     `cal-listitem-${list.id}-${item.id}`,
+            title:  item.text,
+            start:  item.dueDate,
+            allDay: true,
+            color:  accent,
+            extendedProps: { type: 'custom-list-item-due', listId: list.id, itemId: item.id },
+          })
+        }
+      }
+    }
+    return markers
+  }, [customLists])
+
   const allCalendarEvents = [
     ...visibleEvents,
     ...visibleGoogleEvents,
@@ -1326,6 +1420,7 @@ export default function Home() {
     ...visibleCanvasCalEvents,
     ...visibleCanvasIcsEvents,
     ...canvasAssignmentTasks,
+    ...customListCalEvents,
     ...todos.filter(t => !t.completed).flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
@@ -1849,7 +1944,7 @@ export default function Home() {
           {/* Settings menu — dark mode, accent color, show tour */}
           <SettingsMenu
             theme={theme}
-            onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onSetTheme={setTheme}
             onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
             variant="sidebar"
           />
@@ -1940,19 +2035,31 @@ export default function Home() {
                 height: isTablet ? 240 : 'auto',
                 borderLeft: isTablet ? 'none' : '1px solid var(--border)',
                 borderTop: isTablet ? '1px solid var(--border)' : 'none',
-                background: 'var(--surface)', overflowY: 'auto', flexShrink: 0,
+                background: 'var(--surface)', overflowY: isTablet ? 'auto' : 'hidden', flexShrink: 0,
                 transition: 'width 0.35s cubic-bezier(0.16,1,0.3,1)',
+                display: 'flex', flexDirection: 'column',
               }}>
                 <ErrorBoundary>
-                  <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                             onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                             onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                             onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
-                             onReorder={reorderTodos} isMobile={isMobile}
-                             canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                             onToggleCanvas={toggleCanvasAssignment}
-                             onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                             onHideCanvas={hideCanvasAssignment} />
+                  <CustomListPanel
+                    lists={customLists}
+                    activeListId={activeListId}
+                    onSelectList={setActiveListId}
+                    onCreateList={() => setShowNewListModal(true)}
+                    onUpdateList={updateCustomList}
+                    onDeleteList={deleteCustomList}
+                    fullPage={false}
+                    isMobile={isMobile}
+                  >
+                    <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                               onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                               onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                               onReorder={reorderTodos} isMobile={isMobile}
+                               canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                               onToggleCanvas={toggleCanvasAssignment}
+                               onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                               onHideCanvas={hideCanvasAssignment} />
+                  </CustomListPanel>
                 </ErrorBoundary>
               </aside>
             )}
@@ -1963,15 +2070,26 @@ export default function Home() {
         {activeNav === 'todos' && (
           <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <ErrorBoundary>
-              <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                         onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
-                         onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
-                         onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
-                         onReorder={reorderTodos} fullPage isMobile={isMobile}
-                         canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
-                         onToggleCanvas={toggleCanvasAssignment}
-                         onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
-                         onHideCanvas={hideCanvasAssignment} />
+              <CustomListPanel
+                lists={customLists}
+                activeListId={activeListId}
+                onSelectList={setActiveListId}
+                onCreateList={() => setShowNewListModal(true)}
+                onUpdateList={updateCustomList}
+                onDeleteList={deleteCustomList}
+                fullPage
+                isMobile={isMobile}
+              >
+                <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                           onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                           onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                           onReorder={reorderTodos} fullPage isMobile={isMobile}
+                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                           onToggleCanvas={toggleCanvasAssignment}
+                           onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                           onHideCanvas={hideCanvasAssignment} />
+              </CustomListPanel>
             </ErrorBoundary>
           </main>
         )}
@@ -2005,9 +2123,11 @@ export default function Home() {
                 canvasClassEvents={canvasClassEvents}
                 todoCategories={todoCategories}
                 eventCategories={EVENT_CATEGORIES}
+                customLists={customLists}
                 onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
                 onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onCanvasClick={(a) => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                onCustomListClick={(listId) => { setActiveNav('todos'); setActiveListId(listId) }}
                 isMobile={isMobile}
               />
             </ErrorBoundary>
@@ -2191,7 +2311,7 @@ export default function Home() {
               {/* Settings menu — dark mode, accent color, show tour */}
               <SettingsMenu
                 theme={theme}
-                onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onSetTheme={setTheme}
                 onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
                 variant="sidebar"
               />
@@ -2266,6 +2386,16 @@ export default function Home() {
       )}
 
       <Toast toasts={toasts} onDismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
+
+      {showNewListModal && (
+        <NewListModal
+          onClose={() => setShowNewListModal(false)}
+          onCreate={(name, emoji) => {
+            createCustomList(name, emoji)
+            setShowNewListModal(false)
+          }}
+        />
+      )}
 
       {showGoogleSettings && (
         <GoogleCalendarSettings

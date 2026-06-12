@@ -106,6 +106,28 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Date range filter** — collapsible From / To date pickers filter all result types simultaneously
 - **Keyboard navigation** — arrow keys move focus through results; Enter opens the highlighted item
 
+### 📋 Custom Lists
+
+Lightweight standalone checklists that live alongside your regular To-Do tasks — great for groceries, packing lists, wish lists, project notes, and anything that doesn't need priorities or categories.
+
+- **List switcher** — a tab row at the top of the To-Do area lets you switch between **My Tasks** (the normal todo view) and any custom list you've created. Works on both the desktop sidebar/full-page To-Do panel and the mobile To-Do tab.
+- **Create a list** — tap **+** in the switcher to open a creation sheet. Choose a **Lucide icon** (ShoppingCart, Package, ListChecks, NotebookPen, Backpack, Gift, Wrench, Lightbulb, Plane, Heart, Star, BookOpen, Dumbbell, Utensils), pick an **accent color** from the swatch palette, and give the list a name. Default icon is ListChecks, default color is Luminae blue (`#3a6fa8`). Existing lists with a legacy emoji in `icon` render the emoji as a text fallback.
+- **Per-list color** — the chosen color tints the active tab indicator, item checkboxes, and the list header badge. Edit at any time via the pencil icon in the list header, which reopens the name/icon/color editor.
+- **Items** — each item has a checkbox (tinted in the list accent color) and text. Checking an item strikes it through. Items can also have an optional **due date** and a short **note**, both accessible via the **⋯** affordance on every row. Double-click a non-checked item's text to rename it inline.
+- **Subtasks** — each item supports optional nested sub-items (`item.subtasks: [{id, text, checked}]`). Add one via **Add subtask** in the ⋯ menu. Subtasks can be checked, double-click-renamed, and deleted with the × button. Subtasks are independent of the parent — checking all subtasks does **not** auto-check the parent item.
+- **⋯ item menu** — the dropdown renders in a `position: fixed` layer anchored to the button's viewport coordinates, so it always escapes `overflow: hidden` list containers on both desktop and mobile. Closes on outside click or Escape.
+- **List-level due date** — optionally set a due date on the entire list via the **Due date** field in the New/Edit List form (uses the app's styled `<DatePicker>` component). Appears as a small pill with a Calendar icon (e.g. ⌕ Jun 20) in the list header, tinted with the list color. The pill has an inline × to clear it. The due date is additive (`list.dueDate: 'YYYY-MM-DD' | null`) — no schema or sync changes needed.
+- **Due dates on the calendar** — lists with a due date (not fully complete) and individual unchecked items with a due date each appear as all-day markers in the calendar's Tasks row, tinted with the list color. Clicking navigates directly to that list (sets To-Do nav active and selects the list). Marker shapes mirror the Canvas assignment task markers.
+- **Due dates in Agenda View** — the same list-level and unchecked-item due dates appear in the Agenda View grouped by day alongside events, tasks, and Canvas assignments. Each entry shows a "List" or "List Item" badge tinted with the list color; clicking navigates to the list. Both list-and-item entries appear within the standard 14-day window.
+- **Completion confetti + tab cross-off** — when every top-level item in a list becomes checked (≥1 item required), a confetti burst fires once (only on the incomplete → complete transition, not on every render). The burst is positioned at the list name element in the header (falls back to viewport center). The list's tab shows a faded (opacity ~0.55) line-through name and a small check mark; the same faded strikethrough applies to the list header name. Both effects clear automatically if any item is unchecked.
+- **Escape + backdrop closes modals** — both the New List and Edit List modals close on Escape (keydown listener attached while open, cleaned up on close) in addition to the existing backdrop click.
+- **Delete from tab** — each custom list tab has a small **×** button. Clicking it opens the same confirm dialog as the in-list delete. "My Tasks" has no × and cannot be deleted.
+- **Reorder by dragging** — grab the grip handle (appears on hover, desktop only) to drag items into any order using the same pointer-drag pattern as the regular task list.
+- **Touch swipe gestures** — on mobile, swipe right to check an item and swipe left to delete it, same thresholds and snap-back behaviour as the main To-Do swipe gestures.
+- **Clear checked** — a per-list button removes all checked items at once.
+- **Cloud sync** — custom lists sync to Neon for signed-in users via the existing `/api/sync` endpoint (same debounced POST + atomic transaction pattern). Stored in a `custom_lists` table (JSONB, self-creating `CREATE TABLE IF NOT EXISTS`). Unsigned-out users keep data in `localStorage` under `lv-custom-lists`. New fields (`icon`, `color`, `subtasks`, `dueDate`) are additive — no schema or sync changes needed.
+- **Offline-first** — `localStorage` is the source of truth; cloud is additive. Merge on sign-in is local-wins; the manual cloud refresh is cloud-wins (same as events/tasks).
+
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
 - Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
@@ -541,6 +563,7 @@ src/
 │   ├── Corvus.js                     # AI assistant (floating panel + full tab)
 │   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
+│   ├── CustomListPanel.js            # Custom list switcher tabs + checklist body
 │   ├── CoursesPanel.js               # Canvas courses + assignments tab
   ├── GpaPanel.js                   # GPA / grade-projection collapsible card (inside Courses tab)
 │   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
@@ -567,6 +590,7 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
+    ├── customLists.js      # Custom list localStorage helpers + cloud-merge logic
     ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
@@ -585,6 +609,7 @@ src/
 | Data | Where |
 |:---|:---|
 | Events & tasks | Browser `localStorage` — no account needed |
+| Custom lists & items | Browser `localStorage` (`lv-custom-lists`) + Neon DB per user (synced when signed in) |
 | Event / calendar preferences | Browser `localStorage` |
 | Search history | Browser `localStorage` (`lv-search-history`) |
 | Focus timer settings & today's stats | Browser `localStorage` (`lv-focus`) |

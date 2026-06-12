@@ -103,7 +103,7 @@ function totalFocusHours(sessions, rangeStart, rangeEnd) {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest = null }) {
+export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest = null, /** 'panel' (themed surface) | 'zen' (on dark backdrop) */ variant = 'panel' }) {
   const [data,       setData]       = useState(null)
   const [confetti,   setConfetti]   = useState(false)
   const [expanded,   setExpanded]   = useState(false)
@@ -188,6 +188,20 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
   const deltaSign  = delta > 0 ? '+' : ''
   const deltaColor = delta >= 0 ? '#10b981' : '#ef4444'
 
+  // Color palette — 'zen' renders light-on-dark to blend with the fullscreen timer backdrop
+  const zen = variant === 'zen'
+  const c = {
+    label:  zen ? 'rgba(255,255,255,0.5)'  : 'var(--text-3)',
+    value:  zen ? '#fff'                    : 'var(--text)',
+    muted:  zen ? 'rgba(255,255,255,0.45)'  : 'var(--text-3)',
+    border: zen ? 'rgba(255,255,255,0.14)'  : 'var(--border)',
+    pill:   zen ? 'rgba(255,255,255,0.10)'  : 'var(--surface2)',
+    digestBorderOn: zen ? 'rgba(147,197,253,.45)' : 'var(--blue)',
+    digestBgOn:     zen ? 'rgba(147,197,253,.14)' : 'var(--blue-bg)',
+    digestTextOn:   zen ? '#bcd9ff'               : 'var(--blue-text)',
+    digestTextOff:  zen ? 'rgba(255,255,255,0.6)' : 'var(--text-2)',
+  }
+
   return (
     <>
       {confetti && <Confetti priority="medium" x={window.innerWidth / 2} y={120} />}
@@ -198,13 +212,13 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, cursor: 'pointer' }}
           title={expanded ? 'Collapse weekly recap' : 'Expand weekly recap'}
         >
-          <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-3)' }}>
+          <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: c.label }}>
             Your week
           </div>
           {/* Streak pill */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: streak > 0 ? 'rgba(245,158,11,.16)' : 'var(--surface2)', borderRadius: 99, padding: '2px 7px 2px 5px' }}>
-            <Flame size={11} style={{ color: streak > 0 ? '#f59e0b' : 'var(--text-3)' }} />
-            <span style={{ fontSize: '0.7rem', fontWeight: 800, color: streak > 0 ? '#f59e0b' : 'var(--text-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: streak > 0 ? 'rgba(245,158,11,.16)' : c.pill, borderRadius: 99, padding: '2px 7px 2px 5px' }}>
+            <Flame size={11} style={{ color: streak > 0 ? '#f59e0b' : c.muted }} />
+            <span style={{ fontSize: '0.7rem', fontWeight: 800, color: streak > 0 ? '#f59e0b' : c.muted }}>
               {streak}d
             </span>
           </div>
@@ -217,10 +231,10 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
         >
           {/* Tasks completed */}
           <div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--text)', lineHeight: 1 }}>
+            <div style={{ fontSize: '1.15rem', fontWeight: 900, color: c.value, lineHeight: 1 }}>
               {totalCompleted}
             </div>
-            <div style={{ fontSize: '0.58rem', color: 'var(--text-3)', fontWeight: 600, marginTop: 2 }}>
+            <div style={{ fontSize: '0.58rem', color: c.muted, fontWeight: 600, marginTop: 2 }}>
               tasks done
             </div>
             {delta !== 0 && (
@@ -232,10 +246,10 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
 
           {/* Focus hours */}
           <div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--text)', lineHeight: 1 }}>
+            <div style={{ fontSize: '1.15rem', fontWeight: 900, color: c.value, lineHeight: 1 }}>
               {focusHrs}h
             </div>
-            <div style={{ fontSize: '0.58rem', color: 'var(--text-3)', fontWeight: 600, marginTop: 2 }}>
+            <div style={{ fontSize: '0.58rem', color: c.muted, fontWeight: 600, marginTop: 2 }}>
               focused
             </div>
           </div>
@@ -243,10 +257,10 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
 
         {/* Expanded section */}
         {expanded && (
-          <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${c.border}`, display: 'flex', flexDirection: 'column', gap: 5 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.67rem', color: 'var(--text-3)', fontWeight: 600 }}>Best streak</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: bestStreak > 0 ? '#f59e0b' : 'var(--text-3)' }}>{bestStreak}d</span>
+              <span style={{ fontSize: '0.67rem', color: c.muted, fontWeight: 600 }}>Best streak</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: bestStreak > 0 ? '#f59e0b' : c.muted }}>{bestStreak}d</span>
             </div>
             {streak === bestStreak && bestStreak > 1 && (
               <div style={{ fontSize: '0.62rem', color: '#10b981', fontWeight: 700, textAlign: 'center', marginTop: 2 }}>
@@ -258,7 +272,7 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
 
         {/* Sunday digest toggle (optional) */}
         {digest && (
-          <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--border)' }}>
+          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${c.border}` }}>
             {digest.signedIn ? (
               <button
                 onClick={digest.onToggle}
@@ -267,17 +281,17 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%',
                   padding: '7px 10px', borderRadius: 9,
-                  border: `1px solid ${digest.enabled ? 'var(--blue)' : 'var(--border)'}`,
-                  background: digest.enabled ? 'var(--blue-bg)' : 'transparent',
-                  color: digest.enabled ? 'var(--blue-text)' : 'var(--text-2)',
+                  border: `1px solid ${digest.enabled ? c.digestBorderOn : c.border}`,
+                  background: digest.enabled ? c.digestBgOn : 'transparent',
+                  color: digest.enabled ? c.digestTextOn : c.digestTextOff,
                   fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600,
                   cursor: digest.saving ? 'default' : 'pointer', opacity: digest.saving ? 0.6 : 1,
                 }}>
                 <span>📬 Weekly digest</span>
-                <span style={{ fontSize: '0.62rem', fontWeight: 800, color: digest.enabled ? '#10b981' : 'var(--text-3)' }}>{digest.enabled ? 'ON' : 'OFF'}</span>
+                <span style={{ fontSize: '0.62rem', fontWeight: 800, color: digest.enabled ? '#10b981' : c.muted }}>{digest.enabled ? 'ON' : 'OFF'}</span>
               </button>
             ) : (
-              <div style={{ fontSize: '0.62rem', color: 'var(--text-3)', textAlign: 'center' }}>
+              <div style={{ fontSize: '0.62rem', color: c.muted, textAlign: 'center' }}>
                 Sign in to get a Sunday week-ahead digest
               </div>
             )}

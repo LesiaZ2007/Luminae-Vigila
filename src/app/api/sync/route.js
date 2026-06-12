@@ -29,23 +29,39 @@ async function ensureStudySessionsTable() {
   `
 }
 
+// Ensure the custom_lists table exists.  Each row is one list (with all its
+// items embedded as JSONB), identified by the list's client-side id.
+async function ensureCustomListsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS custom_lists (
+      id         TEXT        NOT NULL,
+      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data       JSONB       NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (id, user_id)
+    )
+  `
+}
+
 export async function GET() {
   const session = await getSession()
   if (!session) {
-    return Response.json({ events: [], todos: [], todoCategories: [], classSchedule: [], eventPrefs: {}, studySessions: [] })
+    return Response.json({ events: [], todos: [], todoCategories: [], classSchedule: [], eventPrefs: {}, studySessions: [], customLists: [] })
   }
 
   const { userId } = session
 
   await ensureStudySessionsTable()
+  await ensureCustomListsTable()
 
-  const [evRows, tdRows, catRows, clsRows, prefRows, ssRows] = await Promise.all([
+  const [evRows, tdRows, catRows, clsRows, prefRows, ssRows, clRows] = await Promise.all([
     sql`SELECT data FROM events          WHERE user_id = ${userId}`,
     sql`SELECT data FROM todos           WHERE user_id = ${userId}`,
     sql`SELECT data FROM todo_categories WHERE user_id = ${userId}`,
     sql`SELECT data FROM class_schedule  WHERE user_id = ${userId}`,
     sql`SELECT data FROM event_prefs     WHERE user_id = ${userId}`,
     sql`SELECT data FROM study_sessions  WHERE user_id = ${userId}`,
+    sql`SELECT data FROM custom_lists    WHERE user_id = ${userId}`,
   ])
 
   return Response.json({
@@ -55,6 +71,7 @@ export async function GET() {
     classSchedule:  clsRows.map(r => r.data),
     eventPrefs:     prefRows[0]?.data ?? {},
     studySessions:  ssRows.map(r => r.data),
+    customLists:    clRows.map(r => r.data),
   })
 }
 
@@ -65,9 +82,10 @@ export async function POST(request) {
   }
 
   const { userId } = session
-  const { events, todos, todoCategories, classSchedule, eventPrefs, studySessions } = await request.json()
+  const { events, todos, todoCategories, classSchedule, eventPrefs, studySessions, customLists } = await request.json()
 
   await ensureStudySessionsTable()
+  await ensureCustomListsTable()
 
   // Build an array of tagged-template query objects and run them all in ONE atomic
   // transaction. If anything fails mid-way, the entire write is rolled back — no
@@ -120,6 +138,14 @@ export async function POST(request) {
     for (const ss of studySessions) {
       if (!ss?.id) continue
       queries.push(sql`INSERT INTO study_sessions (id, user_id, data) VALUES (${ss.id}, ${userId}, ${JSON.stringify(ss)})`)
+    }
+  }
+
+  if (Array.isArray(customLists)) {
+    queries.push(sql`DELETE FROM custom_lists WHERE user_id = ${userId}`)
+    for (const cl of customLists) {
+      if (!cl?.id) continue
+      queries.push(sql`INSERT INTO custom_lists (id, user_id, data) VALUES (${cl.id}, ${userId}, ${JSON.stringify(cl)})`)
     }
   }
 
