@@ -81,15 +81,16 @@ const COLOR_PALETTE = [
 
 // ── List name/icon/color editor (shared by New + Edit) ─────────────────────
 function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
-  const [name,  setName]  = useState(initial?.name  ?? '')
-  const [icon,  setIcon]  = useState(initial?.icon  ?? 'ListChecks')
-  const [color, setColor] = useState(initial?.color ?? '#3a6fa8')
+  const [name,    setName]    = useState(initial?.name    ?? '')
+  const [icon,    setIcon]    = useState(initial?.icon    ?? 'ListChecks')
+  const [color,   setColor]   = useState(initial?.color   ?? '#3a6fa8')
+  const [dueDate, setDueDate] = useState(initial?.dueDate ?? '')
 
   function handleSubmit(e) {
     e.preventDefault()
     const trimmed = name.trim()
     if (!trimmed) return
-    onSave(trimmed, icon, color)
+    onSave(trimmed, icon, color, dueDate || null)
   }
 
   return (
@@ -142,7 +143,7 @@ function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
       </div>
 
       {/* Name input */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>List name</div>
         <input
           autoFocus
@@ -157,6 +158,32 @@ function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
             outline: 'none', boxSizing: 'border-box',
           }}
         />
+      </div>
+
+      {/* Due date */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Due date (optional)</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={e => setDueDate(e.target.value)}
+            style={{
+              flex: 1, padding: '7px 10px', borderRadius: 9, border: '1.5px solid var(--border)',
+              background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.82rem',
+              fontFamily: 'inherit', outline: 'none',
+            }}
+          />
+          {dueDate && (
+            <button
+              type="button"
+              onClick={() => setDueDate('')}
+              style={{ padding: '5px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -175,6 +202,13 @@ function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
 
 // ── New-list creation modal ────────────────────────────────────────────────
 export function NewListModal({ onClose, onCreate }) {
+  // Escape to close
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
     <div
       style={{
@@ -201,7 +235,7 @@ export function NewListModal({ onClose, onCreate }) {
           </button>
         </div>
         <ListEditor
-          onSave={(name, icon, color) => { onCreate(name, icon, color); onClose() }}
+          onSave={(name, icon, color, dueDate) => { onCreate(name, icon, color, dueDate); onClose() }}
           onCancel={onClose}
           saveLabel="Create list"
         />
@@ -212,6 +246,13 @@ export function NewListModal({ onClose, onCreate }) {
 
 // ── Edit-list modal ────────────────────────────────────────────────────────
 function EditListModal({ list, onClose, onSave }) {
+  // Escape to close
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
     <div
       style={{
@@ -239,7 +280,7 @@ function EditListModal({ list, onClose, onSave }) {
         </div>
         <ListEditor
           initial={list}
-          onSave={(name, icon, color) => { onSave(name, icon, color); onClose() }}
+          onSave={(name, icon, color, dueDate) => { onSave(name, icon, color, dueDate); onClose() }}
           onCancel={onClose}
           saveLabel="Save changes"
         />
@@ -719,6 +760,8 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
 
   // Track previous completion state for confetti edge detection
   const wasCompleteRef = useRef(false)
+  // Ref on the list name element for confetti positioning
+  const headerNameRef = useRef(null)
 
   // Drag state
   const dragIdRef     = useRef(null)
@@ -742,8 +785,15 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   // Confetti: fire once on the transition from incomplete → complete
   useEffect(() => {
     if (isComplete && !wasCompleteRef.current) {
-      // Burst from center of viewport
-      setConfetti({ key: Date.now(), x: window.innerWidth / 2, y: window.innerHeight / 2 })
+      // Burst from the list name element; fall back to viewport center
+      let x = window.innerWidth / 2
+      let y = window.innerHeight / 2
+      if (headerNameRef.current) {
+        const rect = headerNameRef.current.getBoundingClientRect()
+        x = rect.left + rect.width / 2
+        y = rect.top  + rect.height / 2
+      }
+      setConfetti({ key: Date.now(), x, y })
       setTimeout(() => setConfetti(null), 2000)
     }
     wasCompleteRef.current = isComplete
@@ -864,9 +914,19 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* List header */}
       <div style={{ padding: fullPage ? '16px 28px 12px' : '10px 16px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <ListIconDisplay icon={list.icon} size={16} color={accent} />
-          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' }}>{list.name}</span>
+          <span
+            ref={headerNameRef}
+            style={{
+              fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)',
+              textDecoration: isComplete ? 'line-through' : 'none',
+              opacity: isComplete ? 0.55 : 1,
+              transition: 'all .2s',
+            }}
+          >
+            {list.name}
+          </span>
           {totalCount > 0 && (
             <span style={{
               fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
@@ -875,6 +935,26 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
               transition: 'all .2s',
             }}>
               {checkedCount}/{totalCount}
+            </span>
+          )}
+          {/* List-level due date pill */}
+          {list.dueDate && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+              background: accent + '22', color: accent,
+              border: `1px solid ${accent}44`,
+              transition: 'all .2s',
+            }}>
+              📅 {new Date(list.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              <button
+                type="button"
+                onClick={() => onUpdateList({ ...list, dueDate: null })}
+                title="Clear due date"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', color: accent, opacity: 0.7, lineHeight: 1, marginLeft: 1 }}
+              >
+                <X size={9} />
+              </button>
             </span>
           )}
         </div>
@@ -1013,7 +1093,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
         <EditListModal
           list={list}
           onClose={() => setShowEditModal(false)}
-          onSave={(name, icon, color) => onUpdateList({ ...list, name, icon, color })}
+          onSave={(name, icon, color, dueDate) => onUpdateList({ ...list, name, icon, color, dueDate: dueDate ?? null })}
         />
       )}
     </div>
@@ -1094,7 +1174,7 @@ export default function CustomListPanel({
                 <ListIconDisplay icon={list.icon} size={13} color={active ? accent : undefined} />
                 <span style={{
                   textDecoration: complete ? 'line-through' : 'none',
-                  opacity: complete ? 0.7 : 1,
+                  opacity: complete ? 0.55 : 1,
                   transition: 'all .2s',
                 }}>
                   {list.name}

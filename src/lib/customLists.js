@@ -86,6 +86,7 @@ export function makeList(name, icon = 'ListChecks', color = '#3a6fa8') {
     name,
     icon,
     color,
+    dueDate: null,          // additive: 'YYYY-MM-DD' | null
     createdAt: new Date().toISOString(),
     items: [],
   }

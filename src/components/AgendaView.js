@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin } from 'lucide-react'
+import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks } from 'lucide-react'
 
 const DAYS_AHEAD = 14
 
@@ -40,9 +40,11 @@ function formatTimeRange(start, end) {
  *   canvasClassEvents — expanded recurring class schedule instances
  *   todoCategories    — [{id, label, color}]
  *   eventCategories   — [{id, label, color}]
- *   onEventClick(event)        — opens EventModal
- *   onTodoClick(todo)          — opens AddTodoModal
- *   onCanvasClick(assignment)  — opens canvas detail modal
+ *   customLists       — custom list array (for due-date entries)
+ *   onEventClick(event)             — opens EventModal
+ *   onTodoClick(todo)               — opens AddTodoModal
+ *   onCanvasClick(assignment)       — opens canvas detail modal
+ *   onCustomListClick(listId)       — navigates to that custom list
  *   isMobile
  */
 export default function AgendaView({
@@ -52,9 +54,11 @@ export default function AgendaView({
   canvasClassEvents = [],
   todoCategories = [],
   eventCategories = [],
+  customLists = [],
   onEventClick,
   onTodoClick,
   onCanvasClick,
+  onCustomListClick,
   isMobile = false,
 }) {
   // Build a flat list of agenda items with a normalized dateStr for grouping
@@ -150,6 +154,53 @@ export default function AgendaView({
       })
     }
 
+    // ── Custom list due dates ────────────────────────────────────────────────
+    for (const list of customLists) {
+      const accent       = list.color || '#3a6fa8'
+      const items        = list.items ?? []
+      const totalCount   = items.length
+      const checkedCount = items.filter(i => i.checked).length
+      const isComplete   = totalCount > 0 && checkedCount === totalCount
+
+      // List-level due date (only when not fully complete)
+      if (list.dueDate && !isComplete) {
+        const due = new Date(list.dueDate + 'T00:00:00')
+        if (due >= today && due <= endDate) {
+          result.push({
+            type: 'custom-list',
+            id: `list-${list.id}`,
+            listId: list.id,
+            dateStr: list.dueDate,
+            sortKey: list.dueDate + 'T23:59:00',
+            allDay: true,
+            title: list.name,
+            subtitle: `${checkedCount}/${totalCount} items`,
+            color: accent,
+            raw: list,
+          })
+        }
+      }
+
+      // Item-level due dates (unchecked items only)
+      for (const item of items) {
+        if (item.checked || !item.dueDate) continue
+        const due = new Date(item.dueDate + 'T00:00:00')
+        if (due < today || due > endDate) continue
+        result.push({
+          type: 'custom-list-item',
+          id: `listitem-${list.id}-${item.id}`,
+          listId: list.id,
+          dateStr: item.dueDate,
+          sortKey: item.dueDate + 'T23:59:00',
+          allDay: true,
+          title: item.text,
+          subtitle: list.name,
+          color: accent,
+          raw: item,
+        })
+      }
+    }
+
     // Sort: by date+time, then allDay items at end of each day
     result.sort((a, b) => {
       if (a.dateStr !== b.dateStr) return a.dateStr.localeCompare(b.dateStr)
@@ -159,7 +210,7 @@ export default function AgendaView({
     })
 
     return result
-  }, [events, todos, canvasAssignments, canvasClassEvents, todoCategories, eventCategories])
+  }, [events, todos, canvasAssignments, canvasClassEvents, todoCategories, eventCategories, customLists])
 
   // Group by dateStr
   const grouped = useMemo(() => {
@@ -175,6 +226,7 @@ export default function AgendaView({
     if (item.type === 'event') onEventClick?.(item.raw)
     else if (item.type === 'todo') onTodoClick?.(item.raw)
     else if (item.type === 'canvas') onCanvasClick?.(item.raw)
+    else if (item.type === 'custom-list' || item.type === 'custom-list-item') onCustomListClick?.(item.listId)
     // class events are read-only (match existing behavior)
   }
 
@@ -235,7 +287,7 @@ export default function AgendaView({
                   borderRadius: 12,
                   border: '1px solid var(--border)',
                   background: 'var(--surface)',
-                  cursor: item.type === 'class' ? 'default' : 'pointer',
+                  cursor: (item.type === 'class') ? 'default' : 'pointer',
                   textAlign: 'left',
                   fontFamily: 'inherit',
                   width: '100%',
@@ -281,6 +333,7 @@ export default function AgendaView({
                   {item.type === 'todo' && <CheckSquare size={13} style={{ color: item.color }} />}
                   {item.type === 'canvas' && <BookOpen size={13} style={{ color: item.color }} />}
                   {(item.type === 'event' || item.type === 'class') && <CalendarDays size={13} style={{ color: item.color }} />}
+                  {(item.type === 'custom-list' || item.type === 'custom-list-item') && <ListChecks size={13} style={{ color: item.color }} />}
                 </div>
 
                 {/* Content */}
@@ -349,7 +402,12 @@ export default function AgendaView({
                   alignSelf: 'flex-start',
                   marginTop: 2,
                 }}>
-                  {item.type === 'event' ? 'Event' : item.type === 'todo' ? 'Task' : item.type === 'canvas' ? 'Canvas' : 'Class'}
+                  {item.type === 'event' ? 'Event'
+                    : item.type === 'todo' ? 'Task'
+                    : item.type === 'canvas' ? 'Canvas'
+                    : item.type === 'custom-list' ? 'List'
+                    : item.type === 'custom-list-item' ? 'List Item'
+                    : 'Class'}
                 </div>
               </button>
             ))}
