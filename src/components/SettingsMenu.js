@@ -13,12 +13,12 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { Settings, Sun, Moon, Check, Compass } from 'lucide-react'
+import { Settings, Check, Compass, Sun, Moon, Monitor } from 'lucide-react'
 import { ACCENT_OPTIONS, applyAccent, getSavedAccent } from './AccentPicker'
 
 const ACCENT_STORAGE_KEY = 'lv-accent'
 
-export default function SettingsMenu({ theme, onToggleTheme, onShowTour, /** 'sidebar' (dark bg) | 'light' */ variant = 'sidebar' }) {
+export default function SettingsMenu({ theme, onSetTheme, onShowTour, /** 'sidebar' (dark bg) | 'light' */ variant = 'sidebar' }) {
   const [open,   setOpen]   = useState(false)
   const [accent, setAccent] = useState('blue')
   const ref = useRef(null)
@@ -71,24 +71,30 @@ export default function SettingsMenu({ theme, onToggleTheme, onShowTour, /** 'si
           zIndex: 400, minWidth: 210,
           display: 'flex', flexDirection: 'column', gap: 13,
         }}>
-          {/* Appearance */}
+          {/* Appearance — light / system / dark segmented control */}
           <div>
             <div style={sectionLabel}>Appearance</div>
-            <button
-              onClick={onToggleTheme}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%',
-                padding: '8px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface2)',
-                color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer',
-              }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                {theme === 'dark' ? <Moon size={13} /> : <Sun size={13} />}
-                {theme === 'dark' ? 'Dark mode' : 'Light mode'}
-              </span>
-              <span style={{ fontSize: '0.64rem', fontWeight: 700, color: 'var(--text-3)' }}>
-                {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-              </span>
-            </button>
+            <div style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface2)' }}>
+              {[
+                { id: 'light',  icon: Sun,     label: 'Light mode'  },
+                { id: 'system', icon: Monitor, label: 'System default' },
+                { id: 'dark',   icon: Moon,    label: 'Dark mode'   },
+              ].map(({ id, icon: Icon, label }) => {
+                const active = theme === id
+                return (
+                  <button key={id} onClick={() => onSetTheme?.(id)} title={label}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      padding: '7px 0', borderRadius: 7, border: 'none', cursor: 'pointer',
+                      background: active ? 'var(--blue)' : 'transparent',
+                      color: active ? '#fff' : 'var(--text-3)',
+                      transition: 'background .12s, color .12s',
+                    }}>
+                    <Icon size={15} />
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Accent color */}

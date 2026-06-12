@@ -402,6 +402,7 @@ export default function WeeklyCalendar({
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
             }}
             events={events}
+            eventClassNames={(arg) => (arg.event.extendedProps?.isHiddenEvent ? ['lv-hidden-event'] : [])}
             eventContent={renderEventContent}
             eventDidMount={handleEventDidMount}
             eventWillUnmount={handleEventWillUnmount}

@@ -567,12 +567,21 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
                   <div style={{ marginBottom: 12 }}>{CoursePicker({})}</div>
                 )}
                 {SettingsContent({})}
-                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
-                </div>
               </div>
             </div>
           )}
+
+          {/* Weekly recap — glassy card that blends with the dark zen backdrop */}
+          <div style={{
+            position: 'absolute', top: 58, left: 20, zIndex: 3,
+            width: 224, maxWidth: 'calc(100vw - 40px)',
+            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 16, padding: '11px 13px',
+            backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.28)',
+          }}>
+            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} variant="zen" />
+          </div>
 
           {/* Center stack */}
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
