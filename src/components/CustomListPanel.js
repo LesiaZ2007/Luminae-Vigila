@@ -30,9 +30,11 @@ import {
   Plus, GripVertical, MoreHorizontal, Trash2, X, Pencil, Check,
   ShoppingCart, Package, ListChecks, NotebookPen, Backpack, Gift,
   Wrench, Lightbulb, Plane, Heart, Star, BookOpen, Dumbbell, Utensils,
+  Calendar, StickyNote,
 } from 'lucide-react'
 import Confetti from '@/components/Confetti'
 import { makeItem, makeSubtask } from '@/lib/customLists'
+import DatePicker from '@/components/DatePicker'
 
 // ── Icon registry ──────────────────────────────────────────────────────────
 // Keys are stored in list.icon. Unknown values (legacy emojis) fall back gracefully.
@@ -164,21 +166,14 @@ function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Due date (optional)</div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input
-            type="date"
-            value={dueDate}
-            onChange={e => setDueDate(e.target.value)}
-            style={{
-              flex: 1, padding: '7px 10px', borderRadius: 9, border: '1.5px solid var(--border)',
-              background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.82rem',
-              fontFamily: 'inherit', outline: 'none',
-            }}
-          />
+          <div style={{ flex: 1 }}>
+            <DatePicker value={dueDate} onChange={setDueDate} placeholder="No due date" />
+          </div>
           {dueDate && (
             <button
               type="button"
               onClick={() => setDueDate('')}
-              style={{ padding: '5px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
+              style={{ padding: '5px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
             >
               Clear
             </button>
@@ -393,6 +388,8 @@ function ListItem({
       // If click is inside the fixed menu portal, don't close
       const portal = document.getElementById('cl-item-menu-portal')
       if (portal?.contains(e.target)) return
+      // If click is inside a DatePicker calendar popup (portaled to body), don't close
+      if (e.target.closest?.('[data-datepicker-popup]')) return
       setMenuOpen(false)
     }
     function onKey(e) { if (e.key === 'Escape') setMenuOpen(false) }
@@ -471,11 +468,6 @@ function ListItem({
     onUpdateNote(item.id, noteVal.trim() || null)
   }
 
-  function commitDue() {
-    onUpdateDue(item.id, dueVal || null)
-    setMenuOpen(false)
-  }
-
   const swipeLeft  = swipeDx < -8
   const swipeRight = swipeDx > 8
   const subtasks   = item.subtasks ?? []
@@ -495,22 +487,14 @@ function ListItem({
     >
       {/* Due date picker */}
       <div style={{ padding: '8px 12px' }}>
-        <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Due date</div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input
-            type="date"
-            value={dueVal}
-            onChange={e => setDueVal(e.target.value)}
-            style={{
-              flex: 1, padding: '4px 6px', borderRadius: 7, border: '1.5px solid var(--border)',
-              background: 'var(--surface2)', color: 'var(--text)', fontSize: '0.75rem', fontFamily: 'inherit', outline: 'none',
-            }}
-          />
-          <button onClick={commitDue}
-                  style={{ padding: '4px 8px', borderRadius: 7, border: 'none', background: accent, color: '#fff', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>
-            Set
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>
+          <Calendar size={12} /> Due date
         </div>
+        <DatePicker
+          value={dueVal}
+          onChange={val => { setDueVal(val); onUpdateDue(item.id, val || null) }}
+          placeholder="Set due date"
+        />
         {dueVal && (
           <button onClick={() => { setDueVal(''); onUpdateDue(item.id, null); setMenuOpen(false) }}
                   style={{ marginTop: 4, fontSize: '0.68rem', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
@@ -540,7 +524,7 @@ function ListItem({
         onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
         onMouseLeave={e => e.currentTarget.style.background = 'none'}
       >
-        💬 {item.note ? 'Edit note' : 'Add note'}
+        <StickyNote size={12} /> {item.note ? 'Edit note' : 'Add note'}
       </button>
 
       <div style={{ height: 1, background: 'var(--border)' }} />
@@ -667,16 +651,17 @@ function ListItem({
             {(item.dueDate || item.note) && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 3 }}>
                 {item.dueDate && (
-                  <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)' }}>
-                    📅 {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  <span style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <Calendar size={11} style={{ flexShrink: 0 }} />
+                    {new Date(item.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
                 )}
                 {item.note && !showNote && (
                   <button
                     onClick={() => setShowNote(true)}
-                    style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+                    style={{ fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                   >
-                    💬 note
+                    <StickyNote size={11} style={{ flexShrink: 0 }} /> note
                   </button>
                 )}
               </div>
@@ -946,7 +931,8 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
               border: `1px solid ${accent}44`,
               transition: 'all .2s',
             }}>
-              📅 {new Date(list.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              <Calendar size={11} style={{ flexShrink: 0 }} />
+              {new Date(list.dueDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               <button
                 type="button"
                 onClick={() => onUpdateList({ ...list, dueDate: null })}

@@ -175,7 +175,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
 
       {/* Calendar popover — rendered in a portal so it escapes any overflow:hidden parent */}
       {open && typeof document !== 'undefined' && createPortal(
-        <div ref={popupRef} style={{
+        <div ref={popupRef} data-datepicker-popup style={{
           position: 'fixed',
           top:   popupPos.top,
           left:  popupPos.left,
