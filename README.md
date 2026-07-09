@@ -213,10 +213,12 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - **Upgrade existing install:** run `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;` in the Neon SQL Editor
 
 ### 🔔 Browser Push Notifications
-- Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded
-- On sign-in the app requests notification permission and registers a push subscription
-- Reminder alerts (event/task reminders) are sent via push so they fire when the tab is not active
-- iOS Safari requires the app to be added to the Home Screen (iOS 16.4+)
+- Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded. Uses PNG icons (`icon-192.png` / `notification-icon.png`) — **Android Chrome does not render SVG notification icons**.
+- Permission is **requested on a user tap** via the **"Enable notifications"** button in the Focus Timer's "Your week" section. Mobile browsers (Android Chrome) silently ignore permission prompts that aren't triggered by a gesture, so the app never auto-prompts — it registers the service worker silently and only subscribes once you tap Enable.
+- **Reminders fire even when the app is closed** via a server-side scheduler: `GET /api/push/reminders` scans every subscribed user's events/todos for reminders that just came due and sends a push, de-duped through the `sent_reminders` table. This runs independently of any open tab (the old behaviour only fired reminders while a tab was open — which on a phone is almost never when a reminder is due).
+  - **This endpoint must be pinged every minute.** On Vercel Pro, add it to `vercel.json` crons (`* * * * *`). On Vercel Hobby (crons run only once/day), use a free external pinger such as [cron-job.org](https://cron-job.org) hitting `https://<your-domain>/api/push/reminders` every minute with header `Authorization: Bearer $CRON_SECRET`.
+- iOS Safari requires the app to be added to the Home Screen (iOS 16.4+). Android Chrome works in-browser with no install.
+- **Upgrade existing install:** run the `sent_reminders` `CREATE TABLE` block from `schema.sql` in the Neon SQL Editor (the endpoint also self-heals via `CREATE TABLE IF NOT EXISTS`).
 
 ### 🎨 Event Recolor
 - Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
@@ -452,7 +454,8 @@ VAPID_PRIVATE_KEY=your_vapid_private_key
 VAPID_SUBJECT=mailto:your@email.com
 
 # Cron secret — required for the Sunday week-ahead digest cron job
-# The Vercel cron runtime calls GET /api/push/digest with this header:
+# Also used by the every-minute reminder scheduler: GET /api/push/reminders
+# The cron / external pinger calls both endpoints with this header:
 #   Authorization: Bearer $CRON_SECRET
 # Generate one: openssl rand -hex 32
 # Add the same value to your Vercel project environment variables.
