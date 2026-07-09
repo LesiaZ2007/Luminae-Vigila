@@ -40,7 +40,11 @@ export function clientForAccount(account) {
     if (tokens.access_token)  updated.accessToken  = tokens.access_token
     if (tokens.expiry_date)   updated.expiresAt    = tokens.expiry_date
     if (tokens.refresh_token) updated.refreshToken = tokens.refresh_token
-    upsertAccount(account.userId, updated).catch(() => { /* will auto-refresh on next request */ })
+    upsertAccount(account.userId, updated).catch(err => {
+      // If this write fails the refreshed token is lost and the next request
+      // must refresh again — log it so silent token churn is diagnosable.
+      console.error('[google] failed to persist refreshed token:', err?.message)
+    })
   })
   return oauth2
 }
