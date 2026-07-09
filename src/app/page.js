@@ -234,82 +234,78 @@ export default function Home() {
       .then(cloud => {
         if (!cloud) return
 
-        // Helper: merge two arrays by id — local wins on duplicate
+        // Read current local arrays straight from localStorage — the source of
+        // truth at load time. Computing the merge synchronously lets us set state
+        // AND POST the exact same object, eliminating the old 500ms "wait for
+        // React to flush" race that could upload a stale snapshot.
+        const readLocal = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ?? fb) } catch { return JSON.parse(fb) } }
+        const localEvents   = readLocal('lv-events',         '[]')
+        const localTodos    = readLocal('lv-todos',          '[]')
+        const localCats     = readLocal('lv-todo-cats',      '[]')
+        const localClasses  = readLocal('lv-canvas-classes', '[]')
+        const localPrefs    = readLocal('lv-event-prefs',    '{}')
+        const localSessions = readLocal('lv-study-sessions', '[]')
+        const localLists    = readLocal('lv-custom-lists',   '[]')
+
+        // Merge by id. When both sides carry an updatedAt the newer edit wins;
+        // otherwise local wins (preserves offline edits made before this merge).
         function mergeById(cloudArr, localArr) {
-          const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
-          const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
-          return Object.values({ ...cloudMap, ...localMap })
+          const out = new Map((cloudArr ?? []).map(x => [x.id, x]))
+          for (const item of (localArr ?? [])) {
+            const existing = out.get(item.id)
+            if (existing && existing.updatedAt != null && item.updatedAt != null) {
+              out.set(item.id, item.updatedAt >= existing.updatedAt ? item : existing)
+            } else {
+              out.set(item.id, item) // local wins by default
+            }
+          }
+          return [...out.values()]
         }
 
-        // Capture current local state, merge, and set
-        setEvents(local => {
-          const merged = mergeById(cloud.events, local)
-          return merged
-        })
-        setTodos(local => {
-          const merged = mergeById(cloud.todos, local)
-          return merged
-        })
-        setTodoCategories(local => {
-          const merged = mergeById(cloud.todoCategories, local)
-          return merged.length > 0 ? merged : local  // keep defaults if cloud is empty
-        })
-        setCanvasClasses(local => {
-          const merged = mergeById(cloud.classSchedule, local)
-          return merged
-        })
-        setEventPrefs(local => {
-          // eventPrefs is a plain object {eventId: {hidden, color}} — local wins
-          return { ...(cloud.eventPrefs ?? {}), ...local }
-        })
-        setStudySessions(local => {
-          const merged = mergeById(cloud.studySessions, local)
-          return merged
-        })
-        setCustomLists(local => mergeCustomLists(cloud.customLists ?? [], local))
+        const mergedEvents   = mergeById(cloud.events,         localEvents)
+        const mergedTodos    = mergeById(cloud.todos,          localTodos)
+        const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
+        const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
+        const mergedClasses  = mergeById(cloud.classSchedule,  localClasses)
+        const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
+        const mergedSessions = mergeById(cloud.studySessions,  localSessions)
+        const mergedLists    = mergeCustomLists(cloud.customLists ?? [], localLists)
 
-        // Count how many local items weren't in the cloud (new uploads)
+        // Commit merged state
+        setEvents(mergedEvents)
+        setTodos(mergedTodos)
+        setTodoCategories(mergedCats)
+        setCanvasClasses(mergedClasses)
+        setEventPrefs(mergedPrefs)
+        setStudySessions(mergedSessions)
+        setCustomLists(mergedLists)
+
+        // Push the exact merged result back immediately — no timeout, no re-read.
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
         const cloudTodoIds  = new Set((cloud.todos  ?? []).map(t => t.id))
+        const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
+        const newTodos  = mergedTodos.filter(t => !cloudTodoIds.has(t.id)).length
 
-        // After state is updated, push the merged result back
-        // Use a short timeout so React has processed the state updates first
-        setTimeout(() => {
-          // Re-read from localStorage (already written by the effects below)
-          try {
-            const mergedEvents      = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
-            const mergedTodos       = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
-            const mergedCats        = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
-            const mergedClasses     = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
-            const mergedPrefs       = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
-            const mergedSessions    = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
-            const mergedCustomLists = JSON.parse(localStorage.getItem('lv-custom-lists')    ?? '[]')
-
-            const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
-            const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
-
-            fetch('/api/sync', {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                events:         mergedEvents,
-                todos:          mergedTodos,
-                todoCategories: mergedCats,
-                classSchedule:  mergedClasses,
-                eventPrefs:     mergedPrefs,
-                studySessions:  mergedSessions,
-                customLists:    mergedCustomLists,
-              }),
-            }).then(() => {
-              if (newEvents + newTodos > 0) {
-                pushToast(
-                  'Synced to your account',
-                  `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
-                )
-              }
-            }).catch(() => {})
-          } catch {}
-        }, 500)
+        fetch('/api/sync', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            events:         mergedEvents,
+            todos:          mergedTodos,
+            todoCategories: mergedCats,
+            classSchedule:  mergedClasses,
+            eventPrefs:     mergedPrefs,
+            studySessions:  mergedSessions,
+            customLists:    mergedLists,
+          }),
+        }).then(() => {
+          if (newEvents + newTodos > 0) {
+            pushToast(
+              'Synced to your account',
+              `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
+            )
+          }
+        }).catch(() => {})
       })
       .catch(() => {})
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -337,6 +333,18 @@ export default function Home() {
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
   }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Immediately push the current state to the cloud (bypasses the debounce).
+  // Used on reconnect so pending offline edits upload the moment we're back
+  // online, rather than waiting for the next state change to wake the debounce.
+  const flushSyncNow = useCallback(() => {
+    if (!currentUser || !hasMergedCloud.current) return
+    fetch('/api/sync', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events, todos, todoCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists }),
+    }).catch(() => {})
+  }, [currentUser, events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists])
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -2566,7 +2574,7 @@ export default function Home() {
       )}
 
       {/* ── Offline indicator (always mounted — shows/hides itself) ── */}
-      <OfflineIndicator />
+      <OfflineIndicator onReconnect={flushSyncNow} />
 
       {/* ── Onboarding wizard (first-run only) ── */}
       {showOnboarding && (
