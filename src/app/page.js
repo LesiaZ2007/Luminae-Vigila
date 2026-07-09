@@ -161,6 +161,7 @@ export default function Home() {
   const shownReminders  = useRef(new Set())
   const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+  const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
 
   const [digestEnabled, setDigestEnabled] = useState(false)
   const [digestSaving,  setDigestSaving]  = useState(false)
@@ -894,14 +895,31 @@ export default function Home() {
         body:    JSON.stringify({ requests }),
       })
       if (!res.ok) return
-      const { events: gcEvents } = await res.json()
+      const { events: gcEvents, disconnected } = await res.json()
       setGoogleEvents(gcEvents ?? [])
+
+      // Surface dead accounts so the user can reconnect, instead of silently
+      // showing an empty calendar. Only warn once per disconnected set.
+      if (Array.isArray(disconnected) && disconnected.length > 0) {
+        const sig = disconnected.map(d => d.accountId).sort().join(',')
+        if (gcDisconnectWarnedRef.current !== sig) {
+          gcDisconnectWarnedRef.current = sig
+          const label = disconnected.map(d => d.email).filter(Boolean).join(', ')
+          pushToast(
+            'Google Calendar disconnected',
+            `Reconnect ${label || 'your account'} to keep events syncing.`,
+            [{ label: 'Reconnect', onClick: () => window.open('/api/google/auth', 'gc_reconnect', 'width=500,height=650') }],
+          )
+        }
+      } else {
+        gcDisconnectWarnedRef.current = null
+      }
     } catch (err) {
       console.error('Google Calendar sync failed:', err)
     } finally {
       setGcSyncing(false)
     }
-  }, [])
+  }, [pushToast])
 
   // Initial sync on mount (only if prefs exist)
   useEffect(() => {
