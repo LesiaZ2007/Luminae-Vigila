@@ -5,9 +5,11 @@ self.addEventListener('push', event => {
   event.waitUntil(
     self.registration.showNotification(d.title ?? 'luminaeVigila', {
       body:  d.body  ?? '',
-      icon:  '/icon.svg',
-      badge: '/icon.svg',
+      // Android Chrome does not render SVG notification icons — use PNGs.
+      icon:  '/icon-192.png',
+      badge: '/notification-icon.png',
       tag:   d.tag   ?? 'lv-notification',
+      renotify: Boolean(d.tag),
     })
   )
 })

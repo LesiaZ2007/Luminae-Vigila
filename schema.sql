@@ -121,3 +121,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 -- ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+
+-- ── Sent Reminders ──────────────────────────────────────────────────────────
+-- Dedup log so the server-side reminder cron (/api/push/reminders) sends each
+-- reminder exactly once, even though the cron runs every minute. The key encodes
+-- the item id AND its fire time, so rescheduling a reminder sends a fresh push.
+CREATE TABLE IF NOT EXISTS sent_reminders (
+  user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reminder_key TEXT        NOT NULL,
+  sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, reminder_key)
+);
+
+-- If upgrading an existing install, run the CREATE TABLE above in the Neon SQL Editor.
