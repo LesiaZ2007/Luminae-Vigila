@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { WifiOff, Wifi } from 'lucide-react'
 
 /**
@@ -10,10 +10,15 @@ import { WifiOff, Wifi } from 'lucide-react'
  * Uses window online/offline events + navigator.onLine for initial state.
  * Styled to the Luminae Vigila brand; auto-hides after reconnect.
  */
-export default function OfflineIndicator() {
+export default function OfflineIndicator({ onReconnect }) {
   const [online,  setOnline]  = useState(true)   // starts optimistic; corrected after mount
   const [phase,   setPhase]   = useState('hidden') // 'hidden' | 'offline' | 'back-online' | 'hiding'
   const hideTimer = { current: null }
+
+  // Keep the latest onReconnect in a ref so the (empty-dep) listener effect
+  // below always calls the current callback, not a stale closure.
+  const onReconnectRef = useRef(onReconnect)
+  onReconnectRef.current = onReconnect
 
   useEffect(() => {
     // Initialise from actual browser state
@@ -23,6 +28,8 @@ export default function OfflineIndicator() {
     function handleOnline() {
       setOnline(true)
       setPhase('back-online')
+      // Flush any pending offline edits to the cloud now that we're back online.
+      try { onReconnectRef.current?.() } catch {}
       // Show "Back online" for 2 s then slide out
       clearTimeout(hideTimer.current)
       hideTimer.current = setTimeout(() => {
