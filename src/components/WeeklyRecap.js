@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Flame } from 'lucide-react'
+import { Flame, BellRing } from 'lucide-react'
 import dynamic from 'next/dynamic'
+import { enablePush, pushPermission } from '@/lib/pushClient'
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
@@ -107,6 +108,17 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
   const [data,       setData]       = useState(null)
   const [confetti,   setConfetti]   = useState(false)
   const [expanded,   setExpanded]   = useState(false)
+  const [notifPerm,  setNotifPerm]  = useState('default') // 'granted'|'denied'|'default'|'unsupported'
+  const [notifBusy,  setNotifBusy]  = useState(false)
+
+  useEffect(() => { setNotifPerm(pushPermission()) }, [])
+
+  const onEnableNotifications = useCallback(async () => {
+    setNotifBusy(true)
+    const result = await enablePush()
+    setNotifPerm(result === 'granted' ? 'granted' : pushPermission())
+    setNotifBusy(false)
+  }, [])
 
   const refresh = useCallback(() => {
     const { start: wkStart, end: wkEnd }   = thisWeekRange()
@@ -267,6 +279,31 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
                 Personal best!
               </div>
             )}
+          </div>
+        )}
+
+        {/* Enable push notifications — must be triggered by this tap (mobile browsers
+            silently ignore auto-requested permission prompts). */}
+        {digest?.signedIn && notifPerm !== 'unsupported' && notifPerm !== 'granted' && (
+          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${c.border}` }}>
+            <button
+              onClick={onEnableNotifications}
+              disabled={notifBusy || notifPerm === 'denied'}
+              title={notifPerm === 'denied'
+                ? 'Notifications are blocked — enable them in your browser/site settings'
+                : 'Turn on reminder & digest push notifications on this device'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+                padding: '7px 10px', borderRadius: 9,
+                border: `1px solid ${c.digestBorderOn}`,
+                background: c.digestBgOn, color: c.digestTextOn,
+                fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+                cursor: (notifBusy || notifPerm === 'denied') ? 'default' : 'pointer',
+                opacity: notifBusy ? 0.6 : 1,
+              }}>
+              <BellRing size={13} strokeWidth={2.5} />
+              <span>{notifPerm === 'denied' ? 'Notifications blocked in browser' : notifBusy ? 'Enabling…' : 'Enable notifications'}</span>
+            </button>
           </div>
         )}
 
