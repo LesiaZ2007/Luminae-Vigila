@@ -159,7 +159,8 @@ export default function Home() {
   })
 
   const shownReminders  = useRef(new Set())
-  const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
+  const hasMergedCloud  = useRef(false)   // true only after initial cloud pull SUCCEEDS
+  const mergeStarted    = useRef(false)   // dedupes the initial fetch (independent of success)
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
   const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
 
@@ -227,13 +228,17 @@ export default function Home() {
   // Pulls cloud data and merges it with local state — local wins on conflict.
   // Then immediately pushes the merged result back so new local items are uploaded.
   useEffect(() => {
-    if (!currentUser || hasMergedCloud.current) return
-    hasMergedCloud.current = true
+    if (!currentUser || mergeStarted.current) return
+    mergeStarted.current = true
 
     fetch('/api/sync')
       .then(r => r.ok ? r.json() : null)
       .then(cloud => {
-        if (!cloud) return
+        // A failed/empty GET must NOT unlock the debounced POST — otherwise the
+        // next local state change would upload our (possibly empty) local state
+        // and clobber the cloud we never managed to read. Leave hasMergedCloud
+        // false so ongoing sync stays disabled until a reload retries the merge.
+        if (!cloud) { mergeStarted.current = false; return }
 
         // Read current local arrays straight from localStorage — the source of
         // truth at load time. Computing the merge synchronously lets us set state
@@ -281,6 +286,9 @@ export default function Home() {
         setStudySessions(mergedSessions)
         setCustomLists(mergedLists)
 
+        // Merge succeeded — NOW it's safe for the debounced effect to upload.
+        hasMergedCloud.current = true
+
         // Push the exact merged result back immediately — no timeout, no re-read.
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
         const cloudTodoIds  = new Set((cloud.todos  ?? []).map(t => t.id))
@@ -308,7 +316,7 @@ export default function Home() {
           }
         }).catch(() => {})
       })
-      .catch(() => {})
+      .catch(() => { mergeStarted.current = false }) // let a reload retry the merge
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────

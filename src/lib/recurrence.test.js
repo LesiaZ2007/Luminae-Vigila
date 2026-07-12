@@ -64,6 +64,34 @@ describe('expandRecurring', () => {
     expect(dates).toEqual(['2025-03-03', '2025-03-17', '2025-03-31', '2025-04-14'])
   })
 
+  it('derives instance dates from local time, not UTC (no cross-midnight drift)', () => {
+    // TZ is pinned to America/New_York in vitest.config.js. This start instant
+    // is 2025-06-13 22:00 LOCAL (EDT), i.e. the *previous* calendar day from its
+    // UTC date (2025-06-14). The old toISOString().slice(0,10) produced the UTC
+    // date and drifted every instance forward a day.
+    const base = {
+      id: 'evt-tz',
+      title: 'Late-evening daily',
+      start: '2025-06-14T02:00:00.000Z',
+      end:   '2025-06-14T02:30:00.000Z',
+      recurrence: { type: 'daily', until: '2025-06-15' },
+    }
+    const result = expandRecurring(base)
+    const dates = result.map(ev => ev.id.split('-r-')[1])
+    expect(dates).toEqual(['2025-06-13', '2025-06-14', '2025-06-15'])
+  })
+
+  it('caps a runaway daily series so it cannot freeze the UI', () => {
+    const base = {
+      id: 'evt-forever',
+      title: 'Daily forever',
+      start: '2020-01-01T10:00:00.000Z',
+      end:   '2020-01-01T10:30:00.000Z',
+      recurrence: { type: 'daily', until: '2099-12-31' },
+    }
+    expect(expandRecurring(base).length).toBe(750)
+  })
+
   it('expands a custom recurrence on specified days of week', () => {
     // Mon (1) and Wed (3) for one week: 2025-03-03 to 2025-03-07 → Mon 3, Wed 5 = 2
     const base = {
