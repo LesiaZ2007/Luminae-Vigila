@@ -1,7 +1,15 @@
 // luminaeVigila service worker — handles push notifications
 
+// Activate a freshly deployed SW immediately instead of waiting for every tab
+// to close — otherwise push-handler / icon changes can lag indefinitely.
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()))
+
 self.addEventListener('push', event => {
-  const d = event.data?.json() ?? {}
+  // Some browsers deliver empty or non-JSON pushes; .json() would throw and the
+  // notification would silently never show. Fall back gracefully.
+  let d = {}
+  try { d = event.data?.json() ?? {} } catch { d = {} }
   event.waitUntil(
     self.registration.showNotification(d.title ?? 'luminaeVigila', {
       body:  d.body  ?? '',
