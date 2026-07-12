@@ -50,7 +50,7 @@ describe('expandRecurring', () => {
   })
 
   it('expands a biweekly recurrence to alternate weeks only', () => {
-    // Monday 2025-03-03 biweekly until 2025-04-14 → Mon 3, 17, 31 = 3
+    // Monday 2025-03-03 biweekly, `until` inclusive → Mon 3, 17, 31, Apr 14 = 4
     const base = {
       id: 'evt-biweekly',
       title: 'Biweekly sync',
@@ -59,9 +59,9 @@ describe('expandRecurring', () => {
       recurrence: { type: 'biweekly', until: '2025-04-14' },
     }
     const result = expandRecurring(base)
-    expect(result).toHaveLength(3)
+    expect(result).toHaveLength(4)
     const dates = result.map(ev => ev.start.slice(0, 10))
-    expect(dates).toEqual(['2025-03-03', '2025-03-17', '2025-03-31'])
+    expect(dates).toEqual(['2025-03-03', '2025-03-17', '2025-03-31', '2025-04-14'])
   })
 
   it('expands a custom recurrence on specified days of week', () => {

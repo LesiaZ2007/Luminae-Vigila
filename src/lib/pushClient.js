@@ -42,11 +42,16 @@ async function subscribeAndUpload(registration) {
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
     })
   }
-  await fetch('/api/push/subscribe', {
+  const res = await fetch('/api/push/subscribe', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(sub.toJSON()),
   })
+  if (!res.ok) {
+    // Server never recorded the subscription (e.g. session expired) — the local
+    // sub would otherwise look "enabled" while no pushes can ever arrive.
+    throw new Error(`subscribe upload failed: ${res.status}`)
+  }
   return sub
 }
 
