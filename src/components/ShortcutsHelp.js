@@ -6,8 +6,10 @@ import { X, Keyboard } from 'lucide-react'
 const SHORTCUTS = [
   { key: 'N',   description: 'New event (full form)' },
   { key: 'T',   description: 'New task (full form)' },
+  { key: 'W',   description: 'New note (write)' },
   { key: '/',   description: 'Open search' },
   { key: 'F',   description: 'Toggle focus timer' },
+  { key: '← →', description: 'Previous / next day, week, or month' },
   { key: '?',   description: 'Show this help overlay' },
   { key: 'Esc', description: 'Close any open overlay' },
   { key: 'Ctrl+K', description: 'Open search (alternative)' },
