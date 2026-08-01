@@ -25,7 +25,7 @@
  *  isMobile      bool
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import {
   Plus, Search, Star, Pin, Bell, Trash2, ArrowLeft, NotebookPen,
   RotateCcw, X, Link2,
@@ -48,6 +48,25 @@ export default function NotesPanel({
   const [query,  setQuery]  = useState('')
   const [filter, setFilter] = useState('all')
   const [tag,    setTag]    = useState(null)
+
+  // Ids currently playing their removal animation. The note is still in `notes`
+  // during this window — we hold the parent's delete until the row has collapsed,
+  // otherwise React unmounts it instantly and there's nothing left to animate.
+  const [exitingIds, setExitingIds] = useState(() => new Set())
+  const exitTimers = useRef([])
+  useEffect(() => () => exitTimers.current.forEach(clearTimeout), [])
+
+  const animateOut = useCallback((id, commit) => {
+    setExitingIds(prev => new Set(prev).add(id))
+    exitTimers.current.push(setTimeout(() => {
+      commit(id)
+      setExitingIds(prev => { const next = new Set(prev); next.delete(id); return next })
+    }, 200)) // must match .lv-note-row-exit duration in globals.css
+  }, [])
+
+  const handleTrash   = useCallback(id => animateOut(id, onTrash),   [animateOut, onTrash])
+  const handlePurge   = useCallback(id => animateOut(id, onPurge),   [animateOut, onPurge])
+  const handleRestore = useCallback(id => animateOut(id, onRestore), [animateOut, onRestore])
 
   const allTags = useMemo(() => {
     const seen = new Map() // lowercase → original casing, so "Chem" and "chem" collapse
@@ -75,7 +94,7 @@ export default function NotesPanel({
   const showEditor = !isMobile || !!activeNote
 
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0, flex: 1, overflow: 'hidden' }}>
+    <div className="lv-notes-load" style={{ display: 'flex', height: '100%', minHeight: 0, flex: 1, overflow: 'hidden' }}>
 
       {/* ── List pane ──────────────────────────────────────────────────── */}
       {showList && (
@@ -172,10 +191,11 @@ export default function NotesPanel({
                 note={note}
                 active={note.id === activeNoteId && filter !== 'trash'}
                 trashed={filter === 'trash'}
+                exiting={exitingIds.has(note.id)}
                 onClick={() => (filter === 'trash' ? null : onSelect(note.id))}
                 onToggleStar={() => onUpdate(note.id, { starred: !note.starred })}
-                onRestore={() => onRestore(note.id)}
-                onPurge={() => onPurge(note.id)}
+                onRestore={() => handleRestore(note.id)}
+                onPurge={() => handlePurge(note.id)}
               />
             ))}
           </div>
@@ -200,11 +220,13 @@ export default function NotesPanel({
                   <ArrowLeft size={13} /> All notes
                 </button>
               )}
+              {/* keyed so switching notes replays the fade — and so Tiptap gets
+                  a fresh instance rather than a document swap mid-edit */}
               <NoteEditor
                 key={activeNote.id}
                 note={activeNote}
                 onChange={patch => onUpdate(activeNote.id, patch)}
-                onDelete={() => onTrash(activeNote.id)}
+                onDelete={() => handleTrash(activeNote.id)}
                 linkOptions={linkOptions}
                 isMobile={isMobile}
               />
@@ -228,11 +250,13 @@ export default function NotesPanel({
 }
 
 // ── One row in the note list ────────────────────────────────────────────────
-function NoteRow({ note, active, trashed, onClick, onToggleStar, onRestore, onPurge }) {
+function NoteRow({ note, active, trashed, exiting, onClick, onToggleStar, onRestore, onPurge }) {
   const preview = notePreview(note, 90)
+  const tags    = note.tags ?? []
   return (
     <div
       onClick={onClick}
+      className={exiting ? 'lv-note-row-exit' : 'lv-note-row-enter'}
       style={{
         display: 'flex', gap: 8, padding: '9px 10px', borderRadius: 10, marginBottom: 3,
         cursor: trashed ? 'default' : 'pointer',
@@ -264,6 +288,28 @@ function NoteRow({ note, active, trashed, onClick, onToggleStar, onRestore, onPu
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {preview}
+          </div>
+        )}
+        {tags.length > 0 && (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
+            {tags.slice(0, 3).map(t => (
+              <span key={t} style={{
+                padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 800,
+                lineHeight: 1.5, whiteSpace: 'nowrap',
+                // Tinted with the note's own colour so the row reads as one unit.
+                background: `${note.color}1f`,
+                color: note.color,
+                border: `1px solid ${note.color}3d`,
+                opacity: trashed ? .55 : 1,
+              }}>
+                {t}
+              </span>
+            ))}
+            {tags.length > 3 && (
+              <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-3)', lineHeight: 1.9 }}>
+                +{tags.length - 3}
+              </span>
+            )}
           </div>
         )}
       </div>

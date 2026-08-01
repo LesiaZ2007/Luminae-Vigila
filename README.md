@@ -135,10 +135,11 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
 - **Dedicated Notes tab** — sits between To-Do and Search in the sidebar and mobile bottom nav. Two panes on desktop (note list left, editor right); on mobile the list fills the tab and selecting a note pushes the editor over it, with an **All notes** back button.
 - **Rich text via Tiptap** — bold, italic, underline, strikethrough, **multi-colour highlight**, H1/H2, bullet lists, numbered lists, checkbox lists, blockquotes, inline code, and undo/redo. The toolbar is custom-built with the app's own CSS variables, so notes match luminaeVigila in every accent theme and in dark mode.
 - **Markdown shortcuts while typing** — `**bold**`, `*italic*`, `` `code` ``, `# heading`, `> quote`, `- ` bullet, `1. ` numbered, `[] ` checkbox, and `==highlight==` all convert as you type. You never have to reach for the toolbar.
-- **Highlight palette** — six pastel swatches (yellow, green, blue, pink, orange, purple) chosen to stay readable in both light and dark themes, plus a "remove highlight" option. Click the highlighter to open the swatch popover.
+- **Highlight palette** — six pastel swatches (yellow, green, blue, pink, orange, purple) chosen to stay readable in both light and dark themes, plus a "remove highlight" option. Click the highlighter to open the swatch popover. The popover renders through a `createPortal` layer anchored to the button's viewport rect, because the toolbar scrolls horizontally (`overflow-x: auto`) and would otherwise clip it. Closes on outside click or Escape.
 - **Titles** — type an explicit title, or leave it blank and the first line of the body becomes the title automatically.
 - **Star and pin** — starring marks a favourite (filterable via the **Starred** tab); pinning sorts a note to the very top. They're independent. Sort order is pinned → starred → most recently updated.
-- **Tags** — add free-form tags per note; tag chips appear above the list and filter it on click. Tags are case-insensitively de-duplicated.
+- **Tags** — add free-form tags per note; tag chips appear above the list and filter it on click. Tags are case-insensitively de-duplicated. Each note's own tags also render as pills on its row in the list (first 3, then a `+N` counter), tinted with that note's accent colour.
+- **Motion** — rows slide in on creation and when filtering, and collapse horizontally on delete so removal reads as removal rather than a jump cut (the parent's delete is held ~200 ms so there's something left to animate). The panel and editor fade in on open, and the editor is keyed on note id so the fade replays per note. All of it is disabled under `prefers-reduced-motion`.
 - **Per-note colour** — eight accent swatches (same palette as Custom Lists) tint the note's spine in the list and the bar beside its title.
 - **Reminders** — set an absolute date + time on any note using the app's styled `<DatePicker>` / `<TimePicker>`. Reminders fire as an in-app toast while the tab is open **and** as a Web Push notification when the app is closed, via the existing `/api/push/reminders` cron (de-duplicated through the `sent_reminders` table like event and task reminders). The push body is a plain-text snippet of the note.
 - **Link to a course, event, or task** — attach a note to a Canvas course, calendar event, or open task. The linked item's name appears on the note's meta bar and a link icon shows in the list row.
@@ -290,9 +291,9 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - `T` — open "New Task" modal
 - `W` — start a **new note** (jumps to the Notes tab with a blank note focused). `N` was already taken by New Event, so notes use `W` for "write"
 - `←` / `→` — step to the **previous / next period** on the calendar: a day in day view, a week in week view, a month in month view. Uses the same slide animation as swipe and trackpad scroll. Suppressed while a modal is open or while typing, and modifier combos (Alt+←, Shift+→) are left alone so browser-back and text selection still work
-- `/` — open the search popup (Ctrl+K also works)
+- `/` or `?` — show the keyboard shortcuts overlay (pressing the same key again closes it)
+- `Ctrl+K` — open the search popup
 - `F` — toggle the Focus Timer panel
-- `?` — show the keyboard shortcuts help overlay
 - `Esc` — close the topmost open overlay (help, focus timer, search, or Corvus float)
 - All shortcuts are suppressed while typing in any input, textarea, or contenteditable so they never interfere with regular typing
 - Shortcuts are also suppressed while a blocking modal (event/task/settings) is open, except `Esc` which always works
