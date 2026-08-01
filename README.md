@@ -128,6 +128,29 @@ Lightweight standalone checklists that live alongside your regular To-Do tasks �
 - **Cloud sync** — custom lists sync to Neon for signed-in users via the existing `/api/sync` endpoint (same debounced POST + atomic transaction pattern). Stored in a `custom_lists` table (JSONB, self-creating `CREATE TABLE IF NOT EXISTS`). Unsigned-out users keep data in `localStorage` under `lv-custom-lists`. New fields (`icon`, `color`, `subtasks`, `dueDate`) are additive — no schema or sync changes needed.
 - **Offline-first** — `localStorage` is the source of truth; cloud is additive. Merge on sign-in is local-wins; the manual cloud refresh is cloud-wins (same as events/tasks).
 
+### 📝 Notes
+
+A full rich-text notepad, in the same place as everything else. Press `W` anywhere in the app to start writing.
+
+- **Dedicated Notes tab** — sits between To-Do and Search in the sidebar and mobile bottom nav. Two panes on desktop (note list left, editor right); on mobile the list fills the tab and selecting a note pushes the editor over it, with an **All notes** back button.
+- **Rich text via Tiptap** — bold, italic, underline, strikethrough, **multi-colour highlight**, H1/H2, bullet lists, numbered lists, checkbox lists, blockquotes, inline code, and undo/redo. The toolbar is custom-built with the app's own CSS variables, so notes match luminaeVigila in every accent theme and in dark mode.
+- **Markdown shortcuts while typing** — `**bold**`, `*italic*`, `` `code` ``, `# heading`, `> quote`, `- ` bullet, `1. ` numbered, `[] ` checkbox, and `==highlight==` all convert as you type. You never have to reach for the toolbar.
+- **Highlight palette** — six pastel swatches (yellow, green, blue, pink, orange, purple) chosen to stay readable in both light and dark themes, plus a "remove highlight" option. Click the highlighter to open the swatch popover. The popover renders through a `createPortal` layer anchored to the button's viewport rect, because the toolbar scrolls horizontally (`overflow-x: auto`) and would otherwise clip it. Closes on outside click or Escape.
+- **Titles** — type an explicit title, or leave it blank and the first line of the body becomes the title automatically.
+- **Star and pin** — starring marks a favourite (filterable via the **Starred** tab); pinning sorts a note to the very top. They're independent. Sort order is pinned → starred → most recently updated.
+- **Tags** — add free-form tags per note; tag chips appear above the list and filter it on click. Tags are case-insensitively de-duplicated. Each note's own tags also render as pills on its row in the list (first 3, then a `+N` counter), tinted with that note's accent colour.
+- **Motion** — rows slide in on creation and when filtering, and collapse horizontally on delete so removal reads as removal rather than a jump cut (the parent's delete is held ~200 ms so there's something left to animate). The panel and editor fade in on open, and the editor is keyed on note id so the fade replays per note. All of it is disabled under `prefers-reduced-motion`.
+- **Per-note colour** — eight accent swatches (same palette as Custom Lists) tint the note's spine in the list and the bar beside its title.
+- **Reminders** — set an absolute date + time on any note using the app's styled `<DatePicker>` / `<TimePicker>`. Reminders fire as an in-app toast while the tab is open **and** as a Web Push notification when the app is closed, via the existing `/api/push/reminders` cron (de-duplicated through the `sent_reminders` table like event and task reminders). The push body is a plain-text snippet of the note.
+- **Link to a course, event, or task** — attach a note to a Canvas course, calendar event, or open task. The linked item's name appears on the note's meta bar and a link icon shows in the list row.
+- **Soft delete with undo** — deleting moves a note to **Trash** and raises an undo toast. Trashed notes are restorable or permanently deletable from the Trash filter, and are purged automatically after **30 days**. Because the trash flag syncs, deleting on one device removes it on the others too.
+- **Autosave** — the body saves 400 ms after you stop typing, and flushes on note switch and on unmount so nothing is lost mid-sentence. A "Saved" / "2m ago" indicator sits in the meta bar.
+- **Search integration** — a **Notes** scope in the search popup, plus notes in "All" results. Titles, body text, and tags are all searched; clicking a result opens that note. Notes ignore the upcoming/done status filter since they have no completion state.
+- **Import / Export** — notes are included in the JSON backup and in JSON import (with the same skip / replace / keep-both duplicate handling as events and tasks). An export containing only notes is a valid import file.
+- **Cloud sync** — notes sync to Neon for signed-in users through `/api/sync`, stored in a `notes` table (JSONB, self-creating `CREATE TABLE IF NOT EXISTS`). Signed-out users keep everything in `localStorage` under `lv-notes`.
+- **Conflict resolution** — unlike lists and tasks, notes merge **strictly by `updatedAt`** (newest edit wins) rather than local-wins. A note body is a single blob, so local-wins would silently discard an edit made on another device.
+- **Lazy-loaded** — Tiptap/ProseMirror is code-split behind `next/dynamic` with `ssr: false`, so it never lands in the initial bundle for the default Calendar tab.
+
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
 - Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
@@ -266,9 +289,11 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - **Power-user hotkeys** — press a single key anywhere in the app (outside text fields) to trigger common actions
 - `N` — open "New Event" modal
 - `T` — open "New Task" modal
-- `/` — open the search popup (Ctrl+K also works)
+- `W` — start a **new note** (jumps to the Notes tab with a blank note focused). `N` was already taken by New Event, so notes use `W` for "write"
+- `←` / `→` — step to the **previous / next period** on the calendar: a day in day view, a week in week view, a month in month view. Uses the same slide animation as swipe and trackpad scroll. Suppressed while a modal is open or while typing, and modifier combos (Alt+←, Shift+→) are left alone so browser-back and text selection still work
+- `/` or `?` — show the keyboard shortcuts overlay (pressing the same key again closes it)
+- `Ctrl+K` — open the search popup
 - `F` — toggle the Focus Timer panel
-- `?` — show the keyboard shortcuts help overlay
 - `Esc` — close the topmost open overlay (help, focus timer, search, or Corvus float)
 - All shortcuts are suppressed while typing in any input, textarea, or contenteditable so they never interfere with regular typing
 - Shortcuts are also suppressed while a blocking modal (event/task/settings) is open, except `Esc` which always works
@@ -388,6 +413,7 @@ On iOS Safari, tap the Share button → *Add to Home Screen*. The app runs in st
 |:---|:---|
 | **Framework** | [Next.js 16](https://nextjs.org) — App Router |
 | **Calendar** | [FullCalendar 6](https://fullcalendar.io) |
+| **Rich text** | [Tiptap 3](https://tiptap.dev) — ProseMirror, used by the Notes tab |
 | **AI** | [Groq SDK](https://groq.com) — `llama-3.3-70b-versatile` |
 | **Auth** | Google OAuth 2.0 · JWT sessions via [jose](https://github.com/panva/jose) |
 | **Database** | [Neon](https://neon.tech) serverless PostgreSQL |
@@ -412,6 +438,7 @@ npm run test:watch  # watch mode
 Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
+- `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, and search matching
 
 ---
 

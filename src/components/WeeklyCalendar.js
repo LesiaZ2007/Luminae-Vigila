@@ -11,6 +11,9 @@ export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
   // Event recolor
   onRecolorEvent, colorSwatches,
+  // ← / → step through consecutive periods. Parent turns this off while a modal
+  // is open so arrows keep their normal meaning inside forms and pickers.
+  arrowNavEnabled = true,
 }) {
   const calendarRef      = useRef(null)
   const touchStart       = useRef(null)
@@ -186,6 +189,31 @@ export default function WeeklyCalendar({
       animTimer.current = setTimeout(() => setNavAnim(null), 260)
     }, 140)
   }, [])
+
+  /* ── Arrow-key navigation ────────────────────────────────────────────────
+     ← / → move one period in whichever view is active: a day in day view, a
+     week in week view, a month in month view. Reuses the same animated
+     navigate() as swipe and trackpad scroll, so all three feel identical. */
+  useEffect(() => {
+    if (!arrowNavEnabled) return
+
+    function onKeyDown(e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      // Let modifier combos through — Alt+← is browser back, and Shift/Ctrl
+      // arrows are text selection when focus happens to be in a field.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+
+      const el  = e.target
+      const tag = el?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable) return
+
+      e.preventDefault()
+      navigate(e.key === 'ArrowRight' ? 'next' : 'prev')
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [arrowNavEnabled, navigate])
 
   const switchView = useCallback((viewName) => {
     const api = calendarRef.current?.getApi()

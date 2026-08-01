@@ -856,3 +856,171 @@ select option {
   }
 }
 
+
+/* ══════════════════════════════════════════════
+   NOTES — Tiptap editor surface
+   The editor itself is unstyled by Tiptap; everything below is ours so notes
+   match the rest of the app in both light and dark themes.
+══════════════════════════════════════════════ */
+.lv-note-body {
+  outline: none;
+  min-height: 220px;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  caret-color: var(--blue);
+}
+
+.lv-note-body > * + * { margin-top: 0.7em; }
+
+.lv-note-body h1 { font-size: 1.35rem; font-weight: 800; line-height: 1.3; }
+.lv-note-body h2 { font-size: 1.12rem; font-weight: 800; line-height: 1.35; }
+.lv-note-body h3 { font-size: 1rem;    font-weight: 700; line-height: 1.4;  }
+
+.lv-note-body ul,
+.lv-note-body ol { padding-left: 1.3em; }
+.lv-note-body ul { list-style: disc;    }
+.lv-note-body ol { list-style: decimal; }
+.lv-note-body li { margin: 0.15em 0; }
+.lv-note-body li > p { margin: 0; }
+
+.lv-note-body blockquote {
+  border-left: 3px solid var(--blue);
+  padding-left: 0.9em;
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.lv-note-body code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lv-note-body pre {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+}
+.lv-note-body pre code { background: none; border: none; padding: 0; }
+
+.lv-note-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
+.lv-note-body a {
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Highlights carry an inline colour from the picker. Force dark text so the
+   pastel swatches stay readable when the app is in dark mode. */
+.lv-note-body mark {
+  border-radius: 3px;
+  padding: 0.05em 0.15em;
+  color: #0f172a;
+}
+
+/* Checkbox lists ([] shortcut) */
+.lv-note-body ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0.15em;
+}
+.lv-note-body ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.lv-note-body ul[data-type='taskList'] li > label {
+  flex-shrink: 0;
+  margin-top: 0.28em;
+  user-select: none;
+}
+.lv-note-body ul[data-type='taskList'] li > div { flex: 1; min-width: 0; }
+.lv-note-body ul[data-type='taskList'] input[type='checkbox'] {
+  accent-color: var(--blue);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.lv-note-body ul[data-type='taskList'] li[data-checked='true'] > div {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+/* Placeholder text for an empty document */
+.lv-note-body p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ── Notes: motion ──────────────────────────────────────────────────────────
+   Rows slide in when created or filtered into view, and collapse on their way
+   out so deletion reads as removal rather than a jump cut. All of it is
+   disabled under prefers-reduced-motion. */
+@keyframes lvNoteRowIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes lvNoteRowOut {
+  from { opacity: 1; transform: none;                        max-height: 120px; }
+  to   { opacity: 0; transform: translateX(-14px) scale(.96); max-height: 0; }
+}
+
+@keyframes lvNotesLoad {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes lvPopIn {
+  from { opacity: 0; transform: scale(.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.lv-note-row-enter {
+  animation: lvNoteRowIn .22s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.lv-note-row-exit {
+  animation: lvNoteRowOut .2s cubic-bezier(.4, 0, 1, 1) both;
+  overflow: hidden;
+  pointer-events: none; /* no clicks on a row that's already leaving */
+}
+
+.lv-notes-load {
+  animation: lvNotesLoad .26s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+/* Keyed on note id, so this replays each time you open a different note */
+.lv-note-editor-enter {
+  animation: lvNotesLoad .2s ease-out both;
+}
+
+.lv-pop-in {
+  animation: lvPopIn .13s cubic-bezier(.16, 1, .3, 1) both;
+  transform-origin: top left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-note-row-enter,
+  .lv-note-row-exit,
+  .lv-notes-load,
+  .lv-note-editor-enter,
+  .lv-pop-in {
+    animation-duration: .01ms;
+    animation-iteration-count: 1;
+  }
+}
