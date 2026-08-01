@@ -15,6 +15,18 @@ export async function POST(request) {
   const timeMax = new Date(now); timeMax.setDate(timeMax.getDate() + 60)
 
   const allEvents = []
+  // Accounts whose token is dead (revoked / expired refresh token). Surfaced to
+  // the client so it can prompt the user to reconnect instead of silently
+  // showing an empty calendar — the root cause of "Google keeps disconnecting".
+  const disconnected = []
+
+  // A Google API error that means the account needs to re-authenticate.
+  function isAuthError(err) {
+    const status = err?.response?.status ?? err?.code
+    const body   = JSON.stringify(err?.response?.data ?? '')
+    return status === 401 || status === 403 ||
+      /invalid_grant|invalid_credentials|no_refresh_token|unauthorized|Token has been expired or revoked/i.test(`${err?.message ?? ''} ${body}`)
+  }
 
   for (const req of requests) {
     const { accountId, calendarIds = [], calendarColors = {} } = req
@@ -23,14 +35,25 @@ export async function POST(request) {
     const account = await getAccount(accountId, session.userId)
     if (!account) continue
 
+    // No refresh token means we can never silently re-auth — flag immediately.
+    if (!account.refreshToken) {
+      disconnected.push({ accountId, email: account.email })
+      continue
+    }
+
     let auth
     try {
       auth = clientForAccount(account)
-    } catch { continue }
+    } catch {
+      disconnected.push({ accountId, email: account.email })
+      continue
+    }
 
     const calApi = google.calendar({ version: 'v3', auth })
+    let accountAuthFailed = false
 
     for (const calId of calendarIds) {
+      if (accountAuthFailed) break
       try {
         const color    = calendarColors[calId] ?? '#4285f4'
         const { data } = await calApi.events.list({
@@ -68,10 +91,18 @@ export async function POST(request) {
           })
         }
       } catch (err) {
-        console.error(`Error fetching calendar ${calId}:`, err.message)
+        if (isAuthError(err)) {
+          // Token is dead for this whole account — stop and flag for reconnect.
+          accountAuthFailed = true
+          if (!disconnected.some(d => d.accountId === accountId)) {
+            disconnected.push({ accountId, email: account.email })
+          }
+        } else {
+          console.error(`Error fetching calendar ${calId}:`, err.message)
+        }
       }
     }
   }
 
-  return Response.json({ events: allEvents })
+  return Response.json({ events: allEvents, disconnected })
 }
