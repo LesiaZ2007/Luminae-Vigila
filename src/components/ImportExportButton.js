@@ -14,7 +14,8 @@
  *   events         — array of local calendar events
  *   todos          — array of local todos
  *   todoCategories — array of todo category objects
- *   onImport       — (data: { events, todos, todoCategories }) => void
+ *   notes          — array of notes (rich-text notes from the Notes tab)
+ *   onImport       — (data: { events, todos, todoCategories, notes }) => void
  *                    receives the fully-merged final arrays (not just the imported data)
  *   inline         — bool: render export/import controls inline (no FAB, no popup)
  *                    used in the mobile Settings tab so no floating circle appears
@@ -32,7 +33,7 @@ import { parseIcs } from '@/lib/ics'
 //     conflictEvents, conflictTodos, conflictCats }
 //                     — showing merge summary, waiting for user choice
 
-export default function ImportExportButton({ events, todos, todoCategories, onImport, isMobile, inline }) {
+export default function ImportExportButton({ events, todos, todoCategories, notes = [], onImport, isMobile, inline }) {
   const [open,             setOpen]             = useState(false)
   const [status,           setStatus]           = useState(null)
   const [conflictStrategy, setConflictStrategy] = useState('skip') // 'skip' | 'replace' | 'keepBoth'
@@ -95,6 +96,7 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
       events,
       todos,
       todoCategories,
+      notes,
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url  = URL.createObjectURL(blob)
@@ -120,6 +122,7 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
         let importedEvents = []
         let importedTodos = []
         let importedCats = []
+        let importedNotes = []
         let parsed = null
 
         if (isIcs) {
@@ -128,17 +131,21 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           parsed = { source: 'ics', events: importedEvents }
         } else {
           parsed = JSON.parse(text)
-          if (!parsed.events && !parsed.todos)
+          // `notes` alone is a valid export (a backup taken before any events
+          // or tasks existed), so accept a file that only carries notes.
+          if (!parsed.events && !parsed.todos && !parsed.notes)
             throw new Error('This file doesn\'t look like a luminaeVigila export.')
 
           importedEvents = Array.isArray(parsed.events)         ? parsed.events         : []
           importedTodos  = Array.isArray(parsed.todos)          ? parsed.todos          : []
           importedCats   = Array.isArray(parsed.todoCategories)  ? parsed.todoCategories : []
+          importedNotes  = Array.isArray(parsed.notes)           ? parsed.notes          : []
         }
 
         const localEventIds = new Set(events.map(x => x.id))
         const localTodoIds  = new Set(todos.map(x => x.id))
         const localCatIds   = new Set(todoCategories.map(x => x.id))
+        const localNoteIds  = new Set(notes.map(x => x.id))
 
         const newEvents       = importedEvents.filter(x => !localEventIds.has(x.id))
         const conflictEvents  = importedEvents.filter(x =>  localEventIds.has(x.id))
@@ -146,10 +153,12 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
         const conflictTodos   = importedTodos.filter( x =>  localTodoIds.has(x.id))
         const newCats         = importedCats.filter(  x => !localCatIds.has(x.id))
         const conflictCats    = importedCats.filter(  x =>  localCatIds.has(x.id))
+        const newNotes        = importedNotes.filter( x => !localNoteIds.has(x.id))
+        const conflictNotes   = importedNotes.filter( x =>  localNoteIds.has(x.id))
 
-        const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length > 0
+        const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length + conflictNotes.length > 0
 
-        if (!hasConflicts && newEvents.length + newTodos.length + newCats.length === 0) {
+        if (!hasConflicts && newEvents.length + newTodos.length + newCats.length + newNotes.length === 0) {
           setStatus({ error: 'Nothing new to import — all items already exist locally.' })
           return
         }
@@ -161,6 +170,7 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
           newEvents, conflictEvents,
           newTodos,  conflictTodos,
           newCats,   conflictCats,
+          newNotes,  conflictNotes,
         })
       } catch (err) {
         setStatus({ error: err.message || 'Invalid file format.' })
@@ -174,6 +184,9 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
   function handleConfirmImport() {
     if (!status?.reviewing) return
     const { newEvents, conflictEvents, newTodos, conflictTodos, newCats, conflictCats } = status
+    // ICS imports carry no notes, so default these rather than assuming.
+    const newNotes      = status.newNotes      ?? []
+    const conflictNotes = status.conflictNotes ?? []
 
     function mergeList(localList, newItems, conflictItems, strategy) {
       let result = [...localList]
@@ -198,8 +211,9 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
     const mergedEvents = mergeList(events,        newEvents, conflictEvents, conflictStrategy)
     const mergedTodos  = mergeList(todos,          newTodos,  conflictTodos,  conflictStrategy)
     const mergedCats   = mergeList(todoCategories, newCats,   conflictCats,   conflictStrategy)
+    const mergedNotes  = mergeList(notes,          newNotes,  conflictNotes,  conflictStrategy)
 
-    onImport({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats })
+    onImport({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes })
     setStatus('done')
     setTimeout(() => { reset(); setOpen(false) }, 1800)
   }
@@ -208,7 +222,8 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
   const isReviewing = status?.reviewing
   const safeArray = (arr) => Array.isArray(arr) ? arr : []
   const hasConflicts = isReviewing &&
-    (safeArray(status.conflictEvents).length + safeArray(status.conflictTodos).length + safeArray(status.conflictCats).length > 0)
+    (safeArray(status.conflictEvents).length + safeArray(status.conflictTodos).length +
+     safeArray(status.conflictCats).length   + safeArray(status.conflictNotes).length > 0)
 
   /* Inline mode: render controls directly in the layout, no floating button */
   if (inline) {
@@ -242,6 +257,9 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
               )}
               {(status.newCats.length > 0 || status.conflictCats.length > 0) && (
                 <SummaryRow label="Categories" newCount={status.newCats.length} conflictCount={status.conflictCats.length} />
+              )}
+              {(safeArray(status.newNotes).length > 0 || safeArray(status.conflictNotes).length > 0) && (
+                <SummaryRow label="Notes" newCount={safeArray(status.newNotes).length} conflictCount={safeArray(status.conflictNotes).length} />
               )}
             </div>
             {hasConflicts && (
@@ -396,6 +414,11 @@ export default function ImportExportButton({ events, todos, todoCategories, onIm
                   <SummaryRow label="Categories"
                     newCount={status.newCats.length}
                     conflictCount={status.conflictCats.length} />
+                )}
+                {(safeArray(status.newNotes).length > 0 || safeArray(status.conflictNotes).length > 0) && (
+                  <SummaryRow label="Notes"
+                    newCount={safeArray(status.newNotes).length}
+                    conflictCount={safeArray(status.conflictNotes).length} />
                 )}
               </div>
 

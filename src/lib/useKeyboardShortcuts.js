@@ -28,13 +28,13 @@ function isEditableTarget(e) {
  * @param {object} handlers
  *   - onNewEvent()       — N
  *   - onNewTask()        — T
- *   - onSearch()         — / (forward-slash)
+ *   - onNewNote()        — W  ("write") — N is already taken by New Event
  *   - onToggleFocus()    — F
- *   - onShowHelp()       — ? (Shift+/)
+ *   - onShowHelp()       — / and ? (Shift+/)
  *   - onEscape()         — Escape (also called when modals are open)
  * @param {boolean} modalOpen — true when ANY overlay modal is visible
  */
-export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape }, modalOpen = false) {
+export function useKeyboardShortcuts({ onNewEvent, onNewTask, onNewNote, onToggleFocus, onShowHelp, onEscape }, modalOpen = false) {
   const handleKeyDown = useCallback((e) => {
     // Escape is always active — used to close whatever is open
     if (e.key === 'Escape') {
@@ -62,9 +62,17 @@ export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggle
         e.preventDefault()
         onNewTask?.()
         break
+      case 'w':
+      case 'W':
+        e.preventDefault()
+        onNewNote?.()
+        break
+      // `/` shows the shortcuts overlay. Search moved to Ctrl+K only (handled
+      // separately in page.js) — `/` is the more discoverable "what can I press"
+      // key, and Ctrl+K is the search convention users already expect.
       case '/':
         e.preventDefault()
-        onSearch?.()
+        onShowHelp?.()
         break
       case '?':
         e.preventDefault()
@@ -78,7 +86,7 @@ export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggle
       default:
         break
     }
-  }, [onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape, modalOpen])
+  }, [onNewEvent, onNewTask, onNewNote, onToggleFocus, onShowHelp, onEscape, modalOpen])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
