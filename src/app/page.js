@@ -207,7 +207,6 @@ export default function Home() {
       onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
       onNewTask:     () => { setShowTodoModal(true); setEditingTodo(null) },
       onNewNote:     () => quickCaptureNote(),
-      onSearch:      () => openSearchPopup(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
       onEscape:      () => {

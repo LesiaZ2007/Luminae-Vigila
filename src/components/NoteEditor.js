@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight  from '@tiptap/extension-highlight'
@@ -90,7 +91,11 @@ const Divider = () => (
 )
 
 export default function NoteEditor({ note, onChange, onDelete, linkOptions = [], isMobile = false }) {
-  const [showHighlights, setShowHighlights] = useState(false)
+  // The toolbar scrolls horizontally (overflow-x: auto), which clips any
+  // absolutely-positioned child — so the swatch popover renders through a
+  // portal anchored to the button's viewport rect, the same way DatePicker does.
+  const [highlightAnchor, setHighlightAnchor] = useState(null) // { top, left } | null
+  const highlightBtnRef = useRef(null)
   const [showReminder,   setShowReminder]   = useState(false)
   const [showLink,       setShowLink]       = useState(false)
   const [tagDraft,       setTagDraft]       = useState('')
@@ -137,6 +142,14 @@ export default function NoteEditor({ note, onChange, onDelete, linkOptions = [],
     setSavedAt(null)
   }, [editor, note])
 
+  // Escape closes the swatch popover without touching the document.
+  useEffect(() => {
+    if (!highlightAnchor) return
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); setHighlightAnchor(null) } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [highlightAnchor])
+
   // Flush on unmount so closing the panel mid-sentence still saves.
   useEffect(() => () => {
     clearTimeout(saveTimer.current)
@@ -160,7 +173,7 @@ export default function NoteEditor({ note, onChange, onDelete, linkOptions = [],
   if (!note) return null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--surface)' }}>
+    <div className="lv-note-editor-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--surface)' }}>
 
       {/* ── Title row ──────────────────────────────────────────────────── */}
       <div style={{
@@ -203,46 +216,53 @@ export default function NoteEditor({ note, onChange, onDelete, linkOptions = [],
         <TBtn title="Underline (Ctrl+U)" active={editor?.isActive('underline')}     onClick={() => editor?.chain().focus().toggleUnderline().run()}><UnderlineIcon size={15} /></TBtn>
         <TBtn title="Strikethrough"      active={editor?.isActive('strike')}        onClick={() => editor?.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></TBtn>
 
-        {/* Highlight — click toggles the last colour, the caret picks one */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+        {/* Highlight — opens a swatch popover in a portal (see highlightAnchor) */}
+        <div ref={highlightBtnRef} style={{ flexShrink: 0 }}>
           <TBtn title="Highlight (==text==)" active={editor?.isActive('highlight')}
-                onClick={() => setShowHighlights(v => !v)}>
+                onClick={() => {
+                  if (highlightAnchor) { setHighlightAnchor(null); return }
+                  const r = highlightBtnRef.current?.getBoundingClientRect()
+                  if (r) setHighlightAnchor({ top: r.bottom + 6, left: r.left })
+                }}>
             <Highlighter size={15} style={activeHighlight ? { color: activeHighlight } : undefined} />
           </TBtn>
-          {showHighlights && (
-            <>
-              <div onClick={() => setShowHighlights(false)}
-                   style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
-              <div style={{
-                position: 'absolute', top: 34, left: 0, zIndex: 61,
-                display: 'flex', gap: 5, padding: 8, borderRadius: 10,
-                background: 'var(--surface)', border: '1px solid var(--border)',
-                boxShadow: 'var(--shadow-md)',
-              }}>
-                {HIGHLIGHT_COLORS.map(c => (
-                  <button key={c.value} type="button" title={c.name}
-                          onMouseDown={e => e.preventDefault()}
-                          onClick={() => { editor?.chain().focus().setHighlight({ color: c.value }).run(); setShowHighlights(false) }}
-                          style={{
-                            width: 22, height: 22, borderRadius: '50%', background: c.value,
-                            border: activeHighlight === c.value ? '2px solid var(--text)' : '1px solid var(--border)',
-                            cursor: 'pointer', padding: 0, flexShrink: 0,
-                          }} />
-                ))}
-                <button type="button" title="Remove highlight"
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => { editor?.chain().focus().unsetHighlight().run(); setShowHighlights(false) }}
-                        style={{
-                          width: 22, height: 22, borderRadius: '50%', background: 'transparent',
-                          border: '1px solid var(--border)', color: 'var(--text-3)', cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0,
-                        }}>
-                  <X size={12} />
-                </button>
-              </div>
-            </>
-          )}
         </div>
+        {highlightAnchor && typeof document !== 'undefined' && createPortal(
+          <>
+            <div onClick={() => setHighlightAnchor(null)}
+                 style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+            <div className="lv-pop-in" style={{
+              position: 'fixed', top: highlightAnchor.top, left: highlightAnchor.left, zIndex: 301,
+              display: 'flex', gap: 5, padding: 8, borderRadius: 10,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              boxShadow: 'var(--shadow-modal)',
+            }}>
+              {HIGHLIGHT_COLORS.map(c => (
+                <button key={c.value} type="button" title={c.name}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => { editor?.chain().focus().setHighlight({ color: c.value }).run(); setHighlightAnchor(null) }}
+                        style={{
+                          width: 22, height: 22, borderRadius: '50%', background: c.value,
+                          border: activeHighlight === c.value ? '2px solid var(--text)' : '1px solid var(--border)',
+                          cursor: 'pointer', padding: 0, flexShrink: 0, transition: 'transform .12s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.18)'}
+                        onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'} />
+              ))}
+              <button type="button" title="Remove highlight"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => { editor?.chain().focus().unsetHighlight().run(); setHighlightAnchor(null) }}
+                      style={{
+                        width: 22, height: 22, borderRadius: '50%', background: 'transparent',
+                        border: '1px solid var(--border)', color: 'var(--text-3)', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0,
+                      }}>
+                <X size={12} />
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
 
         <Divider />
         <TBtn title="Heading 1"   active={editor?.isActive('heading', { level: 1 })} onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 size={15} /></TBtn>

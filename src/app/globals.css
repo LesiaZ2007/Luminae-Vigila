@@ -965,3 +965,62 @@ select option {
   height: 0;
   pointer-events: none;
 }
+
+/* ── Notes: motion ──────────────────────────────────────────────────────────
+   Rows slide in when created or filtered into view, and collapse on their way
+   out so deletion reads as removal rather than a jump cut. All of it is
+   disabled under prefers-reduced-motion. */
+@keyframes lvNoteRowIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes lvNoteRowOut {
+  from { opacity: 1; transform: none;                        max-height: 120px; }
+  to   { opacity: 0; transform: translateX(-14px) scale(.96); max-height: 0; }
+}
+
+@keyframes lvNotesLoad {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes lvPopIn {
+  from { opacity: 0; transform: scale(.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.lv-note-row-enter {
+  animation: lvNoteRowIn .22s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.lv-note-row-exit {
+  animation: lvNoteRowOut .2s cubic-bezier(.4, 0, 1, 1) both;
+  overflow: hidden;
+  pointer-events: none; /* no clicks on a row that's already leaving */
+}
+
+.lv-notes-load {
+  animation: lvNotesLoad .26s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+/* Keyed on note id, so this replays each time you open a different note */
+.lv-note-editor-enter {
+  animation: lvNotesLoad .2s ease-out both;
+}
+
+.lv-pop-in {
+  animation: lvPopIn .13s cubic-bezier(.16, 1, .3, 1) both;
+  transform-origin: top left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-note-row-enter,
+  .lv-note-row-exit,
+  .lv-notes-load,
+  .lv-note-editor-enter,
+  .lv-pop-in {
+    animation-duration: .01ms;
+    animation-iteration-count: 1;
+  }
+}

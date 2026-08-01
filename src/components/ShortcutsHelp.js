@@ -4,15 +4,14 @@ import { useEffect, useState } from 'react'
 import { X, Keyboard } from 'lucide-react'
 
 const SHORTCUTS = [
-  { key: 'N',   description: 'New event (full form)' },
-  { key: 'T',   description: 'New task (full form)' },
-  { key: 'W',   description: 'New note (write)' },
-  { key: '/',   description: 'Open search' },
-  { key: 'F',   description: 'Toggle focus timer' },
-  { key: '← →', description: 'Previous / next day, week, or month' },
-  { key: '?',   description: 'Show this help overlay' },
-  { key: 'Esc', description: 'Close any open overlay' },
-  { key: 'Ctrl+K', description: 'Open search (alternative)' },
+  { key: '/  or  ?', description: 'Show this shortcuts overlay' },
+  { key: 'N',      description: 'New event (full form)' },
+  { key: 'T',      description: 'New task (full form)' },
+  { key: 'W',      description: 'New note (write)' },
+  { key: 'Ctrl+K', description: 'Open search' },
+  { key: 'F',      description: 'Toggle focus timer' },
+  { key: '← →',    description: 'Previous / next day, week, or month' },
+  { key: 'Esc',    description: 'Close any open overlay' },
 ]
 
 export default function ShortcutsHelp({ onClose }) {
@@ -25,7 +24,8 @@ export default function ShortcutsHelp({ onClose }) {
 
   useEffect(() => {
     function onKey(e) {
-      if (e.key === 'Escape' || e.key === '?') handleClose()
+      // Pressing the opening key again closes it, so / is a toggle.
+      if (e.key === 'Escape' || e.key === '?' || e.key === '/') handleClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
