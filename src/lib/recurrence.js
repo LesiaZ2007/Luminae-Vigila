@@ -1,3 +1,14 @@
+/* Local YYYY-MM-DD for a Date, using the SAME local calendar fields the
+ * recurrence matching (getDay/getDate) uses. Using toISOString() here instead
+ * would convert to UTC and, for users away from UTC, drift the instance date by
+ * a day (and shift across DST). */
+function localDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /* ── Recurring event expansion ── */
 export function expandRecurring(base) {
   const { recurrence } = base
@@ -11,7 +22,10 @@ export function expandRecurring(base) {
   const results  = []
   let cur = new Date(startDt)
 
-  while (cur <= until) {
+  // Runaway backstop: a daily series with a far-future `until` could otherwise
+  // generate thousands of objects and freeze the UI. ~2 years of daily is a
+  // generous ceiling that never trips for realistic use.
+  while (cur <= until && results.length < 750) {
     const dow = cur.getDay()
     const weekDiff = Math.round((cur - startDt) / (7 * 24 * 60 * 60 * 1000))
     const include =
@@ -22,7 +36,7 @@ export function expandRecurring(base) {
       (recurrence.type === 'custom'   && recurrence.days.includes(dow))
 
     if (include) {
-      const id = `${newId}-r-${cur.toISOString().slice(0,10)}`
+      const id = `${newId}-r-${localDateStr(cur)}`
       results.push({
         ...base,
         id,
@@ -56,7 +70,7 @@ export function expandRecurringTodo(t) {
 
   while (cur <= until && results.length < 60) {
     const dow     = cur.getDay()
-    const dateStr = cur.toISOString().slice(0, 10)
+    const dateStr = localDateStr(cur)
     const include =
       recurrence.type === 'daily' ||
       (recurrence.type === 'weekly' && dow === startDt.getDay()) ||

@@ -93,6 +93,21 @@ CREATE TABLE IF NOT EXISTS custom_lists (
   PRIMARY KEY (id, user_id)
 );
 
+-- ── Notes ─────────────────────────────────────────────────────────────────
+-- Rich-text notes from the Notes tab. Each row is one complete note as JSONB:
+-- { id, title, html, color, starred, pinned, tags[], linkedTo, reminder,
+--   trashedAt, createdAt, updatedAt }
+-- `html` is Tiptap output. Deletion is soft (trashedAt) with a 30-day window
+-- enforced client-side, so a trashed note still round-trips through sync.
+-- Created lazily on first sync (CREATE TABLE IF NOT EXISTS self-heals existing deploys).
+CREATE TABLE IF NOT EXISTS notes (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data       JSONB       NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, user_id)
+);
+
 -- ── Study Sessions ─────────────────────────────────────────────────────────
 -- Completed Pomodoro focus sessions logged by the Focus Timer.
 -- Mirrors the client shape: { id, courseId, courseName, durationSec, date }
@@ -121,3 +136,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 -- ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+
+-- ── Sent Reminders ──────────────────────────────────────────────────────────
+-- Dedup log so the server-side reminder cron (/api/push/reminders) sends each
+-- reminder exactly once, even though the cron runs every minute. The key encodes
+-- the item id AND its fire time, so rescheduling a reminder sends a fresh push.
+CREATE TABLE IF NOT EXISTS sent_reminders (
+  user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reminder_key TEXT        NOT NULL,
+  sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, reminder_key)
+);
+
+-- If upgrading an existing install, run the CREATE TABLE above in the Neon SQL Editor.

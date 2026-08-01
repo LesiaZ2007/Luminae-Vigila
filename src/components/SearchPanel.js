@@ -9,6 +9,7 @@ const SEARCH_TYPES = [
   { id: 'events', label: 'Events' },
   { id: 'tasks',  label: 'Tasks'  },
   { id: 'canvas', label: 'Canvas' },
+  { id: 'notes',  label: 'Notes'  },
 ]
 
 const STATUS_OPTIONS = [
@@ -190,20 +191,25 @@ export default function SearchPanel({
     matchesDateRange(item.item?.dueAt?.slice(0, 10), dateFrom, dateTo)
   )
 
+  // Notes carry no date, so the date-range filter doesn't apply to them.
+  const filteredNotes = results.notes ?? []
+
   const hasEvents  = allEvents.length > 0
   const hasTasks   = filteredTodos.length > 0
   const hasCanvas  = filteredCanvas.length > 0
-  const total      = allEvents.length + filteredCanvas.length + filteredTodos.length
+  const hasNotes   = filteredNotes.length > 0
+  const total      = allEvents.length + filteredCanvas.length + filteredTodos.length + filteredNotes.length
   const hasQuery   = query.trim().length > 0
   const showSplit  = hasEvents && hasTasks && !isMobile
 
   const shouldRenderResults = total > 0 || hasQuery
 
-  // Build flat result list for keyboard navigation (canvas → tasks → events)
-  const flatResults = [...filteredCanvas, ...filteredTodos, ...allEvents]
+  // Build flat result list for keyboard navigation (canvas → tasks → events → notes)
+  const flatResults = [...filteredCanvas, ...filteredTodos, ...allEvents, ...filteredNotes]
   const canvasStart = 0
   const todosStart  = filteredCanvas.length
   const eventsStart = filteredCanvas.length + filteredTodos.length
+  const notesStart  = eventsStart + allEvents.length
 
   // Scroll focused item into view
   useEffect(() => {
@@ -396,6 +402,10 @@ export default function SearchPanel({
                 {hasTasks  && <ResultGroup title="Tasks"  items={filteredTodos} onSelect={handleSelect} onToggleTodo={handleToggleTodo} focusedIndex={focusedIndex} startIndex={todosStart} />}
                 {hasEvents && <ResultGroup title="Events" items={allEvents}     onSelect={handleSelect} onToggleTodo={handleToggleTodo} focusedIndex={focusedIndex} startIndex={eventsStart} />}
               </>
+            )}
+
+            {hasNotes && (
+              <ResultGroup title="Notes" items={filteredNotes} onSelect={handleSelect} focusedIndex={focusedIndex} startIndex={notesStart} />
             )}
           </div>
         )}

@@ -7,6 +7,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   test: {
     environment: 'node',
+    // Pin a non-UTC zone so timezone-sensitive date logic (recurrence instance
+    // dates) is exercised deterministically regardless of the runner's locale.
+    env: { TZ: 'America/New_York' },
     include: [
       'src/**/*.test.js',
       'tests/**/*.test.js',

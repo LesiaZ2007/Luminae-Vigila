@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
@@ -21,6 +21,7 @@ function useWindowWidth() {
 import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
+import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches } from '@/lib/notes'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -46,6 +47,9 @@ import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 
 const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
+// Tiptap pulls in ProseMirror, which is sizeable and browser-only — keep it out
+// of the initial bundle so the calendar (the default tab) isn't slowed by it.
+const NotesPanel = dynamic(() => import('@/components/NotesPanel'), { ssr: false })
 
 export const EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
@@ -110,6 +114,26 @@ export default function Home() {
   const [showNewListModal, setShowNewListModal] = useState(false)
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
+  // ── Notes ──
+  const [notes,        setNotes]        = useState([])
+  const [activeNoteId, setActiveNoteId] = useState(null)
+
+  // Declared up here (rather than with the rest of the notes CRUD below) so the
+  // keyboard-shortcut hook a few lines down can reference it without hitting
+  // the const temporal dead zone.
+  const createNote = useCallback((overrides = {}) => {
+    const note = makeNote(overrides)
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+    return note
+  }, [])
+
+  // Quick capture from anywhere — jump to the Notes tab with a blank note open.
+  const quickCaptureNote = useCallback(() => {
+    setActiveNav('notes')
+    createNote()
+  }, [createNote])
+
   const openSearchPopup = useCallback(() => {
     setSearchQuery('')
     setSearchScope('all')
@@ -159,8 +183,10 @@ export default function Home() {
   })
 
   const shownReminders  = useRef(new Set())
-  const hasMergedCloud  = useRef(false)   // true after initial cloud pull completes
+  const hasMergedCloud  = useRef(false)   // true only after initial cloud pull SUCCEEDS
+  const mergeStarted    = useRef(false)   // dedupes the initial fetch (independent of success)
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+  const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
 
   const [digestEnabled, setDigestEnabled] = useState(false)
   const [digestSaving,  setDigestSaving]  = useState(false)
@@ -180,7 +206,7 @@ export default function Home() {
     {
       onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
       onNewTask:     () => { setShowTodoModal(true); setEditingTodo(null) },
-      onSearch:      () => openSearchPopup(),
+      onNewNote:     () => quickCaptureNote(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
       onEscape:      () => {
@@ -226,92 +252,101 @@ export default function Home() {
   // Pulls cloud data and merges it with local state — local wins on conflict.
   // Then immediately pushes the merged result back so new local items are uploaded.
   useEffect(() => {
-    if (!currentUser || hasMergedCloud.current) return
-    hasMergedCloud.current = true
+    if (!currentUser || mergeStarted.current) return
+    mergeStarted.current = true
 
     fetch('/api/sync')
       .then(r => r.ok ? r.json() : null)
       .then(cloud => {
-        if (!cloud) return
+        // A failed/empty GET must NOT unlock the debounced POST — otherwise the
+        // next local state change would upload our (possibly empty) local state
+        // and clobber the cloud we never managed to read. Leave hasMergedCloud
+        // false so ongoing sync stays disabled until a reload retries the merge.
+        if (!cloud) { mergeStarted.current = false; return }
 
-        // Helper: merge two arrays by id — local wins on duplicate
+        // Read current local arrays straight from localStorage — the source of
+        // truth at load time. Computing the merge synchronously lets us set state
+        // AND POST the exact same object, eliminating the old 500ms "wait for
+        // React to flush" race that could upload a stale snapshot.
+        const readLocal = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ?? fb) } catch { return JSON.parse(fb) } }
+        const localEvents   = readLocal('lv-events',         '[]')
+        const localTodos    = readLocal('lv-todos',          '[]')
+        const localCats     = readLocal('lv-todo-cats',      '[]')
+        const localClasses  = readLocal('lv-canvas-classes', '[]')
+        const localPrefs    = readLocal('lv-event-prefs',    '{}')
+        const localSessions = readLocal('lv-study-sessions', '[]')
+        const localLists    = readLocal('lv-custom-lists',   '[]')
+        const localNotes    = readLocal('lv-notes',          '[]')
+
+        // Merge by id. When both sides carry an updatedAt the newer edit wins;
+        // otherwise local wins (preserves offline edits made before this merge).
         function mergeById(cloudArr, localArr) {
-          const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
-          const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
-          return Object.values({ ...cloudMap, ...localMap })
+          const out = new Map((cloudArr ?? []).map(x => [x.id, x]))
+          for (const item of (localArr ?? [])) {
+            const existing = out.get(item.id)
+            if (existing && existing.updatedAt != null && item.updatedAt != null) {
+              out.set(item.id, item.updatedAt >= existing.updatedAt ? item : existing)
+            } else {
+              out.set(item.id, item) // local wins by default
+            }
+          }
+          return [...out.values()]
         }
 
-        // Capture current local state, merge, and set
-        setEvents(local => {
-          const merged = mergeById(cloud.events, local)
-          return merged
-        })
-        setTodos(local => {
-          const merged = mergeById(cloud.todos, local)
-          return merged
-        })
-        setTodoCategories(local => {
-          const merged = mergeById(cloud.todoCategories, local)
-          return merged.length > 0 ? merged : local  // keep defaults if cloud is empty
-        })
-        setCanvasClasses(local => {
-          const merged = mergeById(cloud.classSchedule, local)
-          return merged
-        })
-        setEventPrefs(local => {
-          // eventPrefs is a plain object {eventId: {hidden, color}} — local wins
-          return { ...(cloud.eventPrefs ?? {}), ...local }
-        })
-        setStudySessions(local => {
-          const merged = mergeById(cloud.studySessions, local)
-          return merged
-        })
-        setCustomLists(local => mergeCustomLists(cloud.customLists ?? [], local))
+        const mergedEvents   = mergeById(cloud.events,         localEvents)
+        const mergedTodos    = mergeById(cloud.todos,          localTodos)
+        const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
+        const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
+        const mergedClasses  = mergeById(cloud.classSchedule,  localClasses)
+        const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
+        const mergedSessions = mergeById(cloud.studySessions,  localSessions)
+        const mergedLists    = mergeCustomLists(cloud.customLists ?? [], localLists)
+        // Notes resolve strictly by updatedAt — a note body is one blob, so
+        // "local wins" would silently drop edits made on another device.
+        const mergedNotes    = purgeExpiredTrash(mergeNotes(cloud.notes ?? [], localNotes))
 
-        // Count how many local items weren't in the cloud (new uploads)
+        // Commit merged state
+        setEvents(mergedEvents)
+        setTodos(mergedTodos)
+        setTodoCategories(mergedCats)
+        setCanvasClasses(mergedClasses)
+        setEventPrefs(mergedPrefs)
+        setStudySessions(mergedSessions)
+        setCustomLists(mergedLists)
+        setNotes(mergedNotes)
+
+        // Merge succeeded — NOW it's safe for the debounced effect to upload.
+        hasMergedCloud.current = true
+
+        // Push the exact merged result back immediately — no timeout, no re-read.
         const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
         const cloudTodoIds  = new Set((cloud.todos  ?? []).map(t => t.id))
+        const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
+        const newTodos  = mergedTodos.filter(t => !cloudTodoIds.has(t.id)).length
 
-        // After state is updated, push the merged result back
-        // Use a short timeout so React has processed the state updates first
-        setTimeout(() => {
-          // Re-read from localStorage (already written by the effects below)
-          try {
-            const mergedEvents      = JSON.parse(localStorage.getItem('lv-events')          ?? '[]')
-            const mergedTodos       = JSON.parse(localStorage.getItem('lv-todos')           ?? '[]')
-            const mergedCats        = JSON.parse(localStorage.getItem('lv-todo-cats')       ?? '[]')
-            const mergedClasses     = JSON.parse(localStorage.getItem('lv-canvas-classes')  ?? '[]')
-            const mergedPrefs       = JSON.parse(localStorage.getItem('lv-event-prefs')     ?? '{}')
-            const mergedSessions    = JSON.parse(localStorage.getItem('lv-study-sessions')  ?? '[]')
-            const mergedCustomLists = JSON.parse(localStorage.getItem('lv-custom-lists')    ?? '[]')
-
-            const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
-            const newTodos  = mergedTodos.filter( t => !cloudTodoIds.has(t.id)).length
-
-            fetch('/api/sync', {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                events:         mergedEvents,
-                todos:          mergedTodos,
-                todoCategories: mergedCats,
-                classSchedule:  mergedClasses,
-                eventPrefs:     mergedPrefs,
-                studySessions:  mergedSessions,
-                customLists:    mergedCustomLists,
-              }),
-            }).then(() => {
-              if (newEvents + newTodos > 0) {
-                pushToast(
-                  'Synced to your account',
-                  `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
-                )
-              }
-            }).catch(() => {})
-          } catch {}
-        }, 500)
+        fetch('/api/sync', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            events:         mergedEvents,
+            todos:          mergedTodos,
+            todoCategories: mergedCats,
+            classSchedule:  mergedClasses,
+            eventPrefs:     mergedPrefs,
+            studySessions:  mergedSessions,
+            customLists:    mergedLists,
+            notes:          mergedNotes,
+          }),
+        }).then(() => {
+          if (newEvents + newTodos > 0) {
+            pushToast(
+              'Synced to your account',
+              `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
+            )
+          }
+        }).catch(() => {})
       })
-      .catch(() => {})
+      .catch(() => { mergeStarted.current = false }) // let a reload retry the merge
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
@@ -332,11 +367,24 @@ export default function Home() {
           eventPrefs,
           studySessions,
           customLists,
+          notes,
         }),
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Immediately push the current state to the cloud (bypasses the debounce).
+  // Used on reconnect so pending offline edits upload the moment we're back
+  // online, rather than waiting for the next state change to wake the debounce.
+  const flushSyncNow = useCallback(() => {
+    if (!currentUser || !hasMergedCloud.current) return
+    fetch('/api/sync', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events, todos, todoCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists, notes }),
+    }).catch(() => {})
+  }, [currentUser, events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, notes])
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -404,6 +452,9 @@ export default function Home() {
       // Custom Lists
       const cl = localStorage.getItem('lv-custom-lists')
       if (cl) setCustomLists(JSON.parse(cl))
+      // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago
+      const nt = localStorage.getItem('lv-notes')
+      if (nt) setNotes(purgeExpiredTrash(JSON.parse(nt)))
       // Canvas
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
@@ -422,6 +473,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
   useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
   useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customLists))    }, [customLists])
+  useEffect(() => { localStorage.setItem('lv-notes',          JSON.stringify(notes))          }, [notes])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
   useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
@@ -505,6 +557,7 @@ export default function Home() {
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
       setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
       setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
+      setNotes(local => purgeExpiredTrash(mergeNotesCloudWins(cloud.notes ?? [], local)))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
     } catch (_) {
@@ -520,6 +573,8 @@ export default function Home() {
       const now = Date.now()
       ;[...events.map(ev => ({ item: ev, key: 'ev-' + ev.id, date: ev.start, title: ev.title })),
         ...todos.map(td => ({ item: td, key: 'td-' + td.id, date: td.dueDate ? td.dueDate + 'T00:00:00' : null, title: td.title })),
+        // Notes carry an absolute reminder.at only — no due date to offset from.
+        ...notes.filter(n => !n.trashedAt).map(n => ({ item: n, key: 'nt-' + n.id, date: null, title: noteDisplayTitle(n) })),
       ].forEach(({ item, key, date, title }) => {
         if (!item.reminder || item.completed) return
         if (shownReminders.current.has(key)) return
@@ -533,21 +588,15 @@ export default function Home() {
           pushToast(`Reminder: ${title}`, item.reminder.label)
           if (typeof window !== 'undefined' && Notification?.permission === 'granted')
             new Notification(`Reminder: ${title}`, { body: item.reminder.label })
-          // Also send via service worker push so it works when the tab is backgrounded
-          if (typeof navigator !== 'undefined' && navigator.serviceWorker?.controller) {
-            fetch('/api/push/send', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: `Reminder: ${title}`, body: item.reminder.label }),
-            }).catch(() => {})
-          }
+          // Background/closed-app delivery is handled server-side by the
+          // /api/push/reminders cron (dedup'd), so we don't fire a push here.
         }
       })
     }
     check()
     const id = setInterval(check, 60_000)
     return () => clearInterval(id)
-  }, [events, todos, pushToast])
+  }, [events, todos, notes, pushToast])
 
   /* ── Digest preference ── */
   // Read the current push subscription's digest_enabled from the DB when signed in.
@@ -845,6 +894,57 @@ export default function Home() {
     setActiveListId(cur => cur === id ? 'my-tasks' : cur)
   }, [])
 
+  /* ── Notes CRUD ── */
+  // Every mutation stamps updatedAt — mergeNotes() resolves cross-device
+  // conflicts on that field, so a patch that forgets it would lose the race.
+  const updateNote = useCallback((id, patch) => {
+    setNotes(prev => prev.map(n => {
+      if (n.id !== id) return n
+      // Autosave fires on a timer and can land after the note is unchanged;
+      // skip the write so we don't bump updatedAt (and re-sync) for nothing.
+      const changed = Object.keys(patch).some(k => JSON.stringify(n[k]) !== JSON.stringify(patch[k]))
+      if (!changed) return n
+      return { ...n, ...patch, updatedAt: new Date().toISOString() }
+    }))
+  }, [])
+
+  // Soft delete. The note stays in state (and in sync) with trashedAt set, so
+  // Undo is a flag flip rather than a resurrection, and other devices see it go.
+  const trashNote = useCallback((id) => {
+    const note = notes.find(n => n.id === id)
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : n))
+    setActiveNoteId(cur => cur === id ? null : cur)
+    pushToast(
+      'Note moved to trash',
+      note ? noteDisplayTitle(note) : undefined,
+      [{
+        label: 'Undo',
+        onClick: () => {
+          setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: null, updatedAt: new Date().toISOString() } : n))
+          setActiveNoteId(id)
+        },
+      }],
+      { icon: 'trash' },
+    )
+  }, [notes, pushToast])
+
+  const restoreNote = useCallback((id) => {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: null, updatedAt: new Date().toISOString() } : n))
+  }, [])
+
+  const purgeNote = useCallback((id) => {
+    setNotes(prev => prev.filter(n => n.id !== id))
+    setActiveNoteId(cur => cur === id ? null : cur)
+  }, [])
+
+  // Things a note can be attached to. Capped so the picker stays scannable —
+  // courses first (they're the durable ones), then near-term events and tasks.
+  const noteLinkOptions = useMemo(() => [
+    ...canvasClasses.map(c => ({ type: 'course', id: c.id, label: c.name ?? c.title ?? 'Course' })),
+    ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
+    ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
+  ].filter(o => o.id && o.label), [canvasClasses, events, todos])
+
   // Accepts an array of todos already stamped with sortOrder by DraggableList
   const reorderTodos = useCallback((reordered) => {
     setTodos(prev => {
@@ -856,14 +956,21 @@ export default function Home() {
   /* ── Import / Export ── */
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
   // We just set state directly — the existing localStorage sync effects will persist them.
-  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats }) => {
+  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes }) => {
     setEvents(mergedEvents)
     setTodos(mergedTodos)
     setTodoCategories(mergedCats)
+    if (Array.isArray(mergedNotes)) setNotes(mergedNotes)
     const addedEvents = mergedEvents.length - events.length
     const addedTodos  = mergedTodos.length  - todos.length
-    pushToast('Import complete', `${addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events'}, ${addedTodos > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}` : 'no new tasks'}.`)
-  }, [events.length, todos.length, pushToast])
+    const addedNotes  = Array.isArray(mergedNotes) ? mergedNotes.length - notes.length : 0
+    const parts = [
+      addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events',
+      addedTodos  > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}`    : 'no new tasks',
+    ]
+    if (addedNotes > 0) parts.push(`+${addedNotes} note${addedNotes !== 1 ? 's' : ''}`)
+    pushToast('Import complete', parts.join(', ') + '.')
+  }, [events.length, todos.length, notes.length, pushToast])
 
   /* ── Google Calendar sync ── */
   const syncGoogleCalendar = useCallback(async () => {
@@ -894,14 +1001,31 @@ export default function Home() {
         body:    JSON.stringify({ requests }),
       })
       if (!res.ok) return
-      const { events: gcEvents } = await res.json()
+      const { events: gcEvents, disconnected } = await res.json()
       setGoogleEvents(gcEvents ?? [])
+
+      // Surface dead accounts so the user can reconnect, instead of silently
+      // showing an empty calendar. Only warn once per disconnected set.
+      if (Array.isArray(disconnected) && disconnected.length > 0) {
+        const sig = disconnected.map(d => d.accountId).sort().join(',')
+        if (gcDisconnectWarnedRef.current !== sig) {
+          gcDisconnectWarnedRef.current = sig
+          const label = disconnected.map(d => d.email).filter(Boolean).join(', ')
+          pushToast(
+            'Google Calendar disconnected',
+            `Reconnect ${label || 'your account'} to keep events syncing.`,
+            [{ label: 'Reconnect', onClick: () => window.open('/api/google/auth', 'gc_reconnect', 'width=500,height=650') }],
+          )
+        }
+      } else {
+        gcDisconnectWarnedRef.current = null
+      }
     } catch (err) {
       console.error('Google Calendar sync failed:', err)
     } finally {
       setGcSyncing(false)
     }
-  }, [])
+  }, [pushToast])
 
   // Initial sync on mount (only if prefs exist)
   useEffect(() => {
@@ -1490,7 +1614,20 @@ export default function Home() {
       googleEvents: [],
       canvasAssignments: [],
       todos: [],
+      notes: [],
     }
+
+    // Notes deliberately ignore the upcoming/done status filter — they have no
+    // completion state or due date, so every status value would exclude them.
+    const toNoteResult = note => ({
+      kind: 'note',
+      label: noteDisplayTitle(note),
+      subtitle: notePreview(note, 70) || 'Empty note',
+      source: 'Note',
+      item: note,
+      tagLabel: note.tags?.[0] || 'Note',
+      tagColor: note.color || 'var(--blue)',
+    })
 
     const categoryColor = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.color || 'var(--blue)'
     const categoryLabel = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.label || categoryId || 'Event'
@@ -1581,6 +1718,9 @@ export default function Home() {
             tagColor: '#E8751A',
           }))
       }
+      if (searchScope === 'all' || searchScope === 'notes') {
+        result.notes = sortNotes(notes.filter(n => !n.trashedAt)).slice(0, 5).map(toNoteResult)
+      }
       return result
     }
 
@@ -1638,8 +1778,13 @@ export default function Home() {
         tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
       }))
     }
+    if (searchScope === 'all' || searchScope === 'notes') {
+      result.notes = sortNotes(
+        notes.filter(n => !n.trashedAt && noteMatches(n, searchQuery))
+      ).slice(0, 15).map(toNoteResult)
+    }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -1666,6 +1811,11 @@ export default function Home() {
       setActiveNav('todos')
       setEditingTodo(result.item)
       setShowTodoModal(true)
+      return
+    }
+    if (result.kind === 'note' && result.item) {
+      setActiveNav('notes')
+      setActiveNoteId(result.item.id)
       return
     }
   }, [closeSearchPopup, setToasts])
@@ -1730,6 +1880,7 @@ export default function Home() {
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
     { id: 'agenda',   label: 'Agenda',   icon: <AlignLeft size={22}/> },
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
+    { id: 'notes',    label: 'Notes',    icon: <NotebookPen size={22}/> },
     { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
     ...(canvasConnected
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
@@ -1999,6 +2150,7 @@ export default function Home() {
                                 onEventDrop={handleEventDrop}
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}
+                                arrowNavEnabled={!anyModalOpen}
                                 colorSwatches={EVENT_CATEGORIES.map(c => c.color)} />
               </ErrorBoundary>
             </main>
@@ -2090,6 +2242,25 @@ export default function Home() {
                            onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                            onHideCanvas={hideCanvasAssignment} />
               </CustomListPanel>
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {activeNav === 'notes' && (
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--surface)' }}>
+            <ErrorBoundary>
+              <NotesPanel
+                notes={notes}
+                activeNoteId={activeNoteId}
+                onSelect={setActiveNoteId}
+                onCreate={() => createNote()}
+                onUpdate={updateNote}
+                onTrash={trashNote}
+                onRestore={restoreNote}
+                onPurge={purgeNote}
+                linkOptions={noteLinkOptions}
+                isMobile={isMobile}
+              />
             </ErrorBoundary>
           </main>
         )}
@@ -2304,7 +2475,7 @@ export default function Home() {
                 <Timer size={14}/> Focus Timer
               </button>
               <ImportExportButton
-                events={events} todos={todos} todoCategories={todoCategories}
+                events={events} todos={todos} todoCategories={todoCategories} notes={notes}
                 onImport={handleImport}
                 inline
               />
@@ -2519,6 +2690,7 @@ export default function Home() {
           events={events}
           todos={todos}
           todoCategories={todoCategories}
+          notes={notes}
           onImport={handleImport}
         />
       )}
@@ -2566,7 +2738,7 @@ export default function Home() {
       )}
 
       {/* ── Offline indicator (always mounted — shows/hides itself) ── */}
-      <OfflineIndicator />
+      <OfflineIndicator onReconnect={flushSyncNow} />
 
       {/* ── Onboarding wizard (first-run only) ── */}
       {showOnboarding && (
