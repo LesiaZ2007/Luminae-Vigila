@@ -3,7 +3,8 @@
  * POST /api/sync  — replace all synced user data
  *
  * Synced: local events, todos, todo categories, class schedule, event prefs,
- *         and study sessions (completed Pomodoro focus blocks from FocusTimer).
+ *         study sessions (completed Pomodoro focus blocks from FocusTimer),
+ *         custom lists, and notes.
  * NOT synced: Google Calendar events (live), Canvas assignments (live).
  *
  * Returns empty defaults when not signed in so the app degrades gracefully.
@@ -43,18 +44,33 @@ async function ensureCustomListsTable() {
   `
 }
 
+// Ensure the notes table exists.  One row per note, the whole note object
+// (title, HTML body, tags, reminder, trash flag) stored as JSONB.
+async function ensureNotesTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS notes (
+      id         TEXT        NOT NULL,
+      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data       JSONB       NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (id, user_id)
+    )
+  `
+}
+
 export async function GET() {
   const session = await getSession()
   if (!session) {
-    return Response.json({ events: [], todos: [], todoCategories: [], classSchedule: [], eventPrefs: {}, studySessions: [], customLists: [] })
+    return Response.json({ events: [], todos: [], todoCategories: [], classSchedule: [], eventPrefs: {}, studySessions: [], customLists: [], notes: [] })
   }
 
   const { userId } = session
 
   await ensureStudySessionsTable()
   await ensureCustomListsTable()
+  await ensureNotesTable()
 
-  const [evRows, tdRows, catRows, clsRows, prefRows, ssRows, clRows] = await Promise.all([
+  const [evRows, tdRows, catRows, clsRows, prefRows, ssRows, clRows, nRows] = await Promise.all([
     sql`SELECT data FROM events          WHERE user_id = ${userId}`,
     sql`SELECT data FROM todos           WHERE user_id = ${userId}`,
     sql`SELECT data FROM todo_categories WHERE user_id = ${userId}`,
@@ -62,6 +78,7 @@ export async function GET() {
     sql`SELECT data FROM event_prefs     WHERE user_id = ${userId}`,
     sql`SELECT data FROM study_sessions  WHERE user_id = ${userId}`,
     sql`SELECT data FROM custom_lists    WHERE user_id = ${userId}`,
+    sql`SELECT data FROM notes           WHERE user_id = ${userId}`,
   ])
 
   return Response.json({
@@ -72,6 +89,7 @@ export async function GET() {
     eventPrefs:     prefRows[0]?.data ?? {},
     studySessions:  ssRows.map(r => r.data),
     customLists:    clRows.map(r => r.data),
+    notes:          nRows.map(r => r.data),
   })
 }
 
@@ -82,10 +100,11 @@ export async function POST(request) {
   }
 
   const { userId } = session
-  const { events, todos, todoCategories, classSchedule, eventPrefs, studySessions, customLists } = await request.json()
+  const { events, todos, todoCategories, classSchedule, eventPrefs, studySessions, customLists, notes } = await request.json()
 
   await ensureStudySessionsTable()
   await ensureCustomListsTable()
+  await ensureNotesTable()
 
   // Build an array of tagged-template query objects and run them all in ONE atomic
   // transaction. If anything fails mid-way, the entire write is rolled back — no
@@ -146,6 +165,14 @@ export async function POST(request) {
     for (const cl of customLists) {
       if (!cl?.id) continue
       queries.push(sql`INSERT INTO custom_lists (id, user_id, data) VALUES (${cl.id}, ${userId}, ${JSON.stringify(cl)})`)
+    }
+  }
+
+  if (Array.isArray(notes)) {
+    queries.push(sql`DELETE FROM notes WHERE user_id = ${userId}`)
+    for (const n of notes) {
+      if (!n?.id) continue
+      queries.push(sql`INSERT INTO notes (id, user_id, data) VALUES (${n.id}, ${userId}, ${JSON.stringify(n)})`)
     }
   }
 

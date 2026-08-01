@@ -93,6 +93,21 @@ CREATE TABLE IF NOT EXISTS custom_lists (
   PRIMARY KEY (id, user_id)
 );
 
+-- ── Notes ─────────────────────────────────────────────────────────────────
+-- Rich-text notes from the Notes tab. Each row is one complete note as JSONB:
+-- { id, title, html, color, starred, pinned, tags[], linkedTo, reminder,
+--   trashedAt, createdAt, updatedAt }
+-- `html` is Tiptap output. Deletion is soft (trashedAt) with a 30-day window
+-- enforced client-side, so a trashed note still round-trips through sync.
+-- Created lazily on first sync (CREATE TABLE IF NOT EXISTS self-heals existing deploys).
+CREATE TABLE IF NOT EXISTS notes (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data       JSONB       NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, user_id)
+);
+
 -- ── Study Sessions ─────────────────────────────────────────────────────────
 -- Completed Pomodoro focus sessions logged by the Focus Timer.
 -- Mirrors the client shape: { id, courseId, courseName, durationSec, date }

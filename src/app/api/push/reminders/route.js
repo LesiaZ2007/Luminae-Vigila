@@ -17,6 +17,7 @@
  */
 import webpush from 'web-push'
 import sql     from '@/lib/db'
+import { noteDisplayTitle, notePlainText } from '@/lib/notes'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
 // Prevents backfilling ancient reminders on the very first cron run, while being
@@ -75,9 +76,12 @@ export async function GET(request) {
 
   for (const { user_id } of users) {
     // Gather this user's reminder-bearing items.
-    const [eventRows, todoRows] = await Promise.all([
+    // `notes` may not exist yet on a deploy that hasn't run a sync since the
+    // Notes feature shipped — fall back to empty rather than failing the run.
+    const [eventRows, todoRows, noteRows] = await Promise.all([
       sql`SELECT data FROM events WHERE user_id = ${user_id}`,
       sql`SELECT data FROM todos  WHERE user_id = ${user_id}`,
+      sql`SELECT data FROM notes  WHERE user_id = ${user_id}`.catch(() => []),
     ])
 
     const candidates = []
@@ -93,6 +97,16 @@ export async function GET(request) {
       const at = reminderFireTime(td, dueIso)
       if (at == null) continue
       candidates.push({ key: `td-${td.id}-${at}`, at, title: `Reminder: ${td.title}`, body: td.reminder.label ?? '' })
+    }
+    for (const { data: nt } of noteRows) {
+      // Notes have no due date, so only absolute `reminder.at` values apply.
+      if (!nt?.reminder || nt.trashedAt) continue
+      const at = reminderFireTime(nt, null)
+      if (at == null) continue
+      // Lead with the note's own text — the reminder label is just the time,
+      // which the notification already shows.
+      const snippet = notePlainText(nt.html).replace(/\s+/g, ' ').trim().slice(0, 120)
+      candidates.push({ key: `nt-${nt.id}-${at}`, at, title: `Note: ${noteDisplayTitle(nt)}`, body: snippet })
     }
 
     // Keep only reminders that just came due within the grace window.

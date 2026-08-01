@@ -28,13 +28,14 @@ function isEditableTarget(e) {
  * @param {object} handlers
  *   - onNewEvent()       — N
  *   - onNewTask()        — T
+ *   - onNewNote()        — W  ("write") — N is already taken by New Event
  *   - onSearch()         — / (forward-slash)
  *   - onToggleFocus()    — F
  *   - onShowHelp()       — ? (Shift+/)
  *   - onEscape()         — Escape (also called when modals are open)
  * @param {boolean} modalOpen — true when ANY overlay modal is visible
  */
-export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape }, modalOpen = false) {
+export function useKeyboardShortcuts({ onNewEvent, onNewTask, onNewNote, onSearch, onToggleFocus, onShowHelp, onEscape }, modalOpen = false) {
   const handleKeyDown = useCallback((e) => {
     // Escape is always active — used to close whatever is open
     if (e.key === 'Escape') {
@@ -62,6 +63,11 @@ export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggle
         e.preventDefault()
         onNewTask?.()
         break
+      case 'w':
+      case 'W':
+        e.preventDefault()
+        onNewNote?.()
+        break
       case '/':
         e.preventDefault()
         onSearch?.()
@@ -78,7 +84,7 @@ export function useKeyboardShortcuts({ onNewEvent, onNewTask, onSearch, onToggle
       default:
         break
     }
-  }, [onNewEvent, onNewTask, onSearch, onToggleFocus, onShowHelp, onEscape, modalOpen])
+  }, [onNewEvent, onNewTask, onNewNote, onSearch, onToggleFocus, onShowHelp, onEscape, modalOpen])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
