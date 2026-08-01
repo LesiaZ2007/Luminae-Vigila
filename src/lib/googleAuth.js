@@ -5,10 +5,26 @@
 import { google }        from 'googleapis'
 import { upsertAccount } from './googleTokenStore'
 
+/**
+ * Resolve the OAuth redirect URI.
+ *
+ * Google requires this to be registered ahead of time AND to be byte-identical
+ * between the authorize call and the token exchange. That rules out
+ * `VERCEL_URL`, which is a *per-deployment* hostname
+ * (luminae-vigila-<hash>-<scope>.vercel.app) — it changes on every push, so it
+ * can never be pre-registered and always fails with redirect_uri_mismatch.
+ *
+ * `VERCEL_PROJECT_PRODUCTION_URL` is the stable production domain and is set on
+ * preview deployments too, so previews send you back through production — which
+ * is what we want, since only a fixed list of URIs can be registered. Set
+ * GOOGLE_REDIRECT_URI to override any of this (e.g. a custom domain).
+ */
 function getRedirectUri(origin) {
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI
-  if (process.env.VERCEL_URL)          return `https://${process.env.VERCEL_URL}/api/google/callback`
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL)
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/google/callback`
   if (origin)                          return `${origin}/api/google/callback`
+  // Last resort. VERCEL_URL is deliberately NOT used — see above.
   return 'http://localhost:3000/api/google/callback'
 }
 

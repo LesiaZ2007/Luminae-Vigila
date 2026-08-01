@@ -16,7 +16,11 @@ export async function GET(request) {
 
   const state = Buffer.from(JSON.stringify({ action: 'login', next })).toString('base64url')
 
-  const oauth2 = makeOAuth2Client()
+  // Pass the origin so the redirect URI matches the one /api/google/callback
+  // computes at token-exchange time. Without it this route fell through to the
+  // per-deployment VERCEL_URL and every sign-in failed with redirect_uri_mismatch.
+  const origin = new URL(request.url).origin
+  const oauth2 = makeOAuth2Client(origin)
   const url = oauth2.generateAuthUrl({
     access_type: 'online',   // no offline access — just identity, no refresh needed
     scope: [
