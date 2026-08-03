@@ -48,6 +48,10 @@ export default function WeeklyCalendar({
   const [viewAnim,       setViewAnim]      = useState(null) // 'exit' | 'enter' | null
   const [currentView,    setCurrentView]   = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
   const [colorPopover,   setColorPopover]  = useState(null) // { eventId, x, y }
+  // Mobile only: the event brought to the front by a tap. Tapping is for
+  // *reading* a buried event; editing is a long-press (see below).
+  const [raisedEventId,  setRaisedEventId]  = useState(null)
+  const longPressedRef   = useRef(false)   // suppresses the click that follows a long-press
 
   useEffect(() => {
     if (!targetDate) return
@@ -134,45 +138,52 @@ export default function WeeklyCalendar({
 
     const isUserEvent = !info.event.extendedProps?.source
 
-    // ── Right-click / long-press recolor (user events only) ───────────────
-    if (isUserEvent && onRecolorEvent) {
-      const el = info.el
-      let touchTimer = null
-      let touchMoved = false
+    const el = info.el
 
-      // Desktop: right-click
-      function onContextMenu(e) {
-        e.preventDefault()
-        e.stopPropagation()
-        setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
-      }
-
-      // Mobile: long-press (500ms)
-      function onTouchStart(e) {
-        touchMoved = false
-        const touch = e.touches[0]
-        touchTimer = setTimeout(() => {
-          if (!touchMoved) {
-            setColorPopover({ eventId: info.event.id, x: touch.clientX, y: touch.clientY })
-          }
-        }, 500)
-      }
-      function onTouchMove() { touchMoved = true; clearTimeout(touchTimer) }
-      function onTouchEnd()  { clearTimeout(touchTimer) }
-
+    // ── Desktop: right-click to recolour (user events only) ────────────────
+    function onContextMenu(e) {
+      e.preventDefault()
+      e.stopPropagation()
+      setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
+    }
+    if (isUserEvent && onRecolorEvent && !isMobile) {
       el.addEventListener('contextmenu', onContextMenu)
+    }
+
+    // ── Mobile: long-press opens the editor ────────────────────────────────
+    // A tap only brings the event to the front (see the eventClick handler), so
+    // reading a buried event never risks opening a form you didn't want.
+    let touchTimer = null
+    let touchMoved = false
+
+    function onTouchStart() {
+      touchMoved = false
+      longPressedRef.current = false
+      touchTimer = setTimeout(() => {
+        if (touchMoved) return
+        longPressedRef.current = true
+        // Haptic confirmation that the press registered, where supported.
+        navigator.vibrate?.(12)
+        onEventClick?.(info)
+      }, 500)
+    }
+    function onTouchMove() { touchMoved = true; clearTimeout(touchTimer) }
+    function onTouchEnd()  { clearTimeout(touchTimer) }
+
+    if (isMobile) {
       el.addEventListener('touchstart', onTouchStart, { passive: true })
       el.addEventListener('touchmove',  onTouchMove,  { passive: true })
       el.addEventListener('touchend',   onTouchEnd)
+    }
 
-      const prevCleanup = el._lvDragCleanup
-      el._lvDragCleanup = () => {
-        prevCleanup?.()
-        el.removeEventListener('contextmenu', onContextMenu)
-        el.removeEventListener('touchstart', onTouchStart)
-        el.removeEventListener('touchmove', onTouchMove)
-        el.removeEventListener('touchend', onTouchEnd)
-      }
+    const prevCleanup = el._lvDragCleanup
+    el._lvDragCleanup = () => {
+      prevCleanup?.()
+      clearTimeout(touchTimer)
+      el.removeEventListener('contextmenu', onContextMenu)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
     }
   }
 
@@ -204,6 +215,31 @@ export default function WeeklyCalendar({
       if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
     })
   }
+
+  /* Bring the tapped event to the front. Done by toggling a class on the
+     harness rather than inline styles, so FullCalendar re-rendering the event
+     (which it does often) can't silently drop it — the effect re-applies. */
+  useEffect(() => {
+    const root = calendarRef.current?.getApi()?.el
+    if (!root) return
+    root.querySelectorAll('.lv-event-raised')
+      .forEach(h => h.classList.remove('lv-event-raised'))
+    if (!raisedEventId) return
+    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(raisedEventId) : raisedEventId
+    root.querySelector(`.fc-timegrid-event-harness[data-event-id="${sel}"]`)
+      ?.classList.add('lv-event-raised')
+  }, [raisedEventId, events])
+
+  /* Tapping anywhere else drops the event back down, so the raised state never
+     gets stuck once you've finished reading it. */
+  useEffect(() => {
+    if (!raisedEventId) return
+    function onDocPointerDown(e) {
+      if (!e.target.closest?.('.fc-timegrid-event-harness')) setRaisedEventId(null)
+    }
+    document.addEventListener('pointerdown', onDocPointerDown)
+    return () => document.removeEventListener('pointerdown', onDocPointerDown)
+  }, [raisedEventId])
 
   const navigate = useCallback((dir) => {
     const api = calendarRef.current?.getApi()
@@ -388,6 +424,7 @@ export default function WeeklyCalendar({
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
+    setRaisedEventId(null)
     setCurrentView(info.view.type)
     onViewChange?.(info.view.type)
   }
@@ -502,7 +539,19 @@ export default function WeeklyCalendar({
               const api = calendarRef.current?.getApi()
               if (api) requestAnimationFrame(() => updateOverlapClasses(api))
             }}
-            eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
+            eventClick={(info) => {
+              if (swipedRef.current) return
+              // The long-press already opened the editor; ignore the click that
+              // browsers fire afterwards.
+              if (longPressedRef.current) { longPressedRef.current = false; return }
+              if (isMobile) {
+                // Tap = bring to front so an overlapped event can be read.
+                // Tapping the raised one again puts it back.
+                setRaisedEventId(cur => (cur === info.event.id ? null : info.event.id))
+                return
+              }
+              onEventClick?.(info)
+            }}
             /* Day headers (week view) and day numbers (month view) become
                links into the day view. */
             navLinks={true}
