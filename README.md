@@ -224,8 +224,11 @@ A compact **"Your week"** section lives inside the **Focus Timer** panel (open i
 - **Focus hours this week** — reads from the Focus Timer's `lv-study-sessions` localStorage key
 - **Day streak** — a flame icon shows consecutive days with at least one completed task or focus session; tracked in `localStorage` under `lv-streak` (`{streak, lastDate, bestStreak, completionDates, lastWeekCompleted}`)
 - **Week-over-week delta** — "+3 vs last wk" if you did more tasks than last Sunday–Saturday
+- Totals under an hour display as minutes (`25m`) rather than rounding to `0h`
 - **Personal-best confetti** — hitting a new longest streak triggers the existing confetti component
 - Streak is updated automatically when any task or Canvas assignment is marked done
+
+> **Fixed:** the weekly focus total read `durationMs` while the Focus Timer writes `durationSec`, so **every session counted as zero** and the card showed `0h` no matter how much you'd focused. The Study Time panel was unaffected — it always read the right field. The card also now re-reads when a session completes instead of showing the total from when it mounted, and parses session dates as local (a bare `YYYY-MM-DD` read as UTC midnight dropped Sunday sessions out of the week that had just started).
 
 ### 📛 PWA App Icon Badge
 

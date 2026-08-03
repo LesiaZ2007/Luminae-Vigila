@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Flame, BellRing } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { enablePush, pushPermission } from '@/lib/pushClient'
+import { todayStr, toDateStr } from '@/lib/localDate'
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
@@ -11,9 +12,9 @@ const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
 const STREAK_KEY = 'lv-streak'
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10)
-}
+// todayStr / toDateStr come from lib/localDate. This file used to define its own
+// via toISOString(), which is UTC: a session finished after ~8pm Eastern was
+// filed under *tomorrow*, breaking the streak walk below the very next day.
 
 function loadLedger() {
   try {
@@ -47,8 +48,10 @@ export function updateStreak(date) {
   // Compute new streak: walk backwards from dateStr
   const dateSet = new Set(updated.completionDates)
   let streak = 0
-  const d = new Date(dateStr)
-  while (dateSet.has(d.toISOString().slice(0, 10))) {
+  // Parsed and formatted as local throughout: `new Date('2026-08-03')` is UTC
+  // midnight, so the very first comparison could miss and zero the streak.
+  const d = new Date(`${dateStr}T00:00:00`)
+  while (dateSet.has(toDateStr(d))) {
     streak++
     d.setDate(d.getDate() - 1)
   }
@@ -91,20 +94,66 @@ function lastWeekRange() {
   return { start: wkStart, end: start }
 }
 
-function totalFocusHours(sessions, rangeStart, rangeEnd) {
-  let ms = 0
+/**
+ * Seconds of focus in a session.
+ *
+ * FocusTimer writes `durationSec` (see its shape comment) — this used to read
+ * `durationMs ?? duration`, neither of which is ever present, so **every**
+ * session counted as zero and the weekly total sat at 0h no matter how much you
+ * focused. The other reader, CoursesPanel, always used durationSec, which is why
+ * the Study Time panel was right while this card was wrong.
+ *
+ * The ms/duration fallbacks are kept only to tolerate any older stored shape.
+ */
+function sessionSeconds(s) {
+  if (Number.isFinite(s?.durationSec)) return s.durationSec
+  if (Number.isFinite(s?.durationMs))  return s.durationMs / 1000
+  if (Number.isFinite(s?.duration))    return s.duration / 1000
+  return 0
+}
+
+/**
+ * When a session happened, as a local Date.
+ *
+ * `date` is a bare 'YYYY-MM-DD'. `new Date('2026-08-03')` parses that as **UTC**
+ * midnight, which is the previous evening anywhere west of Greenwich — enough to
+ * push a Sunday session out of the week that just started.
+ */
+function sessionDate(s) {
+  const raw = s?.completedAt ?? s?.startedAt ?? s?.date
+  if (!raw) return null
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function totalFocusSeconds(sessions, rangeStart, rangeEnd) {
+  let sec = 0
   for (const s of sessions) {
-    try {
-      const at = new Date(s.completedAt ?? s.startedAt ?? s.date ?? 0)
-      if (at >= rangeStart && at < rangeEnd) ms += s.durationMs ?? s.duration ?? 0
-    } catch {}
+    const at = sessionDate(s)
+    if (at && at >= rangeStart && at < rangeEnd) sec += sessionSeconds(s)
   }
-  return Math.round((ms / 3_600_000) * 10) / 10
+  return sec
+}
+
+/**
+ * Anything under an hour reads as "0h" when rounded to hours, which is exactly
+ * how a real 25-minute session looked like nothing. Below an hour, show minutes.
+ */
+function fmtFocus(seconds) {
+  if (seconds <= 0) return '0h'
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+  return `${Math.round((seconds / 3600) * 10) / 10}h`
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest = null, /** 'panel' (themed surface) | 'zen' (on dark backdrop) */ variant = 'panel' }) {
+export default function WeeklyRecap({
+  todos = [], canvasAssignments = [], digest = null,
+  /** Bumped by the parent when a focus session completes, so this re-reads localStorage. */
+  sessionsVersion = 0,
+  /** 'panel' (themed surface) | 'zen' (on dark backdrop) */ variant = 'panel',
+}) {
   const [data,       setData]       = useState(null)
   const [confetti,   setConfetti]   = useState(false)
   const [expanded,   setExpanded]   = useState(false)
@@ -150,27 +199,30 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
     const lastWeek = ledger.lastWeekCompleted ?? 0
     const delta    = totalCompleted - lastWeek
 
-    // Focus hours
-    const focusHrs     = totalFocusHours(sessions, wkStart, wkEnd)
-    const focusHrsLast = totalFocusHours(sessions, lwStart, lwEnd)
+    // Focus time — kept in seconds so sub-hour sessions survive to the formatter
+    const focusSec     = totalFocusSeconds(sessions, wkStart, wkEnd)
+    const focusSecLast = totalFocusSeconds(sessions, lwStart, lwEnd)
 
     // Streak
     const streak     = ledger.streak     ?? 0
     const bestStreak = ledger.bestStreak ?? 0
 
-    setData({ totalCompleted, lastWeek, delta, focusHrs, focusHrsLast, streak, bestStreak })
-  }, [todos, canvasAssignments])
+    setData({ totalCompleted, lastWeek, delta, focusSec, focusSecLast, streak, bestStreak })
+    // sessionsVersion is not read here — it exists so finishing a focus session
+    // re-runs this. Without it the card kept showing the total from mount, and a
+    // session you just completed didn't appear until something else changed.
+  }, [todos, canvasAssignments, sessionsVersion])
 
   // Persist last-week count on Sunday
   useEffect(() => {
     const now = new Date()
     if (now.getDay() === 0) {
       const ledger = loadLedger()
-      if (data && ledger.lastWeekUpdated !== now.toISOString().slice(0, 10)) {
+      if (data && ledger.lastWeekUpdated !== toDateStr(now)) {
         saveLedger({
           ...ledger,
           lastWeekCompleted: data.totalCompleted,
-          lastWeekUpdated:   now.toISOString().slice(0, 10),
+          lastWeekUpdated:   toDateStr(now),
         })
       }
     }
@@ -195,7 +247,7 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
 
   if (!data) return null
 
-  const { totalCompleted, delta, focusHrs, streak, bestStreak } = data
+  const { totalCompleted, delta, focusSec, streak, bestStreak } = data
 
   const deltaSign  = delta > 0 ? '+' : ''
   const deltaColor = delta >= 0 ? '#10b981' : '#ef4444'
@@ -259,7 +311,7 @@ export default function WeeklyRecap({ todos = [], canvasAssignments = [], digest
           {/* Focus hours */}
           <div>
             <div style={{ fontSize: '1.15rem', fontWeight: 900, color: c.value, lineHeight: 1 }}>
-              {focusHrs}h
+              {fmtFocus(focusSec)}
             </div>
             <div style={{ fontSize: '0.58rem', color: c.muted, fontWeight: 600, marginTop: 2 }}>
               focused

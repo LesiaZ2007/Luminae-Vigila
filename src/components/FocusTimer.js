@@ -737,7 +737,10 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
             backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.28)',
           }}>
-            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} variant="zen" />
+            {/* sessionsToday doubles as a version counter — it increments the
+                moment a session is saved, which is exactly when the card needs
+                to re-read localStorage. */}
+            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} variant="zen" />
           </div>
 
           {/* Center stack */}
@@ -882,7 +885,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
 
         {/* Weekly recap + Sunday digest */}
         <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
-          <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} />
+          <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} />
         </div>
       </div>
     </>
