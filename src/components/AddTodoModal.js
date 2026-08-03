@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import LinkedNotes from '@/components/LinkedNotes'
 import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
@@ -20,15 +21,16 @@ const PRIORITY = [
   { id: 'high',   label: 'High',   color: '#ef4444' },
 ]
 
-export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate }) {
+export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate, initialTitle, initialNotes,
+  allNotes = [], onOpenNote, onCreateLinkedNote }) {
   const isEdit   = !!editTodo
   const isCanvas = !!(editTodo?.canvasId)
 
-  const [title,         setTitle]         = useState(editTodo?.title || '')
+  const [title,         setTitle]         = useState(editTodo?.title || initialTitle || '')
   const [category,      setCategory]      = useState(editTodo?.category || todoCategories[0]?.id || '')
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
-  const [notes,         setNotes]         = useState(editTodo?.notes || '')
+  const [notes,         setNotes]         = useState(editTodo?.notes || initialNotes || '')
   const _existingCustomAt = editTodo?.reminder?.at ? new Date(editTodo.reminder.at) : null
   const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.at ? -1 : (editTodo?.reminder?.ms || 0))
   const [customReminderDate, setCustomReminderDate] = useState(
@@ -496,6 +498,17 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                 <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-3)' }}>Maximum 20 subtasks reached.</p>
               )}
             </div>
+          )}
+
+          {/* Linked notes — an unsaved task has no id for a note to point at. */}
+          {isEdit && (
+            <LinkedNotes
+              notes={allNotes}
+              targetId={editTodo.id}
+              onOpenNote={id => { onOpenNote?.(id); handleClose() }}
+              onCreate={onCreateLinkedNote ? () => { onCreateLinkedNote({ type: 'task', id: editTodo.id, label: title || 'Task' }); handleClose() } : undefined}
+              compact
+            />
           )}
 
           {error && <p style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{error}</p>}
