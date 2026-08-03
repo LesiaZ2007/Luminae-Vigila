@@ -124,7 +124,7 @@ function saveStudySession(session) {
   } catch {}
 }
 
-export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], events = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
+export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], events = [], studySessions, onTagSession, onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
@@ -776,7 +776,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
             {/* sessionsToday doubles as a version counter — it increments the
                 moment a session is saved, which is exactly when the card needs
                 to re-read localStorage. */}
-            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} variant="zen" />
+            <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} sessions={studySessions} onTagSession={onTagSession} variant="zen" />
           </div>
 
           {/* Center stack */}
@@ -921,7 +921,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
 
         {/* Weekly recap + Sunday digest */}
         <div style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--border)', background: 'var(--surface2)' }}>
-          <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} />
+          <WeeklyRecap todos={todos} canvasAssignments={canvasAssignments} digest={digest} sessionsVersion={sessionsToday} sessions={studySessions} onTagSession={onTagSession} />
         </div>
       </div>
     </>

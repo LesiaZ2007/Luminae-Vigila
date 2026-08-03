@@ -5,7 +5,7 @@ import { Flame, BellRing } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { enablePush, pushPermission } from '@/lib/pushClient'
 import { todayStr, toDateStr } from '@/lib/localDate'
-import SessionHistory from '@/components/SessionHistory'
+import SessionHistory, { buildCourseOptions } from '@/components/SessionHistory'
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
@@ -153,6 +153,11 @@ export default function WeeklyRecap({
   todos = [], canvasAssignments = [], digest = null,
   /** Bumped by the parent when a focus session completes, so this re-reads localStorage. */
   sessionsVersion = 0,
+  /** Synced sessions from page.js. Falls back to localStorage when absent so the
+      component still works standalone. */
+  sessions: sessionsProp,
+  /** (sessionId, { courseId, courseName }) => void — enables retroactive tagging. */
+  onTagSession,
   /** 'panel' (themed surface) | 'zen' (on dark backdrop) */ variant = 'panel',
 }) {
   const [data,       setData]       = useState(null)
@@ -161,7 +166,11 @@ export default function WeeklyRecap({
   const [showAllSessions, setShowAllSessions] = useState(false)
   // Re-read on the same trigger as the totals, so a session you just finished
   // shows up in the list rather than only in the numbers above it.
-  const sessions = useMemo(() => parseStudySessions(), [sessionsVersion])
+  const localSessions = useMemo(() => parseStudySessions(), [sessionsVersion])
+  // Prefer the synced array: tagging writes to page.js state, and re-reading
+  // localStorage here would show the pre-edit value until the next version bump.
+  const sessions = sessionsProp ?? localSessions
+  const courseOptions = useMemo(() => buildCourseOptions(canvasAssignments), [canvasAssignments])
   const [notifPerm,  setNotifPerm]  = useState('default') // 'granted'|'denied'|'default'|'unsupported'
   const [notifBusy,  setNotifBusy]  = useState(false)
 
@@ -350,6 +359,8 @@ export default function WeeklyRecap({
                   maxDays={showAllSessions ? 999 : 3}
                   showAll={showAllSessions}
                   onShowAll={() => setShowAllSessions(true)}
+                  courseOptions={courseOptions}
+                  onTagSession={onTagSession}
                   compact
                 />
               </div>
