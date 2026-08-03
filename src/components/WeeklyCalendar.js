@@ -7,6 +7,27 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
+/**
+ * How overlapping timed events are laid out.
+ *
+ *   'columns' — Google Calendar behaviour. FullCalendar packs each cluster of
+ *               mutually-overlapping events into side-by-side columns, so an
+ *               event only gives up width to events it actually collides with.
+ *               A short event sitting inside a long one takes the full
+ *               remaining width instead of a fixed indent.
+ *
+ *   'cascade' — the original behaviour: anything starting later than something
+ *               it overlaps was pushed to a flat `left: 15%`. Because the
+ *               indent was constant, several events that overlap one long event
+ *               but not each other all landed on the same edge, which read as
+ *               an accidental column (see PHYS 2211 / CS 1100 under the AI
+ *               Career Fair).
+ *
+ * TO REVERT: change this one string back to 'cascade'. Nothing else needs to
+ * move — the cascade code path and its CSS are both still here.
+ */
+const OVERLAP_STRATEGY = 'columns'
+
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
   // Event recolor
@@ -93,10 +114,14 @@ export default function WeeklyCalendar({
     const harness = info.el.parentElement
     if (!harness) return
     harness.dataset.eventId = info.event.id
+    // In 'columns' mode we leave the harness alone so FullCalendar's own
+    // column packing survives — our CSS uses !important and would override it.
     harness.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness')
-    const role = overlapRole(info.event, info.view.calendar.getEvents())
-    if (role === 'later') harness.classList.add('lv-overlap-later-harness')
-    if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+    if (OVERLAP_STRATEGY === 'cascade') {
+      const role = overlapRole(info.event, info.view.calendar.getEvents())
+      if (role === 'later') harness.classList.add('lv-overlap-later-harness')
+      if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+    }
 
     if (highlightEventId && info.event.id === highlightEventId) {
       info.el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.35)'
@@ -156,10 +181,19 @@ export default function WeeklyCalendar({
   }
 
   function updateOverlapClasses(calendarApi) {
-    const renderedEvents = calendarApi.getEvents()
     const root = calendarApi.el
     if (!root) return
 
+    // 'columns' mode: strip any stale cascade classes and let FullCalendar lay
+    // the events out. Done as a sweep rather than an early return so flipping
+    // OVERLAP_STRATEGY at runtime (fast refresh) cleans up after itself.
+    if (OVERLAP_STRATEGY === 'columns') {
+      root.querySelectorAll('.lv-overlap-earlier-harness, .lv-overlap-later-harness')
+        .forEach(h => h.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness'))
+      return
+    }
+
+    const renderedEvents = calendarApi.getEvents()
     root.querySelectorAll('.fc-timegrid-event-harness[data-event-id]').forEach(harness => {
       const eventApi = renderedEvents.find(ev => ev.id === harness.dataset.eventId)
       harness.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness')
@@ -337,6 +371,9 @@ export default function WeeklyCalendar({
 
   const containerClass = [
     'flex-1 min-h-0 rounded-2xl overflow-hidden',
+    // Scopes the overlap CSS. Without this the harness overrides applied in
+    // every mode and flattened FullCalendar's column packing.
+    `lv-overlap-${OVERLAP_STRATEGY}`,
     `lv-cal-view-${currentView}`,
     navAnim  ? `cal-nav-${navAnim}`   : '',
     viewAnim ? `cal-view-${viewAnim}` : '',
@@ -430,6 +467,10 @@ export default function WeeklyCalendar({
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
             }}
             events={events}
+            /* false → colliding events sit fully side by side (Google style).
+               true (FullCalendar's default) → the later one covers ~50% of the
+               earlier one, which is the look 'cascade' was reinforcing. */
+            slotEventOverlap={OVERLAP_STRATEGY === 'cascade'}
             eventClassNames={(arg) => (arg.event.extendedProps?.isHiddenEvent ? ['lv-hidden-event'] : [])}
             eventContent={renderEventContent}
             eventDidMount={handleEventDidMount}
