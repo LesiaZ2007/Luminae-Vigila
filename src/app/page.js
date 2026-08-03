@@ -45,11 +45,21 @@ import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/compo
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
+import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
 
-const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), { ssr: false })
+// Both of these are code-split, so a cold load has a real gap before the chunk
+// lands. The `loading` fallbacks render a skeleton in the shape of the eventual
+// layout, which reads as "loading" rather than "blank".
+const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), {
+  ssr: false,
+  loading: () => <CalendarSkeleton />,
+})
 // Tiptap pulls in ProseMirror, which is sizeable and browser-only — keep it out
 // of the initial bundle so the calendar (the default tab) isn't slowed by it.
-const NotesPanel = dynamic(() => import('@/components/NotesPanel'), { ssr: false })
+const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
+  ssr: false,
+  loading: () => <NotesPanelSkeleton />,
+})
 
 export const EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
@@ -877,6 +887,35 @@ export default function Home() {
       }
     ))
   }, [])
+
+  // Append a subtask from the inline composer on a task row.
+  const addSubtask = useCallback((todoId, title) => {
+    const trimmed = (title ?? '').trim()
+    if (!trimmed) return
+    setTodos(prev => prev.map(t => t.id !== todoId ? t : {
+      ...t,
+      subtasks: [
+        ...(t.subtasks ?? []),
+        { id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title: trimmed, completed: false },
+      ],
+      updatedAt: new Date().toISOString(),
+    }))
+  }, [])
+
+  // Bulk-remove finished tasks. Recurring todos track completion per-date in
+  // completedDates rather than a `completed` flag, so they're deliberately left
+  // alone — clearing one would delete the whole series, not just today's.
+  const clearCompletedTodos = useCallback(() => {
+    const doomed = todos.filter(t => t.completed)
+    if (doomed.length === 0) return
+    setTodos(prev => prev.filter(t => !t.completed))
+    pushToast(
+      `Cleared ${doomed.length} completed task${doomed.length !== 1 ? 's' : ''}`,
+      undefined,
+      [{ label: 'Undo', onClick: () => setTodos(prev => [...prev, ...doomed]) }],
+      { icon: 'trash' },
+    )
+  }, [todos, pushToast])
 
   /* ── Custom Lists CRUD ── */
   const createCustomList = useCallback((name, icon, color, dueDate = null) => {
@@ -2206,6 +2245,7 @@ export default function Home() {
                                onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                                onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                                onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                               onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
                                onReorder={reorderTodos} isMobile={isMobile}
                                canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                                onToggleCanvas={toggleCanvasAssignment}
@@ -2236,6 +2276,7 @@ export default function Home() {
                            onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                               onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
                            onReorder={reorderTodos} fullPage isMobile={isMobile}
                            canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                            onToggleCanvas={toggleCanvasAssignment}
@@ -2308,6 +2349,12 @@ export default function Home() {
         {activeNav === 'courses' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
             <ErrorBoundary>
+              {/* Only skeleton the *first* Canvas fetch. On a re-sync we keep the
+                  existing assignments on screen — replacing real data with
+                  placeholders would be a downgrade, not a loading state. */}
+              {cvSyncing && canvasAssignments.length === 0 ? (
+                <ListSkeleton rows={7} label="Loading Canvas assignments" padding="20px 28px" />
+              ) : (
               <CoursesPanel
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
@@ -2318,6 +2365,7 @@ export default function Home() {
                 onSync={syncCanvas}
                 syncing={cvSyncing}
               />
+              )}
             </ErrorBoundary>
           </main>
         )}
