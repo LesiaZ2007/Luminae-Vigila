@@ -345,7 +345,13 @@ export default function TodoPanel({
         </div>
 
         {showCatMgr && (
-          <CategoryManager categories={todoCategories} onChange={onCategoriesChange} onClose={() => setShowCatMgr(false)} />
+          <CategoryManager
+            categories={todoCategories}
+            title="Task Categories"
+            onChange={onCategoriesChange}
+            onClose={() => setShowCatMgr(false)}
+            inUseCount={id => todos.filter(t => t.category === id).length}
+          />
         )}
         {confetti && <Confetti key={confetti.key} priority={confetti.priority} x={confetti.x} y={confetti.y} />}
       </div>
@@ -418,7 +424,13 @@ export default function TodoPanel({
       )}
 
       {showCatMgr && (
-        <CategoryManager categories={todoCategories} onChange={onCategoriesChange} onClose={() => setShowCatMgr(false)} />
+        <CategoryManager
+            categories={todoCategories}
+            title="Task Categories"
+            onChange={onCategoriesChange}
+            onClose={() => setShowCatMgr(false)}
+            inUseCount={id => todos.filter(t => t.category === id).length}
+          />
       )}
       {confetti && <Confetti key={confetti.key} priority={confetti.priority} x={confetti.x} y={confetti.y} />}
     </div>

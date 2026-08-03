@@ -62,7 +62,10 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   loading: () => <NotesPanelSkeleton />,
 })
 
-export const EVENT_CATEGORIES = [
+// Seed values only. Event categories are user-editable and synced — read
+// `eventCategories` state instead. Still exported because other modules import
+// it for a default palette.
+export const DEFAULT_EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
   { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
   { id: 'personal', label: 'Personal',    color: '#10b981' },
@@ -100,6 +103,7 @@ export default function Home() {
   const events = useMemo(() => visible(eventsRaw), [eventsRaw])
   const todos  = useMemo(() => visible(todosRaw),  [todosRaw])
   const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
+  const [eventCategories, setEventCategories] = useState(DEFAULT_EVENT_CATEGORIES)
   const [studySessions,  setStudySessions]  = useState([])
   const [toasts,         setToasts]         = useState([])
 
@@ -294,6 +298,7 @@ export default function Home() {
         const localEvents   = readLocal('lv-events',         '[]')
         const localTodos    = readLocal('lv-todos',          '[]')
         const localCats     = readLocal('lv-todo-cats',      '[]')
+        const localEvCats   = readLocal('lv-event-cats',     '[]')
         const localClasses  = readLocal('lv-canvas-classes', '[]')
         const localPrefs    = readLocal('lv-event-prefs',    '{}')
         const localSessions = readLocal('lv-study-sessions', '[]')
@@ -321,6 +326,8 @@ export default function Home() {
         const mergedTodos    = purgeTombstones(mergeWithTombstones(cloud.todos,  localTodos))
         const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
+        const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
+        const mergedEvCats    = mergedEvCatsRaw.length > 0 ? mergedEvCatsRaw : DEFAULT_EVENT_CATEGORIES
         const mergedClasses  = mergeById(cloud.classSchedule,  localClasses)
         const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
         const mergedSessions = mergeById(cloud.studySessions,  localSessions)
@@ -333,6 +340,7 @@ export default function Home() {
         setEvents(mergedEvents)
         setTodos(mergedTodos)
         setTodoCategories(mergedCats)
+        setEventCategories(mergedEvCats)
         setCanvasClasses(mergedClasses)
         setEventPrefs(mergedPrefs)
         setStudySessions(mergedSessions)
@@ -355,6 +363,7 @@ export default function Home() {
             events:         mergedEvents,
             todos:          mergedTodos,
             todoCategories: mergedCats,
+            eventCategories: mergedEvCats,
             classSchedule:  mergedClasses,
             eventPrefs:     mergedPrefs,
             studySessions:  mergedSessions,
@@ -387,6 +396,7 @@ export default function Home() {
           events:         eventsRaw,
           todos:          todosRaw,
           todoCategories,
+          eventCategories,
           classSchedule:  canvasClasses,
           eventPrefs,
           studySessions,
@@ -396,7 +406,7 @@ export default function Home() {
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [eventsRaw, todosRaw, todoCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Immediately push the current state to the cloud (bypasses the debounce).
   // Used on reconnect so pending offline edits upload the moment we're back
@@ -406,9 +416,9 @@ export default function Home() {
     fetch('/api/sync', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ events: eventsRaw, todos: todosRaw, todoCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists: customListsRaw, notes }),
+      body: JSON.stringify({ events: eventsRaw, todos: todosRaw, todoCategories, eventCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists: customListsRaw, notes }),
     }).catch(() => {})
-  }, [currentUser, eventsRaw, todosRaw, todoCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+  }, [currentUser, eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -471,6 +481,13 @@ export default function Home() {
       if (e)  setEvents(purgeTombstones(JSON.parse(e)))
       if (t)  setTodos(purgeTombstones(JSON.parse(t)))
       if (tc) setTodoCategories(JSON.parse(tc))
+      const ec = localStorage.getItem('lv-event-cats')
+      if (ec) {
+        const parsed = JSON.parse(ec)
+        // An empty array would leave the user with no categories at all and no
+        // obvious way back, so fall through to the defaults.
+        if (Array.isArray(parsed) && parsed.length > 0) setEventCategories(parsed)
+      }
       if (ep) setEventPrefs(JSON.parse(ep))
       if (ss) setStudySessions(JSON.parse(ss))
       // Custom Lists
@@ -494,6 +511,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(eventsRaw))      }, [eventsRaw])
   useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todosRaw))       }, [todosRaw])
   useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
+  useEffect(() => { localStorage.setItem('lv-event-cats',     JSON.stringify(eventCategories)) }, [eventCategories])
   useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
   useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
   useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customListsRaw)) }, [customListsRaw])
@@ -575,6 +593,10 @@ export default function Home() {
       setTodos(local => mergeCloudWinsWithTombstones(cloud.todos, local))
       setTodoCategories(local => {
         const merged = mergeCloudWins(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeCloudWins(cloud.eventCategories, local)
         return merged.length > 0 ? merged : local
       })
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
@@ -1675,8 +1697,8 @@ export default function Home() {
       tagColor: note.color || 'var(--blue)',
     })
 
-    const categoryColor = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.color || 'var(--blue)'
-    const categoryLabel = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.label || categoryId || 'Event'
+    const categoryColor = (categoryId) => eventCategories.find(c => c.id === categoryId)?.color || 'var(--blue)'
+    const categoryLabel = (categoryId) => eventCategories.find(c => c.id === categoryId)?.label || categoryId || 'Event'
 
     const eventFilter = (e) => {
       const title = e.title || e.summary || ''
@@ -2197,7 +2219,7 @@ export default function Home() {
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}
                                 arrowNavEnabled={!anyModalOpen}
-                                colorSwatches={EVENT_CATEGORIES.map(c => c.color)} />
+                                colorSwatches={eventCategories.map(c => c.color)} />
               </ErrorBoundary>
             </main>
 
@@ -2341,7 +2363,7 @@ export default function Home() {
                 canvasAssignments={canvasAssignments}
                 canvasClassEvents={canvasClassEvents}
                 todoCategories={todoCategories}
-                eventCategories={EVENT_CATEGORIES}
+                eventCategories={eventCategories}
                 customLists={customLists}
                 onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
                 onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
@@ -2386,7 +2408,7 @@ export default function Home() {
               todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories}
-              eventCategories={EVENT_CATEGORIES}
+              eventCategories={eventCategories}
               onAddTodo={addTodo}
               onSaveEvent={saveEvent}
               onUpdateTodo={updateTodo}
@@ -2584,7 +2606,7 @@ export default function Home() {
       {/* ── Modals ── */}
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
-                    categories={EVENT_CATEGORIES} onSave={saveEvent} onDelete={deleteEvent}
+                    categories={eventCategories} onCategoriesChange={setEventCategories} onSave={saveEvent} onDelete={deleteEvent}
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
@@ -2819,7 +2841,7 @@ export default function Home() {
             <Corvus
               events={events} canvasClassEvents={canvasClassEvents} todos={todos}
               canvasAssignments={canvasAssignments}
-              todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
+              todoCategories={todoCategories} eventCategories={eventCategories}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
               compact={true}
