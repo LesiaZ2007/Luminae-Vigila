@@ -3,7 +3,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye, GripVertical } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
+
 import Confetti from '@/components/Confetti'
+
+/**
+ * Shared style for the per-row task actions (+ / trash).
+ *
+ * Touch gets full opacity — there is no hover to reveal them — while desktop
+ * keeps them at 0.4 until the row is hovered so a long list stays calm.
+ */
+function todoRowAction(hovered, isMobile) {
+  return {
+    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)',
+    padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex',
+    opacity: isMobile ? 0.7 : hovered ? 1 : 0.4,
+    transition: 'opacity .13s, color .13s',
+  }
+}
 
 const FILTERS = [
   { id: 'upcoming', label: 'Upcoming' },
@@ -14,7 +30,7 @@ const FILTERS = [
 
 export default function TodoPanel({
   todos, events, todoCategories,
-  onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, onToggleSubtask, onReorder, fullPage,
+  onToggle, onDelete, onAddClick, onEditClick, onCategoriesChange, onToggleSubtask, onAddSubtask, onClearCompleted, onReorder, fullPage,
   isMobile,
   // Canvas props (all optional)
   canvasAssignments = [],
@@ -42,6 +58,10 @@ export default function TodoPanel({
   }
 
   const todayStr = new Date().toISOString().slice(0, 10)
+
+  // Only non-recurring completed todos are clearable — see clearCompletedTodos
+  // in page.js for why recurring series are excluded.
+  const clearableCount = todos.filter(t => t.completed).length
 
   const filtered = todos.filter(t => {
     if (filter === 'done')     return t.completed
@@ -87,20 +107,57 @@ export default function TodoPanel({
         <>
           {filtered.length > 0 && (
             filter === 'done' ? (
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {filtered.map(todo => (
-                  <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
-                            todoCategories={todoCategories} todayStr={todayStr}
-                            onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
-                            onToggleSubtask={onToggleSubtask}
-                            isMobile={isMobile} />
-                ))}
-              </ul>
+              <>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {filtered.map(todo => (
+                    <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
+                              todoCategories={todoCategories} todayStr={todayStr}
+                              onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
+                              onToggleSubtask={onToggleSubtask}
+                              isMobile={isMobile} />
+                  ))}
+                </ul>
+                {/* Bulk clear — mirrors "Clear checked" on custom lists. Only
+                    offered in the Done view, where the scope is unambiguous. */}
+                {onClearCompleted && clearableCount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+                    <button
+                      onClick={onClearCompleted}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '7px 14px', borderRadius: 9,
+                        border: '1px solid var(--border)', background: 'transparent',
+                        color: 'var(--text-3)', fontFamily: 'inherit',
+                        fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                        transition: 'color .13s, border-color .13s, background .13s',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.color       = 'var(--red)'
+                        e.currentTarget.style.borderColor = 'var(--red)'
+                        e.currentTarget.style.background  = 'rgba(239,68,68,.07)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.color       = 'var(--text-3)'
+                        e.currentTarget.style.borderColor = 'var(--border)'
+                        e.currentTarget.style.background  = 'transparent'
+                      }}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M10 11v6M14 11v6"/>
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                      </svg>
+                      Clear completed ({clearableCount})
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
               <DraggableList
                 todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
-                todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                 canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
                 onToggleCanvas={onToggleCanvas}
                 onToggleSubtask={onToggleSubtask}
@@ -228,14 +285,14 @@ export default function TodoPanel({
                     {filtered.map(todo => (
                       <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                                 todoCategories={todoCategories} todayStr={todayStr}
-                                onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                                onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                                 isMobile={isMobile} />
                     ))}
                   </ul>
                 ) : (
                   <DraggableList
                     todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
-                    todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick}
+                    todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                     canvasAssignments={[]}
                     onToggleCanvas={onToggleCanvas}
                     onToggleSubtask={onToggleSubtask}
@@ -354,7 +411,7 @@ export default function TodoPanel({
 
 // ── Drag-and-drop reorderable list (wraps GroupedList rows) ──────────────────
 
-function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr, onToggle, onDelete, onEdit,
+function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                          canvasAssignments, onToggleCanvas, onToggleSubtask, onReorder, isMobile }) {
   // We keep an internal order for smooth visual feedback; commit to parent on drop.
   const [localOrder, setLocalOrder] = useState(null) // null = use prop order
@@ -410,6 +467,7 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
       canvasAssignments={canvasAssignments}
       onToggleCanvas={onToggleCanvas}
       onToggleSubtask={onToggleSubtask}
+      onAddSubtask={onAddSubtask}
       // drag callbacks
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
@@ -423,10 +481,20 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
 // ── TodoItem with swipe (mobile) + drag handle (desktop) ────────────────────
 
 function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, onToggle, onDelete, onEdit,
-                   onToggleSubtask, onDragStart, onDragOver, onDrop, isDragging, isMobile }) {
+                   onToggleSubtask, onAddSubtask, onDragStart, onDragOver, onDrop, isDragging, isMobile }) {
   const [hovered,          setHovered]          = useState(false)
   const [justDone,         setJustDone]         = useState(false)
   const [subtasksExpanded, setSubtasksExpanded] = useState(false)
+  const [addingSubtask,    setAddingSubtask]    = useState(false)
+  const [subtaskDraft,     setSubtaskDraft]     = useState('')
+
+
+  function commitSubtask() {
+    const title = subtaskDraft.trim()
+    if (title) onAddSubtask?.(todo.id, title)
+    setSubtaskDraft('')
+    setAddingSubtask(false)
+  }
 
   // Swipe state (touch-only)
   const swipeRef    = useRef({ startX: 0, startY: 0, dx: 0, locked: null, active: false })
@@ -701,22 +769,74 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
               ))}
             </div>
           )}
+
+          {/* Inline subtask composer — Enter adds and stays open so you can
+              type several in a row; Escape or blur closes it. */}
+          {addingSubtask && (
+            <div style={{ marginTop: 6, paddingLeft: 2 }} onClick={e => e.stopPropagation()}>
+              <input
+                autoFocus
+                value={subtaskDraft}
+                onChange={e => setSubtaskDraft(e.target.value)}
+                onBlur={commitSubtask}
+                onKeyDown={e => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const title = subtaskDraft.trim()
+                    if (title) { onAddSubtask?.(todo.id, title); setSubtaskDraft('') }
+                    else setAddingSubtask(false)
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSubtaskDraft('')
+                    setAddingSubtask(false)
+                  }
+                }}
+                placeholder="Subtask… (Enter to add)"
+                maxLength={120}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '5px 8px', borderRadius: 8,
+                  border: '1.5px solid var(--blue)', background: 'var(--surface2)',
+                  color: 'var(--text)', fontSize: '0.76rem', fontFamily: 'inherit', outline: 'none',
+                }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Priority dot */}
         <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
 
-        {/* Delete (desktop hover) */}
-        {!isMobile && (
+        {/* Row actions — always present (dimmed until hover on desktop, and
+            shown on touch where there is no hover) so add-subtask and delete
+            don't have to be discovered by accident. */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, flexShrink: 0, marginTop: 1 }}>
+          {onAddSubtask && (
+            <button onClick={e => { e.stopPropagation(); setSubtasksExpanded(true); setAddingSubtask(true) }}
+                    title="Add subtask"
+                    aria-label="Add subtask"
+                    style={todoRowAction(hovered, isMobile)}
+                    onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+          )}
           <button onClick={e => { e.stopPropagation(); onDelete(todo.id) }}
-                  style={{ marginTop: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', opacity: hovered ? 1 : 0, transition: 'opacity .13s, color .13s', padding: 2, borderRadius: 4, flexShrink: 0 }}
+                  title="Delete task"
+                  aria-label="Delete task"
+                  style={todoRowAction(hovered, isMobile)}
                   onMouseEnter={e => e.currentTarget.style.color = 'var(--red)'}
                   onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
             </svg>
           </button>
-        )}
+        </div>
       </div>
     </li>
   )
@@ -758,7 +878,7 @@ function CanvasMiniItem({ a, onToggle }) {
   )
 }
 
-function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit,
+function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                        // optional: merge Canvas assignments inline
                        canvasAssignments = [], onToggleCanvas, onToggleSubtask,
                        // drag callbacks passed through
@@ -838,7 +958,7 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
                 {bucket.todos.map(todo => (
                   <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                             todoCategories={todoCategories} todayStr={todayStr}
-                            onToggle={onToggle} onDelete={onDelete} onEdit={onEdit}
+                            onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} onAddSubtask={onAddSubtask}
                             onToggleSubtask={onToggleSubtask}
                             onDragStart={onDragStart}
                             onDragOver={onDragOver}
