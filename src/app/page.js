@@ -21,9 +21,10 @@ function useWindowWidth() {
 import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
-import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches } from '@/lib/notes'
+import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
+import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -605,6 +606,39 @@ export default function Home() {
         })
         .catch(() => {})
     }, () => {})
+  }, [])
+
+  /* ── Incoming Web Share ──────────────────────────────────────────────────
+     /share stashes the payload and redirects here (see src/app/share/page.js).
+     Runs after the localStorage load below has had a chance to populate notes,
+     so the shared note is prepended to real data rather than an empty array. */
+  useEffect(() => {
+    let raw
+    try {
+      raw = localStorage.getItem(PENDING_SHARE_KEY)
+      // Clear immediately: if anything below throws, a bad payload shouldn't
+      // reopen on every launch.
+      if (raw) localStorage.removeItem(PENDING_SHARE_KEY)
+    } catch { return }
+    if (!raw) return
+
+    let payload
+    try { payload = JSON.parse(raw) } catch { return }
+
+    const title = (payload?.title ?? '').trim()
+    const body  = (payload?.body  ?? '').trim()
+
+    const note = makeNote({
+      title,
+      // Escape before wrapping in <p> — shared text is arbitrary and would
+      // otherwise be parsed as markup by the editor.
+      html: sharedTextToHtml(body),
+      tags: ['shared'],
+    })
+
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+    setActiveNav('notes')
   }, [])
 
   /* ── Load from localStorage ── */
