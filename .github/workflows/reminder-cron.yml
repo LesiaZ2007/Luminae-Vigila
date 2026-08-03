@@ -1,0 +1,62 @@
+# Pings the reminder scheduler so reminders fire while the app is closed.
+#
+# Why this exists: /api/push/reminders does nothing unless something calls it,
+# and Vercel Hobby caps crons at 2 jobs / once-a-day — useless for reminders.
+# GitHub Actions has no such cap, so the heartbeat lives here instead. There is
+# NO limit on how many notifications this can send; the only thing that was ever
+# limited is how often Vercel itself would ping the endpoint.
+#
+# Caveat worth knowing: GitHub's scheduler is best-effort and runs late under
+# load — occasionally by 10+ minutes. The endpoint's 30-minute grace window
+# absorbs that (a late tick still sends, it doesn't skip), but if you want
+# punctual to-the-minute reminders, use an external pinger such as cron-job.org
+# instead. See docs/NOTIFICATIONS.md.
+#
+# Setup (one time):
+#   Repo → Settings → Secrets and variables → Actions → New repository secret
+#     CRON_SECRET  — must match the CRON_SECRET env var in Vercel
+#     APP_URL      — e.g. https://luminae-vigila.vercel.app  (no trailing slash)
+
+name: Reminder scheduler
+
+on:
+  schedule:
+    # Every 5 minutes — the shortest interval GitHub Actions accepts.
+    - cron: '*/5 * * * *'
+  # Lets you fire one by hand from the Actions tab to test the wiring.
+  workflow_dispatch:
+
+# If a run is somehow still going, don't pile another on top of it.
+concurrency:
+  group: reminder-cron
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /api/push/reminders
+        env:
+          APP_URL:     ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::APP_URL and CRON_SECRET repository secrets must both be set."
+            exit 1
+          fi
+
+          # -w writes the status to stdout after the body so both are visible in
+          # the log; --fail-with-body keeps the response text on an error status,
+          # which is where the endpoint explains itself.
+          response=$(curl --silent --show-error --fail-with-body \
+            --max-time 60 \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            --write-out '\nHTTP %{http_code}\n' \
+            "$APP_URL/api/push/reminders") || {
+              echo "::error::Reminder ping failed:"
+              echo "$response"
+              exit 1
+            }
+
+          echo "$response"
