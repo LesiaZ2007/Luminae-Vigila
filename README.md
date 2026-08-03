@@ -205,6 +205,9 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
 - **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
 - Sessions come from the Focus Timer's course tag; data is stored in `localStorage` under `lv-study-sessions` and synced to Neon DB for signed-in users (cross-device)
+- **Past sessions** — an "All sessions" tab lists every completed session, newest first, grouped by day (`Today` / `Yesterday` / `Mon, Aug 3`) with the day's total, what you focused on, the end time, and the duration. Capped at 5 days with a "show earlier" button, so a term of sessions isn't a scroll trap
+- Sessions now record `endedAt` and `targetTitle`; older rows predate both and simply render without a time or subject line
+- The same list appears in the **Focus Timer**'s expanded "Your week" section — the Courses tab only exists once Canvas is connected, so that copy is the one that's always reachable
 - Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
@@ -299,8 +302,11 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - **Reminders fire even when the app is closed** via a server-side scheduler: `GET /api/push/reminders` scans every subscribed user's events/todos for reminders that just came due and sends a push, de-duped through the `sent_reminders` table. This runs independently of any open tab (the old behaviour only fired reminders while a tab was open — which on a phone is almost never when a reminder is due).
   - ⚠️ **This endpoint does nothing unless something calls it, and that is the single most common reason no notifications ever arrive.**
   - **There is no cap on notifications per day.** Web Push has no quota — not from Vercel, not from the browser push services. The only limit is *how often Vercel will ping your endpoint*, so the heartbeat runs outside Vercel and the constraint disappears.
-  - **Set up (free, no signup):** `.github/workflows/reminder-cron.yml` pings every 5 minutes. Add repo secrets `CRON_SECRET` (matching Vercel) and `APP_URL` under **Settings → Secrets and variables → Actions**, then run it once by hand from the Actions tab to confirm. GitHub's scheduler runs late under load; the endpoint's 30-minute grace window absorbs that.
-  - **For to-the-minute punctuality:** [cron-job.org](https://cron-job.org) supports 1-minute intervals with custom headers. Point it at `https://<your-domain>/api/push/reminders` with `Authorization: Bearer $CRON_SECRET`.
+  - **Set up (free, no signup):** `.github/workflows/reminder-cron.yml` runs every 5 minutes and **pings once a minute from inside each run**, so reminders land on the minute rather than up to 5 minutes late. Add repo secrets `CRON_SECRET` (matching Vercel) and `APP_URL` under **Settings → Secrets and variables → Actions**, then run it once by hand from the Actions tab to confirm.
+    - This burns ~60 runner-minutes per hour, which is free **only because this repo is public** (public repos get unlimited Actions minutes). If it ever goes private, that exhausts the 2,000 free minutes in about a day and a half — switch to an external pinger then.
+    - GitHub only guarantees best-effort *start* times and can delay a scheduled run by 10+ minutes under load. The loop makes each run punctual internally but can't fix a run that starts late.
+  - **For hard guarantees:** [cron-job.org](https://cron-job.org) is free, purpose-built, and supports 1-minute intervals with custom headers. Point it at `https://<your-domain>/api/push/reminders` with `Authorization: Bearer $CRON_SECRET`. Safe to run alongside the Action.
+  - **Can't read `CRON_SECRET` back out of Vercel?** You're not meant to — it's write-only after creation. Generate a new one (`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`) and set the same value in both Vercel and your pinger. It only has to match, not be the original.
   - Idempotent either way — `sent_reminders` dedupes, so overlapping pingers can't double-send.
   - `vercel.json` is **schema-validated and rejects unknown keys** (including comment properties — a stray `_comment` fails the build). Explanations live in [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) instead.
 - iOS Safari requires the app to be added to the Home Screen (iOS 16.4+). Android Chrome works in-browser with no install.
