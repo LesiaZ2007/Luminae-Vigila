@@ -23,6 +23,7 @@ import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
+import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -816,8 +817,40 @@ export default function Home() {
       const expanded = expandRecurring(ev)
       const isNewEvent = !ev.id || !events.some(e => e.id === ev.id)
       if (!isNewEvent) {
+        // Moving an exam drags its auto-generated study sessions along, keeping
+        // the run-up intact. Shifted by whole days rather than by the raw
+        // millisecond delta, so each session keeps the time of day it was
+        // originally slotted into (findBestSlot picked those around your classes).
+        const prevEv  = events.find(e => e.id === ev.id)
+        const dayDiff = prevEv ? daysBetween(prevEv.start, ev.start) : 0
+        const sessions = dayDiff !== 0
+          ? events.filter(e => e.extendedProps?.studyPlanOf === ev.id)
+          : []
+
         // Single edit — replace just that one instance
-        setEvents(prev => prev.map(e => e.id === ev.id ? expanded[0] : e))
+        setEvents(prev => prev.map(e => {
+          if (e.id === ev.id) return expanded[0]
+          if (dayDiff !== 0 && e.extendedProps?.studyPlanOf === ev.id) {
+            return { ...e, start: shiftIsoDays(e.start, dayDiff), end: shiftIsoDays(e.end, dayDiff) }
+          }
+          return e
+        }))
+
+        if (sessions.length > 0) {
+          const originals = sessions.map(s => ({ id: s.id, start: s.start, end: s.end }))
+          pushToast(
+            `Moved ${sessions.length} study session${sessions.length !== 1 ? 's' : ''}`,
+            `Shifted ${Math.abs(dayDiff)} day${Math.abs(dayDiff) !== 1 ? 's' : ''} ${dayDiff > 0 ? 'later' : 'earlier'} to follow the exam.`,
+            [{
+              label: 'Keep original dates',
+              dismiss: true,
+              onClick: () => setEvents(prev => prev.map(e => {
+                const o = originals.find(x => x.id === e.id)
+                return o ? { ...e, start: o.start, end: o.end } : e
+              })),
+            }],
+          )
+        }
       } else {
         setEvents(prev => [...prev, ...expanded])
       }
@@ -827,7 +860,7 @@ export default function Home() {
         setStudyPlanPending(expanded[0] ?? { ...ev, id: ev.id || String(Date.now()) })
       }
     }
-  }, [events])
+  }, [events, pushToast])
 
   const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
     const matches = e => (deleteAll && groupId)
