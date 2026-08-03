@@ -21,6 +21,51 @@ function todoRowAction(hovered, isMobile) {
   }
 }
 
+/**
+ * "Clear completed (N)" — bulk-removes finished tasks.
+ *
+ * Recurring todos are intentionally not counted: they record completion
+ * per-date in `completedDates` rather than a `completed` flag, so clearing one
+ * would delete the whole series rather than a single occurrence.
+ */
+function ClearCompletedButton({ count, onClick }) {
+  if (!onClick || !count) return null
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+      <button
+        onClick={onClick}
+        title={`Delete ${count} completed task${count !== 1 ? 's' : ''}`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '7px 14px', borderRadius: 9,
+          border: '1px solid var(--border)', background: 'transparent',
+          color: 'var(--text-3)', fontFamily: 'inherit',
+          fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+          transition: 'color .13s, border-color .13s, background .13s',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.color       = 'var(--red)'
+          e.currentTarget.style.borderColor = 'var(--red)'
+          e.currentTarget.style.background  = 'rgba(239,68,68,.07)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.color       = 'var(--text-3)'
+          e.currentTarget.style.borderColor = 'var(--border)'
+          e.currentTarget.style.background  = 'transparent'
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6M14 11v6"/>
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+        Clear completed ({count})
+      </button>
+    </div>
+  )
+}
+
 const FILTERS = [
   { id: 'upcoming', label: 'Upcoming' },
   { id: 'today',    label: 'Today'    },
@@ -107,7 +152,6 @@ export default function TodoPanel({
         <>
           {filtered.length > 0 && (
             filter === 'done' ? (
-              <>
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {filtered.map(todo => (
                     <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
@@ -117,42 +161,6 @@ export default function TodoPanel({
                               isMobile={isMobile} />
                   ))}
                 </ul>
-                {/* Bulk clear — mirrors "Clear checked" on custom lists. Only
-                    offered in the Done view, where the scope is unambiguous. */}
-                {onClearCompleted && clearableCount > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
-                    <button
-                      onClick={onClearCompleted}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6,
-                        padding: '7px 14px', borderRadius: 9,
-                        border: '1px solid var(--border)', background: 'transparent',
-                        color: 'var(--text-3)', fontFamily: 'inherit',
-                        fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
-                        transition: 'color .13s, border-color .13s, background .13s',
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.color       = 'var(--red)'
-                        e.currentTarget.style.borderColor = 'var(--red)'
-                        e.currentTarget.style.background  = 'rgba(239,68,68,.07)'
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.color       = 'var(--text-3)'
-                        e.currentTarget.style.borderColor = 'var(--border)'
-                        e.currentTarget.style.background  = 'transparent'
-                      }}
-                    >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                        <path d="M10 11v6M14 11v6"/>
-                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                      </svg>
-                      Clear completed ({clearableCount})
-                    </button>
-                  </div>
-                )}
-              </>
             ) : (
               /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
               <DraggableList
@@ -165,6 +173,14 @@ export default function TodoPanel({
                 isMobile={isMobile}
               />
             )
+          )}
+
+          {/* Bulk clear — mirrors "Clear checked" on custom lists. Offered in
+              Done and All, the two views where completed tasks accumulate.
+              Not in Upcoming/Today, which exclude them anyway, so the button
+              would claim to clear things you can't see. */}
+          {(filter === 'done' || filter === 'all') && (
+            <ClearCompletedButton count={clearableCount} onClick={onClearCompleted} />
           )}
 
           {/* Canvas section: only in fullPage single-column mode (not sidebar, not two-column desktop, not mobile stack) */}
