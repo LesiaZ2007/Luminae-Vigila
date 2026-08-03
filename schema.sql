@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS todos (
   PRIMARY KEY (id, user_id)
 );
 
+-- User-editable calendar event categories (Class, Exam, Personal, …).
+-- Seeded client-side from DEFAULT_EVENT_CATEGORIES on first run.
+-- Created lazily on first sync (CREATE TABLE IF NOT EXISTS self-heals existing deploys).
+CREATE TABLE IF NOT EXISTS event_categories (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data       JSONB       NOT NULL,
+  PRIMARY KEY (id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS todo_categories (
   id         TEXT        NOT NULL,
   user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
