@@ -45,7 +45,11 @@ const DEFAULTS = {
   longEvery: 4,          // a long break after every N focus sessions
   autoStartNext: false,
   sound: true,
-  logToCalendar: false,
+  // On by default: a finished session is real time you spent, and the whole
+  // point of the timer is to turn tasks into time-blocking. Opting in to
+  // recording work you already did is the wrong way round.
+  logToCalendar: true,
+  settingsVersion: 2,
   fx: 'snow',            // ambient background in full-screen: 'none' | 'snow' | 'aurora' | 'rain' | 'fireflies'
   showInfo: true,        // show the "how it works" note in the compact panel
   customDefaults: null,  // {focusMin, shortMin, longMin} saved as the user's personal default
@@ -77,6 +81,16 @@ function loadState() {
     const settings = { ...DEFAULTS, ...(raw.settings ?? {}) }
     // Migrate retired backgrounds (stars / ocean) to a still-supported one.
     if (settings.fx === 'stars' || settings.fx === 'ocean') settings.fx = 'snow'
+
+    // v2 turned logToCalendar on by default. Anyone with saved settings has a
+    // stored `false` from the old default, which would otherwise shadow the new
+    // one forever — so adopt it once, then never touch it again. The version
+    // stamp is what makes this a migration rather than a setting that keeps
+    // re-enabling itself every reload.
+    if ((raw.settings?.settingsVersion ?? 1) < 2) {
+      settings.logToCalendar = true
+      settings.settingsVersion = 2
+    }
     const isToday = raw.day === todayStr()
     return {
       settings,
@@ -288,7 +302,18 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
           title: linkedTarget ? `🎯 Focus · ${linkedTarget.title}` : '🎯 Focus session',
           start, end,
           color: PHASES.focus.color,
-          extendedProps: { category: 'personal', focusBlock: true },
+          extendedProps: {
+            category: 'personal',
+            focusBlock: true,
+            // Carried so the block explains itself when opened weeks later:
+            // which course it counted toward, and what you were working on.
+            // sessionId ties it back to the lv-study-sessions row.
+            sessionId:  completedSession.id,
+            courseId:   courseTag?.courseId   ?? null,
+            courseName: courseTag?.courseName ?? null,
+            focusTargetId:    taskId ?? null,
+            focusTargetTitle: linkedTarget?.title ?? null,
+          },
         }, 'single')
       }
 
@@ -297,7 +322,11 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       setBurst({ id: endMs, x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2, y: rect ? rect.top + rect.height / 2 : 200 })
       setTimeout(() => setBurst(null), 1600)
       playChime()
-      notify('Focus session complete', linkedTarget ? `Nice work on "${linkedTarget.title}". Time for a break.` : 'Nice work. Time for a break.')
+      // Mention the calendar block explicitly — silently writing an event onto
+      // someone's calendar is the kind of thing you want to be told about.
+      const onWhat = linkedTarget ? ` on "${linkedTarget.title}"` : ''
+      const logged = settings.logToCalendar && onSaveEvent ? ' Added to your calendar.' : ''
+      notify('Focus session complete', `Nice work${onWhat}.${logged} Time for a break.`)
 
       // Next phase: long break every N sessions, else short break
       const next = newCount % settings.longEvery === 0 ? 'long' : 'short'

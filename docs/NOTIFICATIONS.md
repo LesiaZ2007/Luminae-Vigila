@@ -38,22 +38,58 @@ Authorization: Bearer $CRON_SECRET
 It is idempotent — the `sent_reminders` table dedupes, and a 30-minute grace
 window means a missed tick or two is recovered rather than lost.
 
-### Why it isn't in `vercel.json`
+### There is no cap on how many notifications you can send
 
-Vercel **Hobby** allows at most **2 cron jobs**, at **once-a-day** granularity.
-A reminder that can only fire once a day is not a reminder. So the two daily jobs
-(`/api/push/daily`, `/api/push/digest`) live in `vercel.json` and use up the
-Hobby allowance, and the every-few-minutes job is driven externally.
+Worth stating plainly, because the Vercel cron limit is easy to misread as a
+notification limit. **It isn't.** Web Push has no per-day quota — not from
+Vercel, not from Google's or Mozilla's push services, not from this app. You can
+send as many reminders a day as you have reminders.
 
-**On Hobby** — use a free external pinger (cron-job.org, UptimeRobot, GitHub
-Actions on a schedule). Point it at the URL above, every 5 minutes, with the
-`Authorization` header set. This is a one-time setup outside this repo.
+The only thing Vercel limits is **how often Vercel itself will ping your
+endpoint**. Move the heartbeat somewhere without that limit and the constraint
+disappears entirely.
 
-**On Pro** — delete the external pinger and add the job to `vercel.json`:
+### Why the reminder job isn't in `vercel.json`
+
+Vercel **Hobby** allows at most **2 cron jobs**, at **once-a-day** granularity —
+and `vercel.json` is schema-validated, so it rejects unknown keys (including
+comments; a stray `_comment` will fail the build). A reminder that can only fire
+once a day is not a reminder, so the two genuinely-daily jobs
+(`/api/push/daily`, `/api/push/digest`) take the Hobby allowance and the
+frequent job is driven from outside Vercel.
+
+**Option A — GitHub Actions (already set up, free, no signup).**
+`.github/workflows/reminder-cron.yml` pings the endpoint every 5 minutes. Add two
+repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|--------|-------|
+| `CRON_SECRET` | must match the `CRON_SECRET` env var in Vercel |
+| `APP_URL` | e.g. `https://luminae-vigila.vercel.app`, no trailing slash |
+
+Then fire one by hand from the **Actions** tab (`Run workflow`) to confirm the
+wiring before trusting the schedule.
+
+Caveat: GitHub's scheduler is best-effort and runs late under load, sometimes by
+10+ minutes. The endpoint's 30-minute grace window absorbs that — a late tick
+still sends rather than skipping — but reminders won't be punctual to the minute.
+
+**Option B — an external pinger (most punctual).** [cron-job.org](https://cron-job.org)
+is free and supports **1-minute** intervals with custom headers. Point it at
+`https://<your-domain>/api/push/reminders` with header
+`Authorization: Bearer <CRON_SECRET>`. Use this if you want reminders to land
+at the minute you asked for. Disable the GitHub Action if you do, to avoid two
+redundant pingers (harmless — the dedup table handles it — but noisy in logs).
+
+**Option C — Vercel Pro ($20/mo).** Unlimited crons at any granularity. Add to
+`vercel.json` and drop the others:
 
 ```json
 { "path": "/api/push/reminders", "schedule": "*/5 * * * *" }
 ```
+
+Whichever you pick, the endpoint is idempotent: `sent_reminders` dedupes, so
+overlapping pingers can't double-send.
 
 ## Required environment variables
 
