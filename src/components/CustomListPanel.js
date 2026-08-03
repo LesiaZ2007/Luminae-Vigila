@@ -58,6 +58,22 @@ export const LIST_ICONS = {
 const ICON_KEYS = Object.keys(LIST_ICONS)
 
 /**
+ * Shared style for the per-row action buttons (+ / ⋯ / trash).
+ *
+ * Touch devices get full opacity because there is no hover state to reveal
+ * them; on desktop they sit at 0.45 and come up to 1 on row hover, so a long
+ * list doesn't read as a wall of icons.
+ */
+function rowActionStyle(hovered, isMobile) {
+  return {
+    padding: 4, borderRadius: 6, border: 'none', background: 'none',
+    cursor: 'pointer', color: 'var(--text-3)', display: 'flex', flexShrink: 0,
+    opacity: isMobile ? 0.75 : hovered ? 1 : 0.45,
+    transition: 'opacity .13s, color .13s',
+  }
+}
+
+/**
  * Render a list icon: if key is a known Lucide key, render the component;
  * otherwise render as text (legacy emoji backward compat).
  */
@@ -687,30 +703,42 @@ function ListItem({
             )}
           </div>
 
-          {/* ⋯ menu button */}
-          <button
-            ref={menuBtnRef}
-            onClick={openMenu}
-            style={{
-              padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer',
-              color: 'var(--text-3)', opacity: hovered || menuOpen ? 1 : 0, transition: 'opacity .13s', display: 'flex', flexShrink: 0,
-            }}
-          >
-            <MoreHorizontal size={14} />
-          </button>
+          {/* Row actions — always visible (dimmed until hover) rather than
+              hover-only, so add-subtask and delete are discoverable without
+              hunting, and reachable on touch where there is no hover at all. */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, flexShrink: 0 }}>
+            <button
+              onClick={e => { e.stopPropagation(); onAddSubtask(item.id) }}
+              title="Add subtask"
+              aria-label="Add subtask"
+              style={rowActionStyle(hovered, isMobile)}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+            >
+              <Plus size={14} />
+            </button>
 
-          {/* Desktop delete on hover */}
-          {!isMobile && (
+            <button
+              ref={menuBtnRef}
+              onClick={openMenu}
+              title="More"
+              aria-label="More options"
+              style={{ ...rowActionStyle(hovered, isMobile), opacity: menuOpen ? 1 : rowActionStyle(hovered, isMobile).opacity }}
+            >
+              <MoreHorizontal size={14} />
+            </button>
+
             <button
               onClick={e => { e.stopPropagation(); onDelete(item.id) }}
-              style={{ marginTop: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', opacity: hovered ? 0.6 : 0, transition: 'opacity .13s, color .13s', padding: 2, borderRadius: 4, flexShrink: 0 }}
+              title="Delete item"
+              aria-label="Delete item"
+              style={rowActionStyle(hovered, isMobile)}
               onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
               onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
-              title="Delete"
             >
-              <X size={12} />
+              <Trash2 size={13} />
             </button>
-          )}
+          </div>
         </div>
 
         {/* Subtasks */}
