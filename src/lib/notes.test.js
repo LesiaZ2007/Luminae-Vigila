@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash,
   notePlainText, noteDisplayTitle, notePreview, sortNotes, noteMatches,
-  TRASH_RETENTION_MS,
+  TRASH_RETENTION_MS, sharedTextToHtml,
 } from './notes'
 
 const at = iso => iso
@@ -178,5 +178,42 @@ describe('makeNote', () => {
 
   it('applies overrides', () => {
     expect(makeNote({ title: 'Seeded', starred: true }).title).toBe('Seeded')
+  })
+})
+
+describe('sharedTextToHtml', () => {
+  it('escapes untrusted text before adding markup', () => {
+    const html = sharedTextToHtml('<script>alert(1)</script>')
+    expect(html).toBe('<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>')
+    expect(html).not.toContain('<script>')
+  })
+
+  it('turns blank lines into paragraphs and single newlines into <br>', () => {
+    expect(sharedTextToHtml('one\ntwo\n\nthree'))
+      .toBe('<p>one<br>two</p><p>three</p>')
+  })
+
+  it('handles CRLF line endings', () => {
+    expect(sharedTextToHtml('a\r\n\r\nb')).toBe('<p>a</p><p>b</p>')
+  })
+
+  it('escapes quotes and ampersands', () => {
+    expect(sharedTextToHtml(`a & "b" 'c'`))
+      .toBe('<p>a &amp; &quot;b&quot; &#39;c&#39;</p>')
+  })
+
+  it('survives a round-trip through notePlainText with lines intact', () => {
+    // Not byte-identical by design: notePlainText renders a paragraph break as
+    // a single newline, so the blank line between paragraphs collapses. What
+    // matters is that no content is lost and line order is preserved.
+    const original = 'Line one\nline two\n\nSecond para'
+    expect(notePlainText(sharedTextToHtml(original)).split('\n'))
+      .toEqual(['Line one', 'line two', 'Second para'])
+  })
+
+  it('returns empty string for blank input', () => {
+    expect(sharedTextToHtml('')).toBe('')
+    expect(sharedTextToHtml('   ')).toBe('')
+    expect(sharedTextToHtml(null)).toBe('')
   })
 })
