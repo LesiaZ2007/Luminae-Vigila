@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { CanvasLogo } from '@/components/CanvasSettingsModal'
 import AssignmentDetailModal from '@/components/AssignmentDetailModal'
+import LinkedNotes           from '@/components/LinkedNotes'
 import GpaPanel from '@/components/GpaPanel'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -179,7 +180,8 @@ function AssignmentRow({ a, courseColor, onToggle, onClickDetail, selectMode, is
 
 // ── CourseCard ────────────────────────────────────────────────────────────────
 
-function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, defaultOpen = true, selectMode, selectedIds, onToggleSelect }) {
+function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, onClickDetail, defaultOpen = true, selectMode, selectedIds, onToggleSelect,
+                     notes = [], onOpenNote, onCreateLinkedNote }) {
   const [open, setOpen] = useState(defaultOpen)
   const color = courseColor ?? CANVAS_COLOR
 
@@ -259,6 +261,21 @@ function CourseCard({ courseId, courseName, assignments, courseColor, onToggle, 
                 />
               ))
           }
+
+          {/* Notes filed against this course — the reverse of note.linkedTo. */}
+          {onOpenNote && (
+            <div style={{ padding: '10px 14px 4px', marginTop: 4, borderTop: '1px solid var(--border)' }}>
+              <LinkedNotes
+                notes={notes}
+                targetId={String(courseId)}
+                onOpenNote={onOpenNote}
+                onCreate={onCreateLinkedNote
+                  ? () => onCreateLinkedNote({ type: 'course', id: String(courseId), label: courseName })
+                  : undefined}
+                compact
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -623,6 +640,9 @@ function ComingUpSection({ courses, courseColors, onToggle, onClickDetail, selec
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function CoursesPanel({
+  notes = [],
+  onOpenNote,
+  onCreateLinkedNote,
   canvasAssignments = [],
   courseColors = {},
   studySessions,
@@ -894,6 +914,9 @@ export default function CoursesPanel({
                       key={course.id}
                       courseId={course.id}
                       courseName={course.name}
+                      notes={notes}
+                      onOpenNote={onOpenNote}
+                      onCreateLinkedNote={onCreateLinkedNote}
                       assignments={course.assignments}
                       courseColor={getCourseColor(course.id, courseColors)}
                       onToggle={onToggleCanvas}

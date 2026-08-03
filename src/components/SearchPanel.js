@@ -10,6 +10,7 @@ const SEARCH_TYPES = [
   { id: 'tasks',  label: 'Tasks'  },
   { id: 'canvas', label: 'Canvas' },
   { id: 'notes',  label: 'Notes'  },
+  { id: 'lists',  label: 'Lists'  },
 ]
 
 const STATUS_OPTIONS = [
@@ -193,23 +194,27 @@ export default function SearchPanel({
 
   // Notes carry no date, so the date-range filter doesn't apply to them.
   const filteredNotes = results.notes ?? []
+  // List items carry no date either, so the range filter doesn't apply.
+  const filteredListItems = results.listItems ?? []
 
   const hasEvents  = allEvents.length > 0
   const hasTasks   = filteredTodos.length > 0
   const hasCanvas  = filteredCanvas.length > 0
   const hasNotes   = filteredNotes.length > 0
-  const total      = allEvents.length + filteredCanvas.length + filteredTodos.length + filteredNotes.length
+  const hasListItems = filteredListItems.length > 0
+  const total      = allEvents.length + filteredCanvas.length + filteredTodos.length + filteredNotes.length + filteredListItems.length
   const hasQuery   = query.trim().length > 0
   const showSplit  = hasEvents && hasTasks && !isMobile
 
   const shouldRenderResults = total > 0 || hasQuery
 
   // Build flat result list for keyboard navigation (canvas → tasks → events → notes)
-  const flatResults = [...filteredCanvas, ...filteredTodos, ...allEvents, ...filteredNotes]
+  const flatResults = [...filteredCanvas, ...filteredTodos, ...allEvents, ...filteredNotes, ...filteredListItems]
   const canvasStart = 0
   const todosStart  = filteredCanvas.length
   const eventsStart = filteredCanvas.length + filteredTodos.length
   const notesStart  = eventsStart + allEvents.length
+  const listStart   = notesStart + filteredNotes.length
 
   // Scroll focused item into view
   useEffect(() => {
@@ -406,6 +411,10 @@ export default function SearchPanel({
 
             {hasNotes && (
               <ResultGroup title="Notes" items={filteredNotes} onSelect={handleSelect} focusedIndex={focusedIndex} startIndex={notesStart} />
+            )}
+
+            {hasListItems && (
+              <ResultGroup title="List items" items={filteredListItems} onSelect={handleSelect} focusedIndex={focusedIndex} startIndex={listStart} />
             )}
           </div>
         )}
