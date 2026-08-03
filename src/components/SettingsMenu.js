@@ -6,6 +6,7 @@
  * sidebar:
  *   - Light / Dark mode
  *   - Accent color (6 palettes)
+ *   - Notification delivery check
  *   - Show tour (re-run onboarding)
  *
  * Reuses AccentPicker's ACCENT_OPTIONS / applyAccent / getSavedAccent so the
@@ -15,10 +16,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { Settings, Check, Compass, Sun, Moon, Monitor } from 'lucide-react'
 import { ACCENT_OPTIONS, applyAccent, getSavedAccent } from './AccentPicker'
+import NotificationCheck from './NotificationCheck'
 
 const ACCENT_STORAGE_KEY = 'lv-accent'
 
-export default function SettingsMenu({ theme, onSetTheme, onShowTour, /** 'sidebar' (dark bg) | 'light' */ variant = 'sidebar' }) {
+export default function SettingsMenu({ theme, onSetTheme, onShowTour, signedIn = false, /** 'sidebar' (dark bg) | 'light' */ variant = 'sidebar' }) {
   const [open,   setOpen]   = useState(false)
   const [accent, setAccent] = useState('blue')
   const ref = useRef(null)
@@ -117,6 +119,13 @@ export default function SettingsMenu({ theme, onSetTheme, onShowTour, /** 'sideb
                 )
               })}
             </div>
+          </div>
+
+          {/* Notifications — sends a real push so "it says enabled but nothing
+              arrives" has an answer rather than a shrug. */}
+          <div>
+            <div style={sectionLabel}>Notifications</div>
+            <NotificationCheck signedIn={signedIn} />
           </div>
 
           {/* Help */}

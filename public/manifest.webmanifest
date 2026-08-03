@@ -60,6 +60,42 @@
   },
   "shortcuts": [
     {
+      "name": "Today at a glance",
+      "short_name": "Today",
+      "description": "Read-only summary of today's schedule and what's due",
+      "url": "/today",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "New task",
+      "short_name": "Task",
+      "description": "Jump straight to adding a to-do",
+      "url": "/?new=task",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Start focus timer",
+      "short_name": "Focus",
+      "description": "Open the focus timer",
+      "url": "/?focus=1",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
       "name": "New note",
       "short_name": "Note",
       "url": "/share?compose=1",

@@ -48,6 +48,8 @@ import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/compo
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
+import { buildGlance }    from '@/lib/glance'
+import { todayStr }       from '@/lib/localDate'
 import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
 
 // Both of these are code-split, so a cold load has a real gap before the chunk
@@ -641,6 +643,32 @@ export default function Home() {
     setActiveNav('notes')
   }, [])
 
+  /* ── Home-screen shortcut deep links ─────────────────────────────────────
+     Manifest shortcuts (long-press the app icon) land here with a query flag.
+     The flag is stripped via replaceState so a refresh doesn't reopen the modal
+     and the URL stays clean if it gets shared. */
+  useEffect(() => {
+    let params
+    try { params = new URLSearchParams(window.location.search) } catch { return }
+    if (![...params.keys()].some(k => k === 'new' || k === 'focus')) return
+
+    if (params.get('new') === 'task') {
+      // Reading the launch URL is precisely the "synchronise from an external
+      // system" case the rule carves out — there is no lazy initialiser that can
+      // open a modal, and it runs once on mount.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEditingTodo(null)
+      setShowTodoModal(true)
+      setActiveNav('todos')
+    }
+    if (params.get('focus') === '1') setFocusOpen(true)
+
+    params.delete('new')
+    params.delete('focus')
+    const qs = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
+  }, [])
+
   /* ── Load from localStorage ── */
   useEffect(() => {
     try {
@@ -863,17 +891,22 @@ export default function Home() {
     }
   }, [currentUser, digestEnabled, pushToast])
 
-  /* ── PWA App Icon Badge ── */
+  /* ── PWA App Icon Badge ──────────────────────────────────────────────────
+     Counts overdue as well as due-today: a badge that drops back to zero while
+     you still have late work is actively misleading, and overdue is the part
+     you most want nagging you from the home screen.
+
+     buildGlance is shared with /today and the daily push so all three agree —
+     and it uses local dates, which the old `toISOString().slice(0,10)` did not.
+     That bug made the badge switch to tomorrow's count every evening. */
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const todayStr = new Date().toISOString().slice(0, 10)
-    const incompleteTodosToday = todos.filter(t =>
-      !t.completed && t.dueDate === todayStr
-    ).length
-    const canvasDueToday = canvasAssignments.filter(a =>
-      !a.done && !a.hidden && a.dueAt && a.dueAt.slice(0, 10) === todayStr
-    ).length
-    updateAppBadge(incompleteTodosToday + canvasDueToday)
+    const glance = buildGlance({
+      todos,
+      assignments: canvasAssignments,
+      dateStr: todayStr(),
+    })
+    updateAppBadge(glance.counts.dueToday + glance.counts.overdue)
   }, [todos, canvasAssignments])
 
   /* ── Event CRUD ── */
@@ -2430,6 +2463,7 @@ export default function Home() {
             theme={theme}
             onSetTheme={setTheme}
             onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+            signedIn={!!currentUser}
             variant="sidebar"
           />
         </div>
@@ -2830,6 +2864,7 @@ export default function Home() {
                 theme={theme}
                 onSetTheme={setTheme}
                 onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+                signedIn={!!currentUser}
                 variant="sidebar"
               />
             </div>
