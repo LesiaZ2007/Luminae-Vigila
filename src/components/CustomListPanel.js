@@ -1139,10 +1139,33 @@ export default function CustomListPanel({
     setDeletingId(id)
   }
 
+  /* Slide the selected tab to the middle of the strip.
+     The strip is narrow in the calendar sidebar, so a list picked from the far
+     end would otherwise sit half off-screen. scrollTo on the strip itself
+     (rather than scrollIntoView) keeps the scrolling contained — scrollIntoView
+     also walks up and nudges ancestor scroll containers. */
+  const tabStripRef = useRef(null)
+  useEffect(() => {
+    const strip = tabStripRef.current
+    if (!strip) return
+    const id  = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(String(activeListId)) : activeListId
+    const tab = strip.querySelector(`[data-tab-id="${id}"]`)
+    if (!tab) return
+
+    const target = tab.offsetLeft - (strip.clientWidth - tab.offsetWidth) / 2
+    const max    = strip.scrollWidth - strip.clientWidth
+    const reduce = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    strip.scrollTo({
+      left: Math.max(0, Math.min(target, max)),
+      behavior: reduce ? 'auto' : 'smooth',
+    })
+  }, [activeListId, lists.length])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', width: '100%' }}>
       {/* ── Switcher tabs ── */}
-      <div style={{
+      <div ref={tabStripRef} className="lv-tab-strip" style={{
         display: 'flex', alignItems: 'center', gap: 4,
         padding: fullPage ? '10px 24px 0' : '8px 12px 0',
         borderBottom: '1px solid var(--border)',
@@ -1151,6 +1174,7 @@ export default function CustomListPanel({
       }}>
         {/* My Tasks tab */}
         <button
+          data-tab-id="my-tasks"
           onClick={() => onSelectList('my-tasks')}
           style={{
             padding: '6px 12px', borderRadius: '8px 8px 0 0',
@@ -1170,7 +1194,8 @@ export default function CustomListPanel({
           const accent   = list.color || '#3a6fa8'
           const active   = activeListId === list.id
           return (
-            <div key={list.id} style={{ position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            <div key={list.id} data-tab-id={list.id}
+                 style={{ position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
               <button
                 onClick={() => onSelectList(list.id)}
                 style={{
