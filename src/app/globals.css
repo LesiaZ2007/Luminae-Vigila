@@ -1101,3 +1101,8 @@ select option {
   transform: scale(1.01);
   transition: transform .12s ease-out, box-shadow .12s ease-out;
 }
+
+/* List-switcher strip: scrolls horizontally without showing a scrollbar.
+   scrollbarWidth:none covers Firefox; WebKit needs this pseudo-element. */
+.lv-tab-strip::-webkit-scrollbar { display: none; }
+.lv-tab-strip { -ms-overflow-style: none; overscroll-behavior-x: contain; }
