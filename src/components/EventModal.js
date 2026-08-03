@@ -7,6 +7,13 @@ import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
 
+// Same palette the calendar's right-click recolour popover offers, so the two
+// entry points can't drift apart.
+const RECOLOR_SWATCHES = [
+  '#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6',
+  '#e8751a','#0ea5e9','#ec4899','#6366f1','#14b8a6',
+]
+
 const REMINDER_OPTIONS = [
   { label: 'No reminder',   ms: 0 },
   { label: '15 min before', ms: 15 * 60_000 },
@@ -144,7 +151,11 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
   return conflicts
 }
 
-export default function EventModal({ event, initialDate, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [] }) {
+export default function EventModal({ event, initialDate, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
+  // Per-event colour override, stored outside the event itself in eventPrefs.
+  // Surfaced here because on mobile there's no right-click to reach the
+  // calendar's recolour popover.
+  onRecolor, colorOverride }) {
   // Editing categories from inside the modal keeps the flow where the user
   // already is — they notice a missing category while creating an event.
   const [showCatMgr, setShowCatMgr] = useState(false)
@@ -457,6 +468,39 @@ export default function EventModal({ event, initialDate, categories, onCategorie
                 ))}
               </div>
             </div>
+
+            {/* Colour — overrides the category colour for this one event */}
+            {isEdit && onRecolor && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label className="field-label">Colour</label>
+                  {colorOverride && (
+                    <button type="button" onClick={() => onRecolor(event.id, null)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+                      Use category colour
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 2 }}>
+                  {RECOLOR_SWATCHES.map(c => {
+                    const active = (colorOverride ?? cat.color).toLowerCase() === c.toLowerCase()
+                    return (
+                      <button key={c} type="button" onClick={() => onRecolor(event.id, c)}
+                              aria-label={`Colour this event ${c}`}
+                              style={{
+                                width: 26, height: 26, borderRadius: '50%', background: c, padding: 0,
+                                border: active ? '2.5px solid var(--text)' : '2px solid transparent',
+                                cursor: 'pointer', transition: 'transform .1s',
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'}
+                              onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'} />
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* All day */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
