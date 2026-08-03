@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, Trash2, RefreshCw, EyeOff, AlertTriangle } from 'lucide-react'
+import { X, Trash2, RefreshCw, EyeOff, AlertTriangle, Settings2 } from 'lucide-react'
 import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
+import CategoryManager from '@/components/CategoryManager'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',   ms: 0 },
@@ -143,7 +144,10 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
   return conflicts
 }
 
-export default function EventModal({ event, initialDate, categories, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [] }) {
+export default function EventModal({ event, initialDate, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [] }) {
+  // Editing categories from inside the modal keeps the flow where the user
+  // already is — they notice a missing category while creating an event.
+  const [showCatMgr, setShowCatMgr] = useState(false)
   const isEdit         = !!event
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
@@ -318,6 +322,7 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
   const showScopePicker = isRecurringEdit && editScope === null
 
   return (
+    <>
     <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
          onClick={handleBackdropClick}>
@@ -422,7 +427,18 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
 
             {/* Category */}
             <div>
-              <label className="field-label">Category</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label className="field-label">Category</label>
+                {onCategoriesChange && (
+                  <button type="button" onClick={() => setShowCatMgr(true)}
+                          title="Add, rename, recolour, or remove categories"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+                    <Settings2 size={12} /> Edit
+                  </button>
+                )}
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {categories.map(c => (
                   <button key={c.id} type="button" onClick={() => setCategory(c.id)}
@@ -652,5 +668,16 @@ export default function EventModal({ event, initialDate, categories, onSave, onD
         )}
       </div>
     </div>
+
+    {showCatMgr && (
+      <CategoryManager
+        categories={categories}
+        title="Event Categories"
+        onChange={onCategoriesChange}
+        onClose={() => setShowCatMgr(false)}
+        inUseCount={id => existingEvents.filter(e => e.extendedProps?.category === id).length}
+      />
+    )}
+    </>
   )
 }
