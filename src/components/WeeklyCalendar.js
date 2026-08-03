@@ -371,6 +371,9 @@ export default function WeeklyCalendar({
 
   const containerClass = [
     'flex-1 min-h-0 rounded-2xl overflow-hidden',
+    // Scopes the overlap CSS. Without this the harness overrides applied in
+    // every mode and flattened FullCalendar's column packing.
+    `lv-overlap-${OVERLAP_STRATEGY}`,
     `lv-cal-view-${currentView}`,
     navAnim  ? `cal-nav-${navAnim}`   : '',
     viewAnim ? `cal-view-${viewAnim}` : '',
