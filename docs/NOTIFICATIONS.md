@@ -58,38 +58,52 @@ once a day is not a reminder, so the two genuinely-daily jobs
 (`/api/push/daily`, `/api/push/digest`) take the Hobby allowance and the
 frequent job is driven from outside Vercel.
 
-**Option A — GitHub Actions (already set up, free, no signup).**
-`.github/workflows/reminder-cron.yml` pings the endpoint every 5 minutes. Add two
-repository secrets under **Settings → Secrets and variables → Actions**:
+### Setup: cron-job.org
 
-| Secret | Value |
-|--------|-------|
-| `CRON_SECRET` | must match the `CRON_SECRET` env var in Vercel |
-| `APP_URL` | e.g. `https://luminae-vigila.vercel.app`, no trailing slash |
+Free, purpose-built, and does true **1-minute** intervals — which matters,
+because the tick rate *is* the accuracy. A 5-minute tick means a reminder set for
+3:07 arrives at 3:10.
 
-Then fire one by hand from the **Actions** tab (`Run workflow`) to confirm the
-wiring before trusting the schedule.
+1. Sign up at [cron-job.org](https://cron-job.org) and create a cronjob.
+2. **URL:** `https://<your-domain>/api/push/reminders`
+3. **Schedule:** every 1 minute (`Every 1 minute(s)` under Execution schedule).
+4. **Headers** — expand *Advanced* → *Headers* and add:
 
-Caveat: GitHub's scheduler is best-effort and runs late under load, sometimes by
-10+ minutes. The endpoint's 30-minute grace window absorbs that — a late tick
-still sends rather than skipping — but reminders won't be punctual to the minute.
+   | Key | Value |
+   |-----|-------|
+   | `Authorization` | `Bearer <your CRON_SECRET>` |
 
-**Option B — an external pinger (most punctual).** [cron-job.org](https://cron-job.org)
-is free and supports **1-minute** intervals with custom headers. Point it at
-`https://<your-domain>/api/push/reminders` with header
-`Authorization: Bearer <CRON_SECRET>`. Use this if you want reminders to land
-at the minute you asked for. Disable the GitHub Action if you do, to avoid two
-redundant pingers (harmless — the dedup table handles it — but noisy in logs).
+5. Save, then hit **Test run**. A healthy response is `200` with JSON like
+   `{"ok":true,"sent":0,"due":0}` — `sent: 0` is correct when nothing is due.
+   A `401` means the header or the secret is wrong.
 
-**Option C — Vercel Pro ($20/mo).** Unlimited crons at any granularity. Add to
-`vercel.json` and drop the others:
+Optionally enable failure notifications so you hear about it if the job starts
+erroring rather than discovering it through missed reminders.
 
-```json
-{ "path": "/api/push/reminders", "schedule": "*/5 * * * *" }
+#### Getting a `CRON_SECRET` you can actually paste
+
+Vercel makes environment variable values **write-only after creation** — you
+cannot read the existing one back out, by design. You don't need the original:
+it only has to *match* on both sides. Generate a new one:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Whichever you pick, the endpoint is idempotent: `sent_reminders` dedupes, so
-overlapping pingers can't double-send.
+Set that same value as `CRON_SECRET` in Vercel (Production) **and** in the
+cron-job.org header, then redeploy so the new value is live.
+
+#### Alternatives
+
+- **Vercel Pro ($20/mo)** — unlimited crons at any granularity. Add
+  `{ "path": "/api/push/reminders", "schedule": "*/5 * * * *" }` to `vercel.json`.
+- **GitHub Actions** — workable but the wrong tool: the shortest allowed schedule
+  is 5 minutes, start times are best-effort and can slip 10+ minutes under load,
+  and working around that with an in-run polling loop costs ~60 runner-minutes an
+  hour. Was tried here and removed in favour of cron-job.org.
+
+Whatever calls it, the endpoint is idempotent: each reminder is claimed with
+`INSERT ... ON CONFLICT DO NOTHING`, so overlapping pingers cannot double-send.
 
 ## Required environment variables
 

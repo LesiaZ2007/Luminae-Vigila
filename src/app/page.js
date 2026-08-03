@@ -909,6 +909,18 @@ export default function Home() {
     updateAppBadge(glance.counts.dueToday + glance.counts.overdue)
   }, [todos, canvasAssignments])
 
+  /* ── Retroactively tag a past focus session ──
+     The course comes from whatever was selected in the timer when the session
+     finished, which is easy to forget and was previously impossible to correct
+     — leaving that time stuck under "Untagged" in every breakdown forever.
+     updatedAt is stamped so the edit wins the last-write-wins sync merge against
+     a stale copy on another device. */
+  const updateStudySession = useCallback((id, patch) => {
+    setStudySessions(prev => prev.map(s =>
+      s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
+    ))
+  }, [])
+
   /* ── Event CRUD ── */
   const saveEvent = useCallback((ev, scope = 'single') => {
     if (scope === 'all') {
@@ -2691,6 +2703,7 @@ export default function Home() {
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
                 studySessions={studySessions}
+                onTagSession={updateStudySession}
                 onToggleCanvas={toggleCanvasAssignment}
                 onUpdateCanvasNotes={updateCanvasNotes}
                 onOpenSettings={() => setShowCanvasSettings(true)}
@@ -3098,6 +3111,8 @@ export default function Home() {
             if (prev.some(s => s.id === ss.id)) return prev
             return [...prev, ss]
           })}
+          studySessions={studySessions}
+          onTagSession={updateStudySession}
           pushToast={pushToast}
           digest={{ enabled: digestEnabled, saving: digestSaving, onToggle: toggleDigest, signedIn: !!currentUser }}
         />

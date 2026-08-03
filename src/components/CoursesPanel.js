@@ -22,7 +22,7 @@ import { CanvasLogo } from '@/components/CanvasSettingsModal'
 import AssignmentDetailModal from '@/components/AssignmentDetailModal'
 import LinkedNotes           from '@/components/LinkedNotes'
 import GpaPanel from '@/components/GpaPanel'
-import SessionHistory from '@/components/SessionHistory'
+import SessionHistory, { buildCourseOptions } from '@/components/SessionHistory'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -304,7 +304,7 @@ function fmtHours(sec) {
   return `${m}m`
 }
 
-function StudyTimeCard({ courseColors, studySessions }) {
+function StudyTimeCard({ courseColors, studySessions, canvasAssignments = [], onTagSession }) {
   // Use prop when provided (synced state from page.js); fall back to localStorage
   // for backwards compat and for the case where the component is used standalone.
   const [localSessions, setLocalSessions] = useState([])
@@ -312,6 +312,7 @@ function StudyTimeCard({ courseColors, studySessions }) {
     if (!studySessions) setLocalSessions(loadStudySessions())
   }, [studySessions])
   const sessions = studySessions ?? localSessions
+  const courseOptions = useMemo(() => buildCourseOptions(canvasAssignments), [canvasAssignments])
 
   const { thisWeek, lastWeekTotal, maxSec } = useMemo(() => {
     const { mon: thisMonday, sun: thisSunday } = getWeekStr(0)
@@ -404,6 +405,8 @@ function StudyTimeCard({ courseColors, studySessions }) {
               colorFor={id => getCourseColor(id, courseColors)}
               showAll={showAll}
               onShowAll={() => setShowAll(true)}
+              courseOptions={courseOptions}
+              onTagSession={onTagSession}
             />
           ) : thisWeek.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '16px 10px', color: 'var(--text-3)', fontSize: '0.78rem' }}>
@@ -674,6 +677,7 @@ export default function CoursesPanel({
   canvasAssignments = [],
   courseColors = {},
   studySessions,
+  onTagSession,
   onToggleCanvas,
   onUpdateCanvasNotes,
   onOpenSettings,
@@ -928,7 +932,7 @@ export default function CoursesPanel({
               />
 
               {/* Study Time card */}
-              <StudyTimeCard courseColors={courseColors} studySessions={studySessions} />
+              <StudyTimeCard courseColors={courseColors} studySessions={studySessions} canvasAssignments={canvasAssignments} onTagSession={onTagSession} />
 
               {filteredByCourse.length === 0 && futureByCourse.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-3)', fontSize: '0.82rem' }}>
