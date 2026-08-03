@@ -21,9 +21,10 @@ function useWindowWidth() {
 import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
-import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches } from '@/lib/notes'
+import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
+import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -152,6 +153,10 @@ export default function Home() {
   // ── Notes ──
   const [notes,        setNotes]        = useState([])
   const [activeNoteId, setActiveNoteId] = useState(null)
+  // Draft carried from a note into the task/event editor, plus which note to
+  // link back to once the item is actually saved.
+  const [noteConvertDraft, setNoteConvertDraft] = useState(null)
+  const [pendingNoteLink,  setPendingNoteLink]  = useState(null)
 
   // Declared up here (rather than with the rest of the notes CRUD below) so the
   // keyboard-shortcut hook a few lines down can reference it without hitting
@@ -161,6 +166,43 @@ export default function Home() {
     setNotes(prev => [note, ...prev])
     setActiveNoteId(note.id)
     return note
+  }, [])
+
+  // Open an existing note from wherever it was linked.
+  const openNoteById = useCallback((id) => {
+    setActiveNav('notes')
+    setActiveNoteId(id)
+  }, [])
+
+  // Start a note already attached to the thing you were looking at.
+  const createLinkedNote = useCallback((linkedTo) => {
+    setActiveNav('notes')
+    const note = makeNote({ linkedTo })
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+  }, [])
+
+  /**
+   * Turn a note (or the text selected inside it) into a task or an event.
+   *
+   * Opens the relevant editor prefilled rather than creating silently — a task
+   * usually wants a due date and an event wants a time, and guessing those
+   * would be worse than asking. The note is linked to whatever gets created, so
+   * the two stay connected afterwards.
+   */
+  const convertNote = useCallback((kind, { noteId, title, notes: body }) => {
+    if (kind === 'task') {
+      setPendingNoteLink({ noteId, kind: 'task' })
+      setInitialTodoDate(null)
+      setEditingTodo(null)
+      setNoteConvertDraft({ title, notes: body })
+      setShowTodoModal(true)
+    } else {
+      setPendingNoteLink({ noteId, kind: 'event' })
+      setActiveNav('calendar')
+      setNoteConvertDraft({ title, notes: body })
+      setEventModal({ open: true, event: null, date: null })
+    }
   }, [])
 
   // Quick capture from anywhere — jump to the Notes tab with a blank note open.
@@ -566,6 +608,39 @@ export default function Home() {
     }, () => {})
   }, [])
 
+  /* ── Incoming Web Share ──────────────────────────────────────────────────
+     /share stashes the payload and redirects here (see src/app/share/page.js).
+     Runs after the localStorage load below has had a chance to populate notes,
+     so the shared note is prepended to real data rather than an empty array. */
+  useEffect(() => {
+    let raw
+    try {
+      raw = localStorage.getItem(PENDING_SHARE_KEY)
+      // Clear immediately: if anything below throws, a bad payload shouldn't
+      // reopen on every launch.
+      if (raw) localStorage.removeItem(PENDING_SHARE_KEY)
+    } catch { return }
+    if (!raw) return
+
+    let payload
+    try { payload = JSON.parse(raw) } catch { return }
+
+    const title = (payload?.title ?? '').trim()
+    const body  = (payload?.body  ?? '').trim()
+
+    const note = makeNote({
+      title,
+      // Escape before wrapping in <p> — shared text is arbitrary and would
+      // otherwise be parsed as markup by the editor.
+      html: sharedTextToHtml(body),
+      tags: ['shared'],
+    })
+
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+    setActiveNav('notes')
+  }, [])
+
   /* ── Load from localStorage ── */
   useEffect(() => {
     try {
@@ -854,6 +929,19 @@ export default function Home() {
       } else {
         setEvents(prev => [...prev, ...expanded])
       }
+      // If this event came from a note, link the note to it now.
+      if (isNewEvent) {
+        const created = expanded[0] ?? ev
+        setPendingNoteLink(link => {
+          if (link?.kind === 'event') {
+            setNotes(prev => prev.map(n => n.id === link.noteId
+              ? { ...n, linkedTo: { type: 'event', id: created.id, label: created.title }, updatedAt: new Date().toISOString() }
+              : n))
+          }
+          return null
+        })
+      }
+
       // After saving a NEW exam event, offer to generate a study plan
       if (isNewEvent && ev.extendedProps?.category === 'exam') {
         // expanded[0] has the final id (from expandRecurring or the original)
@@ -983,7 +1071,20 @@ export default function Home() {
   }, [])
 
   /* ── Todo CRUD ── */
-  const addTodo    = useCallback((t) => setTodos(p => [...p, { ...t, id: String(Date.now()), completed: false }]), [])
+  const addTodo    = useCallback((t) => {
+    const created = { ...t, id: String(Date.now()), completed: false }
+    setTodos(p => [...p, created])
+    // If this task came from a note, link the note to it now that it has an id.
+    setPendingNoteLink(link => {
+      if (link?.kind === 'task') {
+        setNotes(prev => prev.map(n => n.id === link.noteId
+          ? { ...n, linkedTo: { type: 'task', id: created.id, label: created.title }, updatedAt: new Date().toISOString() }
+          : n))
+      }
+      return null
+    })
+    return created
+  }, [])
   const toggleTodo = useCallback((id) => {
     // Handle recurring instances: id looks like "baseId-r-YYYY-MM-DD"
     const rMatch = id.match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
@@ -1136,7 +1237,14 @@ export default function Home() {
   // Things a note can be attached to. Capped so the picker stays scannable —
   // courses first (they're the durable ones), then near-term events and tasks.
   const noteLinkOptions = useMemo(() => [
-    ...canvasClasses.map(c => ({ type: 'course', id: c.id, label: c.name ?? c.title ?? 'Course' })),
+    // Canvas courses, derived from assignments so the ids match the ones
+    // CourseCard renders against. Class-schedule entries use `cls_*` ids and are
+    // a separate thing, hence the distinct 'class' type below.
+    ...[...new Map(canvasAssignments
+        .filter(a => a.courseId && a.courseName)
+        .map(a => [String(a.courseId), a.courseName])).entries()]
+      .map(([id, label]) => ({ type: 'course', id, label })),
+    ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.name ?? c.title ?? 'Class' })),
     ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
   ].filter(o => o.id && o.label), [canvasClasses, events, todos])
@@ -1811,7 +1919,25 @@ export default function Home() {
       canvasAssignments: [],
       todos: [],
       notes: [],
+      listItems: [],
     }
+
+    // Unchecked items across every custom list. Like notes, these ignore the
+    // upcoming/done status filter — a grocery item has no due date, so every
+    // status value would exclude it.
+    const listItemResults = (query) => customLists.flatMap(list =>
+      (list.items ?? [])
+        .filter(item => !item.checked && (!query || matchesText(item.text) || matchesText(item.note)))
+        .map(item => ({
+          kind: 'listItem',
+          label: item.text,
+          subtitle: list.name,
+          source: 'List',
+          item: { ...item, listId: list.id },
+          tagLabel: list.name,
+          tagColor: list.color || 'var(--blue)',
+        }))
+    )
 
     // Notes deliberately ignore the upcoming/done status filter — they have no
     // completion state or due date, so every status value would exclude them.
@@ -1917,6 +2043,9 @@ export default function Home() {
       if (searchScope === 'all' || searchScope === 'notes') {
         result.notes = sortNotes(notes.filter(n => !n.trashedAt)).slice(0, 5).map(toNoteResult)
       }
+      if (searchScope === 'all' || searchScope === 'lists') {
+        result.listItems = listItemResults('').slice(0, 5)
+      }
       return result
     }
 
@@ -1979,8 +2108,11 @@ export default function Home() {
         notes.filter(n => !n.trashedAt && noteMatches(n, searchQuery))
       ).slice(0, 15).map(toNoteResult)
     }
+    if (searchScope === 'all' || searchScope === 'lists') {
+      result.listItems = listItemResults(query).slice(0, 15)
+    }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes, customLists])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -2007,6 +2139,11 @@ export default function Home() {
       setActiveNav('todos')
       setEditingTodo(result.item)
       setShowTodoModal(true)
+      return
+    }
+    if (result.kind === 'listItem' && result.item) {
+      setActiveNav('todos')
+      setActiveListId(result.item.listId)
       return
     }
     if (result.kind === 'note' && result.item) {
@@ -2452,6 +2589,7 @@ export default function Home() {
                 activeNoteId={activeNoteId}
                 onSelect={setActiveNoteId}
                 onCreate={() => createNote()}
+                onConvert={convertNote}
                 onUpdate={updateNote}
                 onTrash={trashNote}
                 onRestore={restoreNote}
@@ -2513,6 +2651,9 @@ export default function Home() {
                 <ListSkeleton rows={7} label="Loading Canvas assignments" padding="20px 28px" />
               ) : (
               <CoursesPanel
+                notes={notes}
+                onOpenNote={openNoteById}
+                onCreateLinkedNote={createLinkedNote}
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
                 studySessions={studySessions}
@@ -2734,12 +2875,14 @@ export default function Home() {
       {/* ── Modals ── */}
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
-                    categories={eventCategories} onCategoriesChange={setEventCategories} onSave={saveEvent} onDelete={deleteEvent}
+                    categories={eventCategories} onCategoriesChange={setEventCategories}
+                    initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes} onSave={saveEvent} onDelete={deleteEvent}
                     onRecolor={handleRecolorEvent} colorOverride={eventModal.event ? eventPrefs[eventModal.event.id]?.color : null}
+                    allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
-                    onClose={() => setEventModal({ open: false, event: null, date: null })} />
+                    onClose={() => { setEventModal({ open: false, event: null, date: null }); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
       )}
       {studyPlanPending && (
         <StudyPlanModal
@@ -2756,10 +2899,12 @@ export default function Home() {
       )}
       {showTodoModal && (
         <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
+                      allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
+                      initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes}
                       onAdd={addTodo} onEdit={updateTodo}
                       editTodo={editingTodo}
                       initialDate={initialTodoDate}
-                      onClose={() => { setShowTodoModal(false); setEditingTodo(null); setInitialTodoDate(null) }} />
+                      onClose={() => { setShowTodoModal(false); setEditingTodo(null); setInitialTodoDate(null); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
       )}
 
       <Toast toasts={toasts} onDismiss={id => setToasts(p => p.filter(t => t.id !== id))} />

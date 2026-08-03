@@ -6,6 +6,7 @@ import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
+import LinkedNotes     from '@/components/LinkedNotes'
 
 // Same palette the calendar's right-click recolour popover offers, so the two
 // entry points can't drift apart.
@@ -151,11 +152,14 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
   return conflicts
 }
 
-export default function EventModal({ event, initialDate, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
+export default function EventModal({ event, initialDate, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
   // Per-event colour override, stored outside the event itself in eventPrefs.
   // Surfaced here because on mobile there's no right-click to reach the
   // calendar's recolour popover.
-  onRecolor, colorOverride }) {
+  onRecolor, colorOverride,
+  // Reverse view of note.linkedTo — see LinkedNotes.
+  // `allNotes` rather than `notes` — an event already has a notes text field.
+  allNotes = [], onOpenNote, onCreateLinkedNote }) {
   // Editing categories from inside the modal keeps the flow where the user
   // already is — they notice a missing category while creating an event.
   const [showCatMgr, setShowCatMgr] = useState(false)
@@ -163,6 +167,12 @@ export default function EventModal({ event, initialDate, categories, onCategorie
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
   const init   = initState(event, initialDate, categories)
+  // Seed values used when creating from elsewhere (e.g. turning a note into an
+  // event). Only applied in create mode — an existing event owns its own data.
+  if (!event) {
+    if (initialTitle) init.title = initialTitle
+    if (initialNotes) init.notes = initialNotes
+  }
 
   const [title,       setTitle]       = useState(init.title)
   const [category,    setCategory]    = useState(init.category)
@@ -697,6 +707,18 @@ export default function EventModal({ event, initialDate, categories, onCategorie
                   </button>
                 </div>
               </div>
+            )}
+
+            {/* Linked notes — only for a saved event, since an unsaved one has
+                no id for a note to point at. */}
+            {isEdit && (
+              <LinkedNotes
+                notes={allNotes}
+                targetId={event.id}
+                onOpenNote={id => { onOpenNote?.(id); handleClose() }}
+                onCreate={onCreateLinkedNote ? () => { onCreateLinkedNote({ type: 'event', id: event.id, label: title || 'Event' }); handleClose() } : undefined}
+                compact
+              />
             )}
 
             {/* Actions */}
