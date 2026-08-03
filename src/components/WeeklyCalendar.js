@@ -7,6 +7,27 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 
+/**
+ * How overlapping timed events are laid out.
+ *
+ *   'columns' — Google Calendar behaviour. FullCalendar packs each cluster of
+ *               mutually-overlapping events into side-by-side columns, so an
+ *               event only gives up width to events it actually collides with.
+ *               A short event sitting inside a long one takes the full
+ *               remaining width instead of a fixed indent.
+ *
+ *   'cascade' — the original behaviour: anything starting later than something
+ *               it overlaps was pushed to a flat `left: 15%`. Because the
+ *               indent was constant, several events that overlap one long event
+ *               but not each other all landed on the same edge, which read as
+ *               an accidental column (see PHYS 2211 / CS 1100 under the AI
+ *               Career Fair).
+ *
+ * TO REVERT: change this one string back to 'cascade'. Nothing else needs to
+ * move — the cascade code path and its CSS are both still here.
+ */
+const OVERLAP_STRATEGY = 'columns'
+
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
   // Event recolor
@@ -27,6 +48,10 @@ export default function WeeklyCalendar({
   const [viewAnim,       setViewAnim]      = useState(null) // 'exit' | 'enter' | null
   const [currentView,    setCurrentView]   = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
   const [colorPopover,   setColorPopover]  = useState(null) // { eventId, x, y }
+  // Mobile only: the event brought to the front by a tap. Tapping is for
+  // *reading* a buried event; editing is a long-press (see below).
+  const [raisedEventId,  setRaisedEventId]  = useState(null)
+  const longPressedRef   = useRef(false)   // suppresses the click that follows a long-press
 
   useEffect(() => {
     if (!targetDate) return
@@ -93,10 +118,14 @@ export default function WeeklyCalendar({
     const harness = info.el.parentElement
     if (!harness) return
     harness.dataset.eventId = info.event.id
+    // In 'columns' mode we leave the harness alone so FullCalendar's own
+    // column packing survives — our CSS uses !important and would override it.
     harness.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness')
-    const role = overlapRole(info.event, info.view.calendar.getEvents())
-    if (role === 'later') harness.classList.add('lv-overlap-later-harness')
-    if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+    if (OVERLAP_STRATEGY === 'cascade') {
+      const role = overlapRole(info.event, info.view.calendar.getEvents())
+      if (role === 'later') harness.classList.add('lv-overlap-later-harness')
+      if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
+    }
 
     if (highlightEventId && info.event.id === highlightEventId) {
       info.el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.35)'
@@ -109,45 +138,52 @@ export default function WeeklyCalendar({
 
     const isUserEvent = !info.event.extendedProps?.source
 
-    // ── Right-click / long-press recolor (user events only) ───────────────
-    if (isUserEvent && onRecolorEvent) {
-      const el = info.el
-      let touchTimer = null
-      let touchMoved = false
+    const el = info.el
 
-      // Desktop: right-click
-      function onContextMenu(e) {
-        e.preventDefault()
-        e.stopPropagation()
-        setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
-      }
-
-      // Mobile: long-press (500ms)
-      function onTouchStart(e) {
-        touchMoved = false
-        const touch = e.touches[0]
-        touchTimer = setTimeout(() => {
-          if (!touchMoved) {
-            setColorPopover({ eventId: info.event.id, x: touch.clientX, y: touch.clientY })
-          }
-        }, 500)
-      }
-      function onTouchMove() { touchMoved = true; clearTimeout(touchTimer) }
-      function onTouchEnd()  { clearTimeout(touchTimer) }
-
+    // ── Desktop: right-click to recolour (user events only) ────────────────
+    function onContextMenu(e) {
+      e.preventDefault()
+      e.stopPropagation()
+      setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
+    }
+    if (isUserEvent && onRecolorEvent && !isMobile) {
       el.addEventListener('contextmenu', onContextMenu)
+    }
+
+    // ── Mobile: long-press opens the editor ────────────────────────────────
+    // A tap only brings the event to the front (see the eventClick handler), so
+    // reading a buried event never risks opening a form you didn't want.
+    let touchTimer = null
+    let touchMoved = false
+
+    function onTouchStart() {
+      touchMoved = false
+      longPressedRef.current = false
+      touchTimer = setTimeout(() => {
+        if (touchMoved) return
+        longPressedRef.current = true
+        // Haptic confirmation that the press registered, where supported.
+        navigator.vibrate?.(12)
+        onEventClick?.(info)
+      }, 500)
+    }
+    function onTouchMove() { touchMoved = true; clearTimeout(touchTimer) }
+    function onTouchEnd()  { clearTimeout(touchTimer) }
+
+    if (isMobile) {
       el.addEventListener('touchstart', onTouchStart, { passive: true })
       el.addEventListener('touchmove',  onTouchMove,  { passive: true })
       el.addEventListener('touchend',   onTouchEnd)
+    }
 
-      const prevCleanup = el._lvDragCleanup
-      el._lvDragCleanup = () => {
-        prevCleanup?.()
-        el.removeEventListener('contextmenu', onContextMenu)
-        el.removeEventListener('touchstart', onTouchStart)
-        el.removeEventListener('touchmove', onTouchMove)
-        el.removeEventListener('touchend', onTouchEnd)
-      }
+    const prevCleanup = el._lvDragCleanup
+    el._lvDragCleanup = () => {
+      prevCleanup?.()
+      clearTimeout(touchTimer)
+      el.removeEventListener('contextmenu', onContextMenu)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
     }
   }
 
@@ -156,10 +192,19 @@ export default function WeeklyCalendar({
   }
 
   function updateOverlapClasses(calendarApi) {
-    const renderedEvents = calendarApi.getEvents()
     const root = calendarApi.el
     if (!root) return
 
+    // 'columns' mode: strip any stale cascade classes and let FullCalendar lay
+    // the events out. Done as a sweep rather than an early return so flipping
+    // OVERLAP_STRATEGY at runtime (fast refresh) cleans up after itself.
+    if (OVERLAP_STRATEGY === 'columns') {
+      root.querySelectorAll('.lv-overlap-earlier-harness, .lv-overlap-later-harness')
+        .forEach(h => h.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness'))
+      return
+    }
+
+    const renderedEvents = calendarApi.getEvents()
     root.querySelectorAll('.fc-timegrid-event-harness[data-event-id]').forEach(harness => {
       const eventApi = renderedEvents.find(ev => ev.id === harness.dataset.eventId)
       harness.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness')
@@ -170,6 +215,31 @@ export default function WeeklyCalendar({
       if (role === 'earlier') harness.classList.add('lv-overlap-earlier-harness')
     })
   }
+
+  /* Bring the tapped event to the front. Done by toggling a class on the
+     harness rather than inline styles, so FullCalendar re-rendering the event
+     (which it does often) can't silently drop it — the effect re-applies. */
+  useEffect(() => {
+    const root = calendarRef.current?.getApi()?.el
+    if (!root) return
+    root.querySelectorAll('.lv-event-raised')
+      .forEach(h => h.classList.remove('lv-event-raised'))
+    if (!raisedEventId) return
+    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(raisedEventId) : raisedEventId
+    root.querySelector(`.fc-timegrid-event-harness[data-event-id="${sel}"]`)
+      ?.classList.add('lv-event-raised')
+  }, [raisedEventId, events])
+
+  /* Tapping anywhere else drops the event back down, so the raised state never
+     gets stuck once you've finished reading it. */
+  useEffect(() => {
+    if (!raisedEventId) return
+    function onDocPointerDown(e) {
+      if (!e.target.closest?.('.fc-timegrid-event-harness')) setRaisedEventId(null)
+    }
+    document.addEventListener('pointerdown', onDocPointerDown)
+    return () => document.removeEventListener('pointerdown', onDocPointerDown)
+  }, [raisedEventId])
 
   const navigate = useCallback((dir) => {
     const api = calendarRef.current?.getApi()
@@ -236,6 +306,29 @@ export default function WeeklyCalendar({
       })
     }, 150)
   }, [currentView])
+
+  /**
+   * Jump to the day view for a specific date.
+   *
+   * Used by month-cell clicks and by the clickable day headers (navLinks).
+   * changeView takes the target date directly, so this is one animated step
+   * rather than switch-then-scroll.
+   */
+  const goToDay = useCallback((date) => {
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    clearTimeout(viewAnimTimer.current)
+    setViewAnim('exit')
+    viewAnimTimer.current = setTimeout(() => {
+      api.changeView('timeGridDay', date)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setViewAnim('enter')
+          viewAnimTimer.current = setTimeout(() => setViewAnim(null), 300)
+        })
+      })
+    }, 150)
+  }, [])
 
   function handleTouchStart(e) {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
@@ -331,12 +424,16 @@ export default function WeeklyCalendar({
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
+    setRaisedEventId(null)
     setCurrentView(info.view.type)
     onViewChange?.(info.view.type)
   }
 
   const containerClass = [
     'flex-1 min-h-0 rounded-2xl overflow-hidden',
+    // Scopes the overlap CSS. Without this the harness overrides applied in
+    // every mode and flattened FullCalendar's column packing.
+    `lv-overlap-${OVERLAP_STRATEGY}`,
     `lv-cal-view-${currentView}`,
     navAnim  ? `cal-nav-${navAnim}`   : '',
     viewAnim ? `cal-view-${viewAnim}` : '',
@@ -430,6 +527,10 @@ export default function WeeklyCalendar({
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
             }}
             events={events}
+            /* false → colliding events sit fully side by side (Google style).
+               true (FullCalendar's default) → the later one covers ~50% of the
+               earlier one, which is the look 'cascade' was reinforcing. */
+            slotEventOverlap={OVERLAP_STRATEGY === 'cascade'}
             eventClassNames={(arg) => (arg.event.extendedProps?.isHiddenEvent ? ['lv-hidden-event'] : [])}
             eventContent={renderEventContent}
             eventDidMount={handleEventDidMount}
@@ -438,8 +539,31 @@ export default function WeeklyCalendar({
               const api = calendarRef.current?.getApi()
               if (api) requestAnimationFrame(() => updateOverlapClasses(api))
             }}
-            eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
-            dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
+            eventClick={(info) => {
+              if (swipedRef.current) return
+              // The long-press already opened the editor; ignore the click that
+              // browsers fire afterwards.
+              if (longPressedRef.current) { longPressedRef.current = false; return }
+              if (isMobile) {
+                // Tap = bring to front so an overlapped event can be read.
+                // Tapping the raised one again puts it back.
+                setRaisedEventId(cur => (cur === info.event.id ? null : info.event.id))
+                return
+              }
+              onEventClick?.(info)
+            }}
+            /* Day headers (week view) and day numbers (month view) become
+               links into the day view. */
+            navLinks={true}
+            navLinkDayClick={(date) => goToDay(date)}
+            dateClick={(info) => {
+              if (swipedRef.current) return
+              // In month view a click on a day means "show me this day". In the
+              // time-grid views it means "create an event at this slot", which
+              // is the whole point of those views — so only month navigates.
+              if (info.view.type === 'dayGridMonth') { goToDay(info.date); return }
+              onDateClick?.(info)
+            }}
             datesSet={handleDatesSet}
             editable={false}
             height="100%"

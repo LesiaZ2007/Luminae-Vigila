@@ -22,6 +22,7 @@ import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches } from '@/lib/notes'
+import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import EventModal from '@/components/EventModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
@@ -61,7 +62,10 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   loading: () => <NotesPanelSkeleton />,
 })
 
-export const EVENT_CATEGORIES = [
+// Seed values only. Event categories are user-editable and synced — read
+// `eventCategories` state instead. Still exported because other modules import
+// it for a default palette.
+export const DEFAULT_EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
   { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
   { id: 'personal', label: 'Personal',    color: '#10b981' },
@@ -69,6 +73,14 @@ export const EVENT_CATEGORIES = [
   { id: 'social',   label: 'Social',      color: '#8b5cf6' },
   { id: 'work',     label: 'Work',        color: '#06b6d4' },
 ]
+
+/* How often the app quietly pulls cloud changes.
+   Only while the tab is visible — a hidden tab has nothing to refresh, and the
+   visibilitychange handler catches you up the moment you come back. The payload
+   is a few KB of JSON, so 2 minutes is cheap and keeps a phone-then-laptop
+   handoff feeling immediate. */
+const AUTO_SYNC_ACTIVE_MS    = 2 * 60 * 1000  // poll while visible
+const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus triggers one
 
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
@@ -86,9 +98,20 @@ export default function Home() {
   const startWRef      = useRef(280)
   const addMenuRef     = useRef(null)
 
-  const [events,         setEvents]         = useState([])
-  const [todos,          setTodos]           = useState([])
+  // ── Raw vs visible ────────────────────────────────────────────────────────
+  // The *raw* arrays include tombstones (items carrying `deletedAt`). Those have
+  // to keep syncing, otherwise other devices never learn about the delete and
+  // re-upload the item — see lib/tombstones.js for the full failure mode.
+  //
+  // Everything in the UI reads the derived `events` / `todos` / `customLists`,
+  // which have tombstones filtered out, so no read site had to change. Only the
+  // sync and persistence paths touch the raw arrays.
+  const [eventsRaw,      setEvents]         = useState([])
+  const [todosRaw,       setTodos]          = useState([])
+  const events = useMemo(() => visible(eventsRaw), [eventsRaw])
+  const todos  = useMemo(() => visible(todosRaw),  [todosRaw])
   const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
+  const [eventCategories, setEventCategories] = useState(DEFAULT_EVENT_CATEGORIES)
   const [studySessions,  setStudySessions]  = useState([])
   const [toasts,         setToasts]         = useState([])
 
@@ -119,7 +142,8 @@ export default function Home() {
   const [eventPrefs,         setEventPrefs]         = useState({})
 
   // ── Custom Lists ──
-  const [customLists,      setCustomLists]      = useState([])
+  const [customListsRaw,   setCustomLists]      = useState([])
+  const customLists = useMemo(() => visible(customListsRaw), [customListsRaw])
   const [activeListId,     setActiveListId]     = useState('my-tasks')
   const [showNewListModal, setShowNewListModal] = useState(false)
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
@@ -282,6 +306,7 @@ export default function Home() {
         const localEvents   = readLocal('lv-events',         '[]')
         const localTodos    = readLocal('lv-todos',          '[]')
         const localCats     = readLocal('lv-todo-cats',      '[]')
+        const localEvCats   = readLocal('lv-event-cats',     '[]')
         const localClasses  = readLocal('lv-canvas-classes', '[]')
         const localPrefs    = readLocal('lv-event-prefs',    '{}')
         const localSessions = readLocal('lv-study-sessions', '[]')
@@ -303,14 +328,18 @@ export default function Home() {
           return [...out.values()]
         }
 
-        const mergedEvents   = mergeById(cloud.events,         localEvents)
-        const mergedTodos    = mergeById(cloud.todos,          localTodos)
+        // Tombstone-aware: a delete is a change, not an absence, so it wins by
+        // timestamp instead of being mistaken for an offline creation.
+        const mergedEvents   = purgeTombstones(mergeWithTombstones(cloud.events, localEvents))
+        const mergedTodos    = purgeTombstones(mergeWithTombstones(cloud.todos,  localTodos))
         const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
+        const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
+        const mergedEvCats    = mergedEvCatsRaw.length > 0 ? mergedEvCatsRaw : DEFAULT_EVENT_CATEGORIES
         const mergedClasses  = mergeById(cloud.classSchedule,  localClasses)
         const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
         const mergedSessions = mergeById(cloud.studySessions,  localSessions)
-        const mergedLists    = mergeCustomLists(cloud.customLists ?? [], localLists)
+        const mergedLists    = purgeTombstones(mergeCustomLists(cloud.customLists ?? [], localLists))
         // Notes resolve strictly by updatedAt — a note body is one blob, so
         // "local wins" would silently drop edits made on another device.
         const mergedNotes    = purgeExpiredTrash(mergeNotes(cloud.notes ?? [], localNotes))
@@ -319,6 +348,7 @@ export default function Home() {
         setEvents(mergedEvents)
         setTodos(mergedTodos)
         setTodoCategories(mergedCats)
+        setEventCategories(mergedEvCats)
         setCanvasClasses(mergedClasses)
         setEventPrefs(mergedPrefs)
         setStudySessions(mergedSessions)
@@ -341,6 +371,7 @@ export default function Home() {
             events:         mergedEvents,
             todos:          mergedTodos,
             todoCategories: mergedCats,
+            eventCategories: mergedEvCats,
             classSchedule:  mergedClasses,
             eventPrefs:     mergedPrefs,
             studySessions:  mergedSessions,
@@ -370,19 +401,20 @@ export default function Home() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          events,
-          todos,
+          events:         eventsRaw,
+          todos:          todosRaw,
           todoCategories,
+          eventCategories,
           classSchedule:  canvasClasses,
           eventPrefs,
           studySessions,
-          customLists,
+          customLists:    customListsRaw,
           notes,
         }),
       }).catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Immediately push the current state to the cloud (bypasses the debounce).
   // Used on reconnect so pending offline edits upload the moment we're back
@@ -392,9 +424,96 @@ export default function Home() {
     fetch('/api/sync', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ events, todos, todoCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists, notes }),
+      body: JSON.stringify({ events: eventsRaw, todos: todosRaw, todoCategories, eventCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists: customListsRaw, notes }),
     }).catch(() => {})
-  }, [currentUser, events, todos, todoCategories, canvasClasses, eventPrefs, studySessions, customLists, notes])
+  }, [currentUser, eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+
+  /* ── Background auto-sync ─────────────────────────────────────────────────
+     The debounced effect above only *pushes*. Without a periodic pull, edits
+     made on another device don't show up until a reload or a manual refresh —
+     which is exactly the case this app is for (phone in class, laptop later).
+
+     This runs a silent pull every AUTO_SYNC_MS and merges newest-wins, so it's
+     symmetric with the initial merge: nothing is clobbered, and tombstoned
+     deletes still propagate. Local edits made since the last push carry a newer
+     updatedAt, so typing while a sync lands does not lose work.
+
+     Deliberately quiet — no toast. A background sync the user didn't ask for
+     shouldn't interrupt them; the manual refresh in Settings still confirms. */
+  const autoSyncInFlight = useRef(false)
+
+  const autoSync = useCallback(async () => {
+    if (!currentUser || !hasMergedCloud.current) return
+    if (autoSyncInFlight.current) return                       // don't stack runs
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
+    autoSyncInFlight.current = true
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return
+      const cloud = await res.json()
+      if (!cloud) return
+
+      setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
+      setTodos(local  => purgeTombstones(mergeWithTombstones(cloud.todos,  local)))
+      setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
+      setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
+      setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
+      setCanvasClasses(local => mergeWithTombstones(cloud.classSchedule, local))
+      // Categories: an empty cloud array means "not synced yet", not "the user
+      // deleted every category" — falling through to local avoids wiping them.
+      setTodoCategories(local => {
+        const merged = mergeWithTombstones(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeWithTombstones(cloud.eventCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventPrefs(local => ({ ...(cloud.eventPrefs ?? {}), ...local }))
+    } catch {
+      // Offline or a transient failure — the next tick tries again.
+    } finally {
+      autoSyncInFlight.current = false
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Only poll while the tab is actually being looked at. A hidden tab has
+    // nothing to refresh and polling it just burns battery and DB requests —
+    // the visibilitychange handler below covers the moment it matters, which is
+    // when you come back to it.
+    let id = null
+    const startPolling = () => { if (!id) id = setInterval(autoSync, AUTO_SYNC_ACTIVE_MS) }
+    const stopPolling  = () => { if (id) { clearInterval(id); id = null } }
+
+    let lastSync = Date.now()
+    const syncNow = () => { lastSync = Date.now(); autoSync() }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        // Catch up right away, but not if we just synced — flipping between
+        // tabs shouldn't hammer the endpoint.
+        if (Date.now() - lastSync > AUTO_SYNC_ON_RETURN_MS) syncNow()
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    }
+
+    if (document.visibilityState === 'visible') startPolling()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    // Back online after a gap: pull straight away rather than waiting a tick.
+    window.addEventListener('online', syncNow)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('online', syncNow)
+    }
+  }, [currentUser, autoSync])
 
   // Close "+ New" popup on outside click
   useEffect(() => {
@@ -454,14 +573,21 @@ export default function Home() {
       const tc = localStorage.getItem('lv-todo-cats')
       const ep = localStorage.getItem('lv-event-prefs')
       const ss = localStorage.getItem('lv-study-sessions')
-      if (e)  setEvents(JSON.parse(e))
-      if (t)  setTodos(JSON.parse(t))
+      if (e)  setEvents(purgeTombstones(JSON.parse(e)))
+      if (t)  setTodos(purgeTombstones(JSON.parse(t)))
       if (tc) setTodoCategories(JSON.parse(tc))
+      const ec = localStorage.getItem('lv-event-cats')
+      if (ec) {
+        const parsed = JSON.parse(ec)
+        // An empty array would leave the user with no categories at all and no
+        // obvious way back, so fall through to the defaults.
+        if (Array.isArray(parsed) && parsed.length > 0) setEventCategories(parsed)
+      }
       if (ep) setEventPrefs(JSON.parse(ep))
       if (ss) setStudySessions(JSON.parse(ss))
       // Custom Lists
       const cl = localStorage.getItem('lv-custom-lists')
-      if (cl) setCustomLists(JSON.parse(cl))
+      if (cl) setCustomLists(purgeTombstones(JSON.parse(cl)))
       // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago
       const nt = localStorage.getItem('lv-notes')
       if (nt) setNotes(purgeExpiredTrash(JSON.parse(nt)))
@@ -477,12 +603,13 @@ export default function Home() {
     } catch (_) {}
   }, [])
 
-  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(events))         }, [events])
-  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todos))          }, [todos])
+  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(eventsRaw))      }, [eventsRaw])
+  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todosRaw))       }, [todosRaw])
   useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
+  useEffect(() => { localStorage.setItem('lv-event-cats',     JSON.stringify(eventCategories)) }, [eventCategories])
   useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
   useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
-  useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customLists))    }, [customLists])
+  useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customListsRaw)) }, [customListsRaw])
   useEffect(() => { localStorage.setItem('lv-notes',          JSON.stringify(notes))          }, [notes])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
@@ -557,16 +684,24 @@ export default function Home() {
         return Object.values({ ...localMap, ...cloudMap })
       }
 
-      setEvents(local => mergeCloudWins(cloud.events, local))
-      setTodos(local => mergeCloudWins(cloud.todos, local))
+      setEvents(local => mergeCloudWinsWithTombstones(cloud.events, local))
+      setTodos(local => mergeCloudWinsWithTombstones(cloud.todos, local))
       setTodoCategories(local => {
         const merged = mergeCloudWins(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeCloudWins(cloud.eventCategories, local)
         return merged.length > 0 ? merged : local
       })
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
       setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
-      setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
+      setCustomLists(local => {
+        const deletedLocally = new Set(local.filter(l => l?.deletedAt).map(l => l.id))
+        return mergeCustomListsCloudWins(cloud.customLists ?? [], local)
+          .map(l => (deletedLocally.has(l.id) ? local.find(x => x.id === l.id) : l))
+      })
       setNotes(local => purgeExpiredTrash(mergeNotesCloudWins(cloud.notes ?? [], local)))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
@@ -695,78 +830,72 @@ export default function Home() {
   }, [events])
 
   const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
-    // Capture the items being deleted so undo can restore them
-    setEvents(prev => {
-      const toDelete = deleteAll && groupId
-        ? prev.filter(e => e.recurrenceGroupId === groupId || e.id === id)
-        : prev.filter(e => e.id === id)
-      const remaining = deleteAll && groupId
-        ? prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== id)
-        : prev.filter(e => e.id !== id)
+    const matches = e => (deleteAll && groupId)
+      ? (e.recurrenceGroupId === groupId || e.id === id)
+      : e.id === id
 
-      const label = toDelete[0]?.title || 'Event'
-      const count = toDelete.length
+    const toDelete = eventsRaw.filter(matches)
+    if (toDelete.length === 0) return
+    const deletedIds = new Set(toDelete.map(e => e.id))
 
-      // Soft-delete: items already removed from state; undo re-inserts them
-      const toastId = pushToast(
-        `${count > 1 ? `${count} events` : `"${label}"`} deleted`,
-        undefined,
-        [{
-          label: 'Undo',
-          dismiss: true,
-          onClick: () => {
-            setEvents(cur => {
-              // Re-insert the deleted events, avoiding duplicates
-              const curIds = new Set(cur.map(e => e.id))
-              return [...cur, ...toDelete.filter(e => !curIds.has(e.id))]
-            })
-          },
-        }],
-        { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
-      )
+    // Pure updater — the toast and the follow-up work happen outside it. This
+    // used to run inside setEvents, which React StrictMode double-invokes in
+    // dev, producing two toasts per delete.
+    setEvents(prev => prev.map(e => (deletedIds.has(e.id) ? softDelete(e) : e)))
 
-      // After toast expires, unlink todos that pointed at deleted events —
-      // but only if those events are still absent (i.e. undo was NOT used).
-      const deletedIds = new Set(toDelete.map(e => e.id))
-      setTimeout(() => {
-        setEvents(curEvs => {
-          // Check which deleted ids are still absent
-          const stillGone = new Set([...deletedIds].filter(eid => !curEvs.some(e => e.id === eid)))
-          if (stillGone.size > 0) {
-            setTodos(curTodos => curTodos.map(t =>
-              stillGone.has(t.linkedEventId) ? { ...t, linkedEventId: null } : t
-            ))
-            // For each deleted exam event, offer to delete its linked study sessions
-            stillGone.forEach(eid => {
-              setEvents(cur => {
-                const studySessions = cur.filter(e => e.extendedProps?.studyPlanOf === eid)
-                if (studySessions.length === 0) return cur
-                const sessionIds = new Set(studySessions.map(s => s.id))
-                const toastId2 = pushToast(
-                  `Delete ${studySessions.length} study session${studySessions.length !== 1 ? 's' : ''}?`,
-                  `Linked study sessions for the deleted exam were found.`,
-                  [
-                    {
-                      label: 'Delete sessions',
-                      dismiss: true,
-                      onClick: () => setEvents(c => c.filter(e => !sessionIds.has(e.id))),
-                    },
-                    { label: 'Keep', dismiss: true, onClick: () => {} },
-                  ],
-                  { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
-                )
-                return cur // no change yet — user decides
-              })
-            })
-          }
-          return curEvs // no change to events
-        })
-        setToasts(p => p.filter(t => t.id !== toastId))
-      }, 6200)
+    const label = toDelete[0]?.title || 'Event'
+    const count = toDelete.length
 
-      return remaining
-    })
-  }, [pushToast])
+    pushToast(
+      `${count > 1 ? `${count} events` : `"${label}"`} deleted`,
+      undefined,
+      [{
+        label: 'Undo',
+        dismiss: true,
+        onClick: () => setEvents(cur => cur.map(e => (deletedIds.has(e.id) ? restore(e) : e))),
+      }],
+      { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+    )
+
+    // Once the undo window closes, tidy up anything that pointed at the event —
+    // but only if it's still deleted, i.e. the user didn't hit Undo.
+    setTimeout(() => {
+      setEvents(curEvs => {
+        const stillGone = new Set(
+          [...deletedIds].filter(eid => curEvs.find(e => e.id === eid)?.deletedAt)
+        )
+        if (stillGone.size === 0) return curEvs
+
+        setTodos(curTodos => curTodos.map(t =>
+          stillGone.has(t.linkedEventId)
+            ? { ...t, linkedEventId: null, updatedAt: new Date().toISOString() }
+            : t
+        ))
+
+        // Offer to clean up study sessions generated for a deleted exam.
+        const orphaned = curEvs.filter(e =>
+          !e.deletedAt && stillGone.has(e.extendedProps?.studyPlanOf)
+        )
+        if (orphaned.length > 0) {
+          const sessionIds = new Set(orphaned.map(s => s.id))
+          pushToast(
+            `Delete ${orphaned.length} study session${orphaned.length !== 1 ? 's' : ''}?`,
+            'Linked study sessions for the deleted exam were found.',
+            [
+              {
+                label: 'Delete sessions',
+                dismiss: true,
+                onClick: () => setEvents(c => c.map(e => (sessionIds.has(e.id) ? softDelete(e) : e))),
+              },
+              { label: 'Keep', dismiss: true, onClick: () => {} },
+            ],
+            { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+          )
+        }
+        return curEvs
+      })
+    }, 6200)
+  }, [eventsRaw, pushToast])
 
   // ── Drag-to-reschedule handlers ──────────────────────────────────────────
   const handleEventDrop = useCallback((info) => {
@@ -846,37 +975,26 @@ export default function Home() {
     }
   }, [])
   const deleteTodo = useCallback((id) => {
-    setTodos(prev => {
-      const todo = prev.find(t => t.id === id)
-      if (!todo) return prev
-      const remaining = prev.filter(t => t.id !== id)
+    const todo = todosRaw.find(t => t.id === id)
+    if (!todo) return
 
-      const toastId = pushToast(
-        `"${todo.title}" deleted`,
-        undefined,
-        [{
-          label: 'Undo',
-          dismiss: true,
-          onClick: () => {
-            setTodos(cur => {
-              if (cur.some(t => t.id === id)) return cur // already restored
-              return [...cur, todo]
-            })
-          },
-        }],
-        { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
-      )
+    // The updater stays pure. pushToast used to be called *inside* it, and React
+    // StrictMode double-invokes updaters in dev to surface exactly this — which
+    // is why deleting raised two toasts.
+    setTodos(prev => prev.map(t => (t.id === id ? softDelete(t) : t)))
 
-      // Commit: nothing extra to do for todos (already removed from state)
-      // Just clean up toast reference after window
-      setTimeout(() => {
-        setToasts(p => p.filter(t => t.id !== toastId))
-      }, 6200)
-
-      return remaining
-    })
-  }, [pushToast])
-  const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? updated : t)), [])
+    pushToast(
+      `"${todo.title}" deleted`,
+      undefined,
+      [{
+        label: 'Undo',
+        dismiss: true,
+        onClick: () => setTodos(cur => cur.map(t => (t.id === id ? restore(t) : t))),
+      }],
+      { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+    )
+  }, [todosRaw, pushToast])
+  const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : t)), [])
   const toggleSubtask = useCallback((todoId, subtaskId) => {
     setTodos(prev => prev.map(t =>
       t.id !== todoId ? t : {
@@ -908,11 +1026,15 @@ export default function Home() {
   const clearCompletedTodos = useCallback(() => {
     const doomed = todos.filter(t => t.completed)
     if (doomed.length === 0) return
-    setTodos(prev => prev.filter(t => !t.completed))
+    const doomedIds = new Set(doomed.map(t => t.id))
+    setTodos(prev => prev.map(t => (doomedIds.has(t.id) ? softDelete(t) : t)))
     pushToast(
       `Cleared ${doomed.length} completed task${doomed.length !== 1 ? 's' : ''}`,
       undefined,
-      [{ label: 'Undo', onClick: () => setTodos(prev => [...prev, ...doomed]) }],
+      [{
+        label: 'Undo',
+        onClick: () => setTodos(prev => prev.map(t => (doomedIds.has(t.id) ? restore(t) : t))),
+      }],
       { icon: 'trash' },
     )
   }, [todos, pushToast])
@@ -928,8 +1050,10 @@ export default function Home() {
   }, [])
 
   const deleteCustomList = useCallback((id) => {
-    setCustomLists(prev => prev.filter(l => l.id !== id))
-    // If currently viewing deleted list, go back to My Tasks
+    // Tombstone rather than drop — a removed list used to come back from any
+    // device that hadn't synced yet.
+    setCustomLists(prev => prev.map(l => (l.id === id ? softDelete(l) : l)))
+    // If currently viewing the deleted list, go back to My Tasks
     setActiveListId(cur => cur === id ? 'my-tasks' : cur)
   }, [])
 
@@ -1668,8 +1792,8 @@ export default function Home() {
       tagColor: note.color || 'var(--blue)',
     })
 
-    const categoryColor = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.color || 'var(--blue)'
-    const categoryLabel = (categoryId) => EVENT_CATEGORIES.find(c => c.id === categoryId)?.label || categoryId || 'Event'
+    const categoryColor = (categoryId) => eventCategories.find(c => c.id === categoryId)?.color || 'var(--blue)'
+    const categoryLabel = (categoryId) => eventCategories.find(c => c.id === categoryId)?.label || categoryId || 'Event'
 
     const eventFilter = (e) => {
       const title = e.title || e.summary || ''
@@ -2190,7 +2314,7 @@ export default function Home() {
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}
                                 arrowNavEnabled={!anyModalOpen}
-                                colorSwatches={EVENT_CATEGORIES.map(c => c.color)} />
+                                colorSwatches={eventCategories.map(c => c.color)} />
               </ErrorBoundary>
             </main>
 
@@ -2334,7 +2458,7 @@ export default function Home() {
                 canvasAssignments={canvasAssignments}
                 canvasClassEvents={canvasClassEvents}
                 todoCategories={todoCategories}
-                eventCategories={EVENT_CATEGORIES}
+                eventCategories={eventCategories}
                 customLists={customLists}
                 onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
                 onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
@@ -2379,7 +2503,7 @@ export default function Home() {
               todos={todos}
               canvasAssignments={canvasAssignments}
               todoCategories={todoCategories}
-              eventCategories={EVENT_CATEGORIES}
+              eventCategories={eventCategories}
               onAddTodo={addTodo}
               onSaveEvent={saveEvent}
               onUpdateTodo={updateTodo}
@@ -2577,7 +2701,7 @@ export default function Home() {
       {/* ── Modals ── */}
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
-                    categories={EVENT_CATEGORIES} onSave={saveEvent} onDelete={deleteEvent}
+                    categories={eventCategories} onCategoriesChange={setEventCategories} onSave={saveEvent} onDelete={deleteEvent}
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
@@ -2812,7 +2936,7 @@ export default function Home() {
             <Corvus
               events={events} canvasClassEvents={canvasClassEvents} todos={todos}
               canvasAssignments={canvasAssignments}
-              todoCategories={todoCategories} eventCategories={EVENT_CATEGORIES}
+              todoCategories={todoCategories} eventCategories={eventCategories}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
               compact={true}
