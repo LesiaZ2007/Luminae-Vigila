@@ -271,6 +271,29 @@ export default function WeeklyCalendar({
     }, 150)
   }, [currentView])
 
+  /**
+   * Jump to the day view for a specific date.
+   *
+   * Used by month-cell clicks and by the clickable day headers (navLinks).
+   * changeView takes the target date directly, so this is one animated step
+   * rather than switch-then-scroll.
+   */
+  const goToDay = useCallback((date) => {
+    const api = calendarRef.current?.getApi()
+    if (!api) return
+    clearTimeout(viewAnimTimer.current)
+    setViewAnim('exit')
+    viewAnimTimer.current = setTimeout(() => {
+      api.changeView('timeGridDay', date)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setViewAnim('enter')
+          viewAnimTimer.current = setTimeout(() => setViewAnim(null), 300)
+        })
+      })
+    }, 150)
+  }, [])
+
   function handleTouchStart(e) {
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
   }
@@ -480,7 +503,18 @@ export default function WeeklyCalendar({
               if (api) requestAnimationFrame(() => updateOverlapClasses(api))
             }}
             eventClick={(...args) => { if (!swipedRef.current) onEventClick?.(...args) }}
-            dateClick={(...args)  => { if (!swipedRef.current) onDateClick?.(...args)  }}
+            /* Day headers (week view) and day numbers (month view) become
+               links into the day view. */
+            navLinks={true}
+            navLinkDayClick={(date) => goToDay(date)}
+            dateClick={(info) => {
+              if (swipedRef.current) return
+              // In month view a click on a day means "show me this day". In the
+              // time-grid views it means "create an event at this slot", which
+              // is the whole point of those views — so only month navigates.
+              if (info.view.type === 'dayGridMonth') { goToDay(info.date); return }
+              onDateClick?.(info)
+            }}
             datesSet={handleDatesSet}
             editable={false}
             height="100%"
