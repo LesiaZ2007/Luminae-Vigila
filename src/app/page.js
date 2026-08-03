@@ -2735,6 +2735,7 @@ export default function Home() {
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
                     categories={eventCategories} onCategoriesChange={setEventCategories} onSave={saveEvent} onDelete={deleteEvent}
+                    onRecolor={handleRecolorEvent} colorOverride={eventModal.event ? eventPrefs[eventModal.event.id]?.color : null}
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
