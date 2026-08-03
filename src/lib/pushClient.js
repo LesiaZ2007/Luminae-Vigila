@@ -45,7 +45,9 @@ async function subscribeAndUpload(registration) {
   const res = await fetch('/api/push/subscribe', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(sub.toJSON()),
+    // tzOffset travels with the subscription so the server-side daily glance can
+    // work out which calendar day to summarise; crons run in UTC.
+    body:    JSON.stringify({ ...sub.toJSON(), tzOffset: new Date().getTimezoneOffset() }),
   })
   if (!res.ok) {
     // Server never recorded the subscription (e.g. session expired) — the local

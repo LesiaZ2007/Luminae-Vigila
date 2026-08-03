@@ -1,5 +1,10 @@
 {
+  "_comment": "Vercel Hobby allows at most 2 cron jobs and once-a-day granularity, so only the two daily jobs live here. /api/push/reminders needs a ping every few minutes to be useful and is driven by an external pinger instead — see docs/NOTIFICATIONS.md. On Pro, add it here as { \"path\": \"/api/push/reminders\", \"schedule\": \"*/5 * * * *\" } and drop the external pinger.",
   "crons": [
+    {
+      "path": "/api/push/daily",
+      "schedule": "0 11 * * *"
+    },
     {
       "path": "/api/push/digest",
       "schedule": "0 18 * * 0"
