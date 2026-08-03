@@ -74,6 +74,14 @@ export const DEFAULT_EVENT_CATEGORIES = [
   { id: 'work',     label: 'Work',        color: '#06b6d4' },
 ]
 
+/* How often the app quietly pulls cloud changes.
+   Only while the tab is visible — a hidden tab has nothing to refresh, and the
+   visibilitychange handler catches you up the moment you come back. The payload
+   is a few KB of JSON, so 2 minutes is cheap and keeps a phone-then-laptop
+   handoff feeling immediate. */
+const AUTO_SYNC_ACTIVE_MS    = 2 * 60 * 1000  // poll while visible
+const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus triggers one
+
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
   { id: 'personal', label: 'Personal', color: '#10b981' },
@@ -419,6 +427,93 @@ export default function Home() {
       body: JSON.stringify({ events: eventsRaw, todos: todosRaw, todoCategories, eventCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists: customListsRaw, notes }),
     }).catch(() => {})
   }, [currentUser, eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+
+  /* ── Background auto-sync ─────────────────────────────────────────────────
+     The debounced effect above only *pushes*. Without a periodic pull, edits
+     made on another device don't show up until a reload or a manual refresh —
+     which is exactly the case this app is for (phone in class, laptop later).
+
+     This runs a silent pull every AUTO_SYNC_MS and merges newest-wins, so it's
+     symmetric with the initial merge: nothing is clobbered, and tombstoned
+     deletes still propagate. Local edits made since the last push carry a newer
+     updatedAt, so typing while a sync lands does not lose work.
+
+     Deliberately quiet — no toast. A background sync the user didn't ask for
+     shouldn't interrupt them; the manual refresh in Settings still confirms. */
+  const autoSyncInFlight = useRef(false)
+
+  const autoSync = useCallback(async () => {
+    if (!currentUser || !hasMergedCloud.current) return
+    if (autoSyncInFlight.current) return                       // don't stack runs
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
+    autoSyncInFlight.current = true
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return
+      const cloud = await res.json()
+      if (!cloud) return
+
+      setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
+      setTodos(local  => purgeTombstones(mergeWithTombstones(cloud.todos,  local)))
+      setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
+      setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
+      setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
+      setCanvasClasses(local => mergeWithTombstones(cloud.classSchedule, local))
+      // Categories: an empty cloud array means "not synced yet", not "the user
+      // deleted every category" — falling through to local avoids wiping them.
+      setTodoCategories(local => {
+        const merged = mergeWithTombstones(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeWithTombstones(cloud.eventCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventPrefs(local => ({ ...(cloud.eventPrefs ?? {}), ...local }))
+    } catch {
+      // Offline or a transient failure — the next tick tries again.
+    } finally {
+      autoSyncInFlight.current = false
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Only poll while the tab is actually being looked at. A hidden tab has
+    // nothing to refresh and polling it just burns battery and DB requests —
+    // the visibilitychange handler below covers the moment it matters, which is
+    // when you come back to it.
+    let id = null
+    const startPolling = () => { if (!id) id = setInterval(autoSync, AUTO_SYNC_ACTIVE_MS) }
+    const stopPolling  = () => { if (id) { clearInterval(id); id = null } }
+
+    let lastSync = Date.now()
+    const syncNow = () => { lastSync = Date.now(); autoSync() }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        // Catch up right away, but not if we just synced — flipping between
+        // tabs shouldn't hammer the endpoint.
+        if (Date.now() - lastSync > AUTO_SYNC_ON_RETURN_MS) syncNow()
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    }
+
+    if (document.visibilityState === 'visible') startPolling()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    // Back online after a gap: pull straight away rather than waiting a tick.
+    window.addEventListener('online', syncNow)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('online', syncNow)
+    }
+  }, [currentUser, autoSync])
 
   // Close "+ New" popup on outside click
   useEffect(() => {
