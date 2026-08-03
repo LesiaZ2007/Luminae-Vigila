@@ -3089,6 +3089,7 @@ export default function Home() {
           isMobile={isMobile}
           todos={todos}
           canvasAssignments={canvasAssignments}
+          events={events}
           onUpdateTodo={updateTodo}
           onUpdateCanvas={updateCanvasAssignment}
           onSaveEvent={saveEvent}

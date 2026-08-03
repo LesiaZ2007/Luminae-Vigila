@@ -179,7 +179,12 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
 ### 🎯 Focus Timer *(optional)*
 - **Pomodoro-style timer** tied to your tasks — open it from the timer FAB (desktop) or the Settings tab (mobile)
 - **Focus → break → repeat:** a short break after each focus session and a **long break every 4 sessions** (all lengths configurable)
-- **Pick a task or Canvas assignment to focus on** — completed sessions accumulate focus time on it (`X focused so far`)
+- **Pick what you're focusing on** — a task, a Canvas assignment, or a **calendar event**. Completed sessions accumulate focus time on it (`X focused so far`)
+  - **Exams and quizzes lead the list** — revising for a specific exam is the longest-running focus target a student has, so events with the `exam` category are grouped first, followed by tasks, Canvas assignments, and then other upcoming events (capped at 20, so a term of classes doesn't bury everything else)
+  - Only *upcoming* events are offered — an exam you already sat is never the intent
+  - Time focused on an event accumulates on that event under `extendedProps.focusSeconds` and syncs like any other event field
+- **Pop out the timer** *(desktop Chrome / Edge)* — the picture-in-picture icon in the header opens a small floating window that stays **above other applications**, so the countdown is visible while you work in something else. It shares state with the main panel: pausing in either pauses both, because there is only one timer. Closing the timer takes the pop-out with it.
+  - Uses the [Document Picture-in-Picture API](https://developer.mozilla.org/en-US/docs/Web/API/Document_Picture-in-Picture_API). The button is hidden entirely where it isn't supported — **Firefox, Safari, and all phones and tablets**. Floating over other apps on mobile needs a native overlay permission that no web API exposes; use full-screen zen mode there instead.
 - **Course tag** — optionally tag each focus session with a Canvas course (dropdown shows your enrolled courses; default: None). The tag is persisted so the same course is pre-selected next time you open the timer.
 - **Configurable durations** — set Focus / Short / Long lengths; one click resets to the factory `25 / 5 / 15`, or save your own values as your personal default
 - **Auto-start toggle** — off by default, so the timer pauses between phases and waits for you to press play; flip it on for hands-free cycles
@@ -224,7 +229,51 @@ A compact **"Your week"** section lives inside the **Focus Timer** panel (open i
 
 ### 📛 PWA App Icon Badge
 
-When supported by the browser/OS (Android Chrome, desktop Chrome/Edge), the app icon shows a numeric badge equal to the count of **tasks + Canvas assignments due today** that are not yet completed. The badge clears when everything is done. Uses the [Web Badging API](https://developer.mozilla.org/en-US/docs/Web/API/Badging_API); silently ignored on unsupported browsers.
+When supported by the browser/OS (Android Chrome, desktop Chrome/Edge), the app icon shows a numeric badge equal to the count of **overdue plus due-today** tasks and Canvas assignments. The badge clears when everything is done. Uses the [Web Badging API](https://developer.mozilla.org/en-US/docs/Web/API/Badging_API); silently ignored on unsupported browsers.
+
+Overdue is included deliberately: a badge that drops to zero while late work is still outstanding is actively misleading.
+
+> **Fixed:** the badge previously computed "today" with `toISOString().slice(0,10)`, which is **UTC**. From ~8 PM Eastern onward it silently switched to counting *tomorrow's* work. Date handling now goes through `src/lib/localDate.js` and stays in the viewer's own timezone.
+
+### 🗓 Today at a Glance — `/today`
+
+A deliberately small, chrome-free, **read-only** page: overdue work, today's schedule, and what's due — nothing else, no nav, no editing.
+
+- Built to be *looked at* rather than used: pin it to a home screen as its own icon, park it in a tablet split-screen or iPad Slide Over, or open it from the daily push
+- Reads straight from `localStorage` so it paints instantly and works with **no network** — a full app boot can't promise either
+- Live-updates via the `storage` event, so editing in the main app next door is reflected without a refresh
+- Everything it shows comes from `src/lib/glance.js`, shared with the daily push and the icon badge, so the three can never disagree about what today looks like
+
+### 📲 Home-Screen Shortcuts
+
+Long-press the installed app icon for **Today**, **New task**, **Start focus**, and **New note**. The task and focus entries deep-link via query flags (`/?new=task`, `/?focus=1`) which are stripped with `replaceState` once handled, so a refresh doesn't reopen the modal.
+
+> Android reads `shortcuts` and `share_target` **at install time** — remove and re-add the PWA after deploying for new entries to appear.
+
+### ☀️ Daily "Today at a Glance" Push
+
+A morning push with the day's counts and the first thing on the calendar:
+
+> **Today at a glance** — 2 overdue · 3 due today · 4 events — first up: Physics at 9:30 AM
+
+- Tapping it opens `/today` (the service worker honours a `url` in the push payload, same-origin only)
+- **Silent on an empty day.** A push that says "nothing today" every morning trains you to ignore the app's notifications entirely, which then costs you the reminders that matter
+- Runs at `0 11 * * *` UTC. Vercel crons run in UTC with no per-user send time, but subscriptions now store the device's `tz_offset`, so the *contents* are computed against the reader's calendar day even when the hour isn't ideal
+- **Upgrade existing install:** the endpoints self-heal, but you can run these in the Neon SQL Editor to be explicit:
+  ```sql
+  ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS daily_enabled BOOLEAN NOT NULL DEFAULT true;
+  ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tz_offset INTEGER NOT NULL DEFAULT 0;
+  ```
+
+### 🩺 Notification Troubleshooting
+
+Push fails **silently**: the browser reports "enabled", the server reports "sent", and nothing appears. **Settings → Notifications → Test notifications** walks the five links in the chain and reports the first one that's actually broken — browser support, permission, VAPID keys, a recorded subscription, and delivery — then sends a real push.
+
+- `GET /api/push/status` — booleans and counts only; never returns key material or the cron secret
+- `POST /api/push/test` — sends immediately and reports the push service's **actual rejection per endpoint**. A 403 (key mismatch) and a 410 (expired subscription) look identical from the client but need completely different fixes
+- **If the test arrives but reminders don't, the problem is the scheduler, not the device** — see below
+
+Full detail in **[docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)**.
 
 ### 📬 Sunday Week-Ahead Push Digest
 
@@ -242,7 +291,9 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded. Uses PNG icons (`icon-192.png` / `notification-icon.png`) — **Android Chrome does not render SVG notification icons**.
 - Permission is **requested on a user tap** via the **"Enable notifications"** button in the Focus Timer's "Your week" section. Mobile browsers (Android Chrome) silently ignore permission prompts that aren't triggered by a gesture, so the app never auto-prompts — it registers the service worker silently and only subscribes once you tap Enable.
 - **Reminders fire even when the app is closed** via a server-side scheduler: `GET /api/push/reminders` scans every subscribed user's events/todos for reminders that just came due and sends a push, de-duped through the `sent_reminders` table. This runs independently of any open tab (the old behaviour only fired reminders while a tab was open — which on a phone is almost never when a reminder is due).
-  - **This endpoint must be pinged every minute.** On Vercel Pro, add it to `vercel.json` crons (`* * * * *`). On Vercel Hobby (crons run only once/day), use a free external pinger such as [cron-job.org](https://cron-job.org) hitting `https://<your-domain>/api/push/reminders` every minute with header `Authorization: Bearer $CRON_SECRET`.
+  - ⚠️ **This endpoint does nothing unless something calls it, and that is the single most common reason no notifications ever arrive.** It is *not* in `vercel.json`: Vercel Hobby allows at most **2 cron jobs at once-a-day granularity**, and a reminder that can only fire once a day is not a reminder — so the Hobby allowance goes to `/api/push/daily` and `/api/push/digest`.
+    - **On Hobby:** use a free external pinger ([cron-job.org](https://cron-job.org), UptimeRobot, a scheduled GitHub Action) hitting `https://<your-domain>/api/push/reminders` every ~5 minutes with header `Authorization: Bearer $CRON_SECRET`. Idempotent — `sent_reminders` dedupes and a 30-minute grace window recovers missed ticks.
+    - **On Pro:** drop the pinger and add `{ "path": "/api/push/reminders", "schedule": "*/5 * * * *" }` to `vercel.json`.
 - iOS Safari requires the app to be added to the Home Screen (iOS 16.4+). Android Chrome works in-browser with no install.
 - **Upgrade existing install:** run the `sent_reminders` `CREATE TABLE` block from `schema.sql` in the Neon SQL Editor (the endpoint also self-heals via `CREATE TABLE IF NOT EXISTS`).
 
@@ -444,6 +495,12 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
 - `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
+- `src/lib/localDate.test.js` — local-vs-UTC date derivation, including the exact evening-rollover case that made the badge count tomorrow's work
+- `src/lib/glance.test.js` — the today summary shared by `/today`, the daily push, and the icon badge: overdue/due-today splitting, all-day event ordering, and Canvas assignment inclusion
+
+The suite runs with `TZ=America/New_York` (pinned in `vitest.config.js`) so
+timezone-sensitive logic is exercised deterministically rather than passing by
+accident on a UTC runner.
 
 Component tests live beside their components as `*.test.jsx` and opt into jsdom
 with a `@vitest-environment jsdom` docblock (the default stays `node`, so the
