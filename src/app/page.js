@@ -163,6 +163,20 @@ export default function Home() {
     return note
   }, [])
 
+  // Open an existing note from wherever it was linked.
+  const openNoteById = useCallback((id) => {
+    setActiveNav('notes')
+    setActiveNoteId(id)
+  }, [])
+
+  // Start a note already attached to the thing you were looking at.
+  const createLinkedNote = useCallback((linkedTo) => {
+    setActiveNav('notes')
+    const note = makeNote({ linkedTo })
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+  }, [])
+
   // Quick capture from anywhere — jump to the Notes tab with a blank note open.
   const quickCaptureNote = useCallback(() => {
     setActiveNav('notes')
@@ -1136,7 +1150,14 @@ export default function Home() {
   // Things a note can be attached to. Capped so the picker stays scannable —
   // courses first (they're the durable ones), then near-term events and tasks.
   const noteLinkOptions = useMemo(() => [
-    ...canvasClasses.map(c => ({ type: 'course', id: c.id, label: c.name ?? c.title ?? 'Course' })),
+    // Canvas courses, derived from assignments so the ids match the ones
+    // CourseCard renders against. Class-schedule entries use `cls_*` ids and are
+    // a separate thing, hence the distinct 'class' type below.
+    ...[...new Map(canvasAssignments
+        .filter(a => a.courseId && a.courseName)
+        .map(a => [String(a.courseId), a.courseName])).entries()]
+      .map(([id, label]) => ({ type: 'course', id, label })),
+    ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.name ?? c.title ?? 'Class' })),
     ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
   ].filter(o => o.id && o.label), [canvasClasses, events, todos])
@@ -1811,7 +1832,25 @@ export default function Home() {
       canvasAssignments: [],
       todos: [],
       notes: [],
+      listItems: [],
     }
+
+    // Unchecked items across every custom list. Like notes, these ignore the
+    // upcoming/done status filter — a grocery item has no due date, so every
+    // status value would exclude it.
+    const listItemResults = (query) => customLists.flatMap(list =>
+      (list.items ?? [])
+        .filter(item => !item.checked && (!query || matchesText(item.text) || matchesText(item.note)))
+        .map(item => ({
+          kind: 'listItem',
+          label: item.text,
+          subtitle: list.name,
+          source: 'List',
+          item: { ...item, listId: list.id },
+          tagLabel: list.name,
+          tagColor: list.color || 'var(--blue)',
+        }))
+    )
 
     // Notes deliberately ignore the upcoming/done status filter — they have no
     // completion state or due date, so every status value would exclude them.
@@ -1917,6 +1956,9 @@ export default function Home() {
       if (searchScope === 'all' || searchScope === 'notes') {
         result.notes = sortNotes(notes.filter(n => !n.trashedAt)).slice(0, 5).map(toNoteResult)
       }
+      if (searchScope === 'all' || searchScope === 'lists') {
+        result.listItems = listItemResults('').slice(0, 5)
+      }
       return result
     }
 
@@ -1979,8 +2021,11 @@ export default function Home() {
         notes.filter(n => !n.trashedAt && noteMatches(n, searchQuery))
       ).slice(0, 15).map(toNoteResult)
     }
+    if (searchScope === 'all' || searchScope === 'lists') {
+      result.listItems = listItemResults(query).slice(0, 15)
+    }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes, customLists])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -2007,6 +2052,11 @@ export default function Home() {
       setActiveNav('todos')
       setEditingTodo(result.item)
       setShowTodoModal(true)
+      return
+    }
+    if (result.kind === 'listItem' && result.item) {
+      setActiveNav('todos')
+      setActiveListId(result.item.listId)
       return
     }
     if (result.kind === 'note' && result.item) {
@@ -2513,6 +2563,9 @@ export default function Home() {
                 <ListSkeleton rows={7} label="Loading Canvas assignments" padding="20px 28px" />
               ) : (
               <CoursesPanel
+                notes={notes}
+                onOpenNote={openNoteById}
+                onCreateLinkedNote={createLinkedNote}
                 canvasAssignments={canvasAssignments}
                 courseColors={canvasCalPrefs.courseColors}
                 studySessions={studySessions}
@@ -2736,6 +2789,7 @@ export default function Home() {
         <EventModal event={eventModal.event} initialDate={eventModal.date}
                     categories={eventCategories} onCategoriesChange={setEventCategories} onSave={saveEvent} onDelete={deleteEvent}
                     onRecolor={handleRecolorEvent} colorOverride={eventModal.event ? eventPrefs[eventModal.event.id]?.color : null}
+                    allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
@@ -2756,6 +2810,7 @@ export default function Home() {
       )}
       {showTodoModal && (
         <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
+                      allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
                       onAdd={addTodo} onEdit={updateTodo}
                       editTodo={editingTodo}
                       initialDate={initialTodoDate}
