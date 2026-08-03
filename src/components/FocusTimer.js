@@ -107,7 +107,10 @@ function loadState() {
 
 // ── Study session persistence (localStorage-only) ─────────────────────────────
 // Key: 'lv-study-sessions'
-// Shape: [{ id, courseId, courseName, durationSec, date }]  (date = 'YYYY-MM-DD')
+// Shape: [{ id, courseId, courseName, durationSec, date, endedAt?, targetTitle? }]
+//   date        'YYYY-MM-DD', local
+//   endedAt     local-naive ISO — added later, absent on older rows
+//   targetTitle what you were focusing on — added later, absent on older rows
 
 function loadStudySessions() {
   try { return JSON.parse(localStorage.getItem('lv-study-sessions') ?? '[]') } catch { return [] }
@@ -262,13 +265,17 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       setSessionsToday(newCount)
       setFocusSecondsToday(s => s + elapsed)
 
-      // Persist completed session for study time tracking
+      // Persist completed session for study time tracking.
+      // endedAt and targetTitle are additive — sessions saved before they
+      // existed simply render without a time or a subject line.
       const completedSession = {
         id:          `fs-${endMs}`,
         courseId:    courseTag?.courseId   ?? null,
         courseName:  courseTag?.courseName ?? null,
         durationSec: elapsed,
         date:        todayStr(),
+        endedAt:     toLocalISO(new Date(endMs)),
+        targetTitle: linkedTarget?.title ?? null,
       }
       saveStudySession(completedSession)
       // Notify page.js so studySessions state stays in sync → cloud sync picks it up

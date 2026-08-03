@@ -22,6 +22,7 @@ import { CanvasLogo } from '@/components/CanvasSettingsModal'
 import AssignmentDetailModal from '@/components/AssignmentDetailModal'
 import LinkedNotes           from '@/components/LinkedNotes'
 import GpaPanel from '@/components/GpaPanel'
+import SessionHistory from '@/components/SessionHistory'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -340,6 +341,10 @@ function StudyTimeCard({ courseColors, studySessions }) {
 
   const thisWeekTotal = thisWeek.reduce((s, c) => s + c.totalSec, 0)
   const [open, setOpen] = useState(false)
+  // 'week' = the per-course bars; 'history' = every past session, newest first.
+  const [tab, setTab] = useState('week')
+  const [showAll, setShowAll] = useState(false)
+
 
   if (sessions.length === 0) return null  // nothing to show until first session
 
@@ -377,7 +382,30 @@ function StudyTimeCard({ courseColors, studySessions }) {
 
       {open && (
         <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 12px 12px', background: 'var(--surface)', padding: '12px 14px 14px' }}>
-          {thisWeek.length === 0 ? (
+          {/* This week / All sessions */}
+          <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 9, background: 'var(--surface2)', marginBottom: 12 }}>
+            {[{ id: 'week', label: 'This week' }, { id: 'history', label: `All sessions (${sessions.length})` }].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                style={{
+                  flex: 1, padding: '6px 8px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700,
+                  background: tab === t.id ? accentColor : 'transparent',
+                  color: tab === t.id ? '#fff' : 'var(--text-3)',
+                  transition: 'background .12s, color .12s',
+                }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'history' ? (
+            <SessionHistory
+              sessions={sessions}
+              colorFor={id => getCourseColor(id, courseColors)}
+              showAll={showAll}
+              onShowAll={() => setShowAll(true)}
+            />
+          ) : thisWeek.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '16px 10px', color: 'var(--text-3)', fontSize: '0.78rem' }}>
               <Timer size={24} style={{ opacity: 0.3, marginBottom: 6 }} />
               <div>No study sessions logged this week.</div>

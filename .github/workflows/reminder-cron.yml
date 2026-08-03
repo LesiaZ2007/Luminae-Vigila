@@ -1,16 +1,24 @@
-# Pings the reminder scheduler so reminders fire while the app is closed.
+# Pings the reminder scheduler every minute so reminders fire on time while the
+# app is closed.
 #
 # Why this exists: /api/push/reminders does nothing unless something calls it,
 # and Vercel Hobby caps crons at 2 jobs / once-a-day — useless for reminders.
-# GitHub Actions has no such cap, so the heartbeat lives here instead. There is
-# NO limit on how many notifications this can send; the only thing that was ever
-# limited is how often Vercel itself would ping the endpoint.
+# There is NO limit on how many notifications can be sent; the only thing ever
+# limited was how often Vercel itself would ping the endpoint.
 #
-# Caveat worth knowing: GitHub's scheduler is best-effort and runs late under
-# load — occasionally by 10+ minutes. The endpoint's 30-minute grace window
-# absorbs that (a late tick still sends, it doesn't skip), but if you want
-# punctual to-the-minute reminders, use an external pinger such as cron-job.org
-# instead. See docs/NOTIFICATIONS.md.
+# Why the inner loop: GitHub's shortest allowed schedule is 5 minutes, and a
+# 5-minute tick means a reminder set for 3:07 arrives at 3:10. So each run stays
+# alive and pings once a minute until the next run takes over. This costs
+# ~60 runner-minutes per hour, which is free only because this repo is PUBLIC
+# (public repos get unlimited Actions minutes). If it is ever made private this
+# will burn the 2,000 free minutes in about a day and a half — switch to an
+# external pinger at that point. See docs/NOTIFICATIONS.md.
+#
+# Honest caveat: GitHub only guarantees best-effort *start* times and can delay
+# scheduled runs by 10+ minutes under load. The loop makes each run punctual
+# internally, but it cannot fix a run that starts late. For hard guarantees use
+# cron-job.org (1-minute, purpose-built); the two are safe to run together
+# because the endpoint claims each reminder atomically.
 #
 # Setup (one time):
 #   Repo → Settings → Secrets and variables → Actions → New repository secret
@@ -21,22 +29,21 @@ name: Reminder scheduler
 
 on:
   schedule:
-    # Every 5 minutes — the shortest interval GitHub Actions accepts.
     - cron: '*/5 * * * *'
   # Lets you fire one by hand from the Actions tab to test the wiring.
   workflow_dispatch:
 
-# If a run is somehow still going, don't pile another on top of it.
-concurrency:
-  group: reminder-cron
-  cancel-in-progress: false
+# Intentionally no `concurrency` group: overlapping runs are harmless (the
+# endpoint dedupes) and a queued run would compound GitHub's own delay into a
+# gap in coverage, which is the one thing worth avoiding here.
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Slightly over the loop length so a hung curl can't wedge the runner.
+    timeout-minutes: 8
     steps:
-      - name: Ping /api/push/reminders
+      - name: Ping /api/push/reminders every minute
         env:
           APP_URL:     ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -46,17 +53,39 @@ jobs:
             exit 1
           fi
 
-          # -w writes the status to stdout after the body so both are visible in
-          # the log; --fail-with-body keeps the response text on an error status,
-          # which is where the endpoint explains itself.
-          response=$(curl --silent --show-error --fail-with-body \
-            --max-time 60 \
-            --header "Authorization: Bearer $CRON_SECRET" \
-            --write-out '\nHTTP %{http_code}\n' \
-            "$APP_URL/api/push/reminders") || {
-              echo "::error::Reminder ping failed:"
-              echo "$response"
-              exit 1
-            }
+          # 6 ticks over ~5.5 minutes: one more than the 5-minute schedule needs,
+          # so the tail of this run overlaps the head of the next and there is no
+          # uncovered minute between them.
+          TICKS=6
+          failures=0
 
-          echo "$response"
+          for i in $(seq 1 $TICKS); do
+            start=$(date +%s)
+
+            if body=$(curl --silent --show-error --fail-with-body \
+                        --max-time 45 \
+                        --header "Authorization: Bearer $CRON_SECRET" \
+                        --write-out '\nHTTP %{http_code}' \
+                        "$APP_URL/api/push/reminders"); then
+              echo "tick $i/$TICKS ok: $(echo "$body" | tr '\n' ' ')"
+            else
+              failures=$((failures + 1))
+              echo "::warning::tick $i/$TICKS failed: $(echo "$body" | tr '\n' ' ')"
+            fi
+
+            # Sleep the remainder of the minute rather than a flat 60s, so a slow
+            # request doesn't push every later tick progressively off-schedule.
+            if [ "$i" -lt "$TICKS" ]; then
+              elapsed=$(( $(date +%s) - start ))
+              remaining=$(( 60 - elapsed ))
+              [ "$remaining" -gt 0 ] && sleep "$remaining"
+            fi
+          done
+
+          # A single blip is normal (cold start, brief 5xx) and the next tick
+          # recovers it. Every tick failing means the wiring is broken and should
+          # show up as a red run rather than a quietly green one.
+          if [ "$failures" -ge "$TICKS" ]; then
+            echo "::error::All $TICKS pings failed — check APP_URL, CRON_SECRET, and that the deployment is live."
+            exit 1
+          fi

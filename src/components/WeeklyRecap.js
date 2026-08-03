@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Flame, BellRing } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { enablePush, pushPermission } from '@/lib/pushClient'
 import { todayStr, toDateStr } from '@/lib/localDate'
+import SessionHistory from '@/components/SessionHistory'
 
 const Confetti = dynamic(() => import('@/components/Confetti'), { ssr: false })
 
@@ -157,6 +158,10 @@ export default function WeeklyRecap({
   const [data,       setData]       = useState(null)
   const [confetti,   setConfetti]   = useState(false)
   const [expanded,   setExpanded]   = useState(false)
+  const [showAllSessions, setShowAllSessions] = useState(false)
+  // Re-read on the same trigger as the totals, so a session you just finished
+  // shows up in the list rather than only in the numbers above it.
+  const sessions = useMemo(() => parseStudySessions(), [sessionsVersion])
   const [notifPerm,  setNotifPerm]  = useState('default') // 'granted'|'denied'|'default'|'unsupported'
   const [notifBusy,  setNotifBusy]  = useState(false)
 
@@ -329,6 +334,24 @@ export default function WeeklyRecap({
             {streak === bestStreak && bestStreak > 1 && (
               <div style={{ fontSize: '0.62rem', color: '#10b981', fontWeight: 700, textAlign: 'center', marginTop: 2 }}>
                 Personal best!
+              </div>
+            )}
+
+            {/* Past sessions. Also shown in the Courses > Study Time card, but
+                that tab only exists once Canvas is connected — this is the copy
+                that's always reachable, right next to the timer that made them. */}
+            {sessions.length > 0 && (
+              <div style={{ marginTop: 6, paddingTop: 8, borderTop: `1px solid ${c.border}` }}>
+                <div style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: c.muted, marginBottom: 7 }}>
+                  Past sessions
+                </div>
+                <SessionHistory
+                  sessions={sessions}
+                  maxDays={showAllSessions ? 999 : 3}
+                  showAll={showAllSessions}
+                  onShowAll={() => setShowAllSessions(true)}
+                  compact
+                />
               </div>
             )}
           </div>
