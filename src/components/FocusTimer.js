@@ -16,19 +16,27 @@
  *   - Toggle "Log to calendar" and every completed focus session is dropped onto the
  *     calendar as a real timed event via the existing onSaveEvent pipeline.
  *
+ * Focus targets:
+ *   A session can be pointed at a to-do, a Canvas assignment, or a calendar
+ *   event — the last of which is how you revise for a specific exam and have the
+ *   accumulated time land back on that exam.
+ *
  * Props:
- *   open, onClose, isMobile, todos, canvasAssignments,
+ *   open, onClose, isMobile, todos, canvasAssignments, events,
  *   onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Play, Pause, RotateCcw, SkipForward, X, Volume2, VolumeX, Sliders,
-  CalendarPlus, Check, Maximize2, Minimize2, Lightbulb,
+  CalendarPlus, Check, Maximize2, Minimize2, Lightbulb, PictureInPicture2,
 } from 'lucide-react'
 import Confetti from './Confetti'
 import Select from './Select'
 import WeeklyRecap from './WeeklyRecap'
+import { todayStr } from '@/lib/localDate'
+import { pipSupported, openPipWindow } from '@/lib/documentPip'
 
 const DEFAULTS = {
   focusMin: 25,
@@ -60,10 +68,8 @@ const FX_OPTIONS = [
   { id: 'fireflies',  label: 'Fireflies'  },
 ]
 
-function todayStr() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+// todayStr comes from lib/localDate — it was duplicated here, and a second copy
+// of "what day is it" is exactly how the two drift apart.
 
 function loadState() {
   try {
@@ -101,7 +107,7 @@ function saveStudySession(session) {
   } catch {}
 }
 
-export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
+export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], events = [], onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
   const [hydrated,   setHydrated]   = useState(false)
   const [settings,   setSettings]   = useState(DEFAULTS)
   const [taskId,     setTaskId]     = useState(null)
@@ -208,11 +214,28 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     } catch {}
   }
 
-  // "Focusing on" can target a local todo or a Canvas assignment (value prefixed "canvas:")
+  /* ── What you're focusing on ─────────────────────────────────────────────
+     Three kinds of target, distinguished by a value prefix so a single <Select>
+     and a single stored `taskId` cover all of them:
+       <id>        a local to-do
+       canvas:<id> a Canvas assignment
+       event:<id>  a calendar event — an exam you're revising for, or any
+                   upcoming block you want to prepare for
+     Events are the odd one out: they have no `title` at the top level in some
+     shapes and no completion flag, so they're normalised here into the same
+     { id, title, focusSeconds } shape the rest of the component expects. */
   const isCanvas = typeof taskId === 'string' && taskId.startsWith('canvas:')
+  const isEvent  = typeof taskId === 'string' && taskId.startsWith('event:')
+
+  const linkedEvent = isEvent
+    ? (events.find(e => `event:${e.id}` === taskId) || null)
+    : null
+
   const linkedTarget = isCanvas
     ? (canvasAssignments.find(a => `canvas:${a.id}` === taskId && !a.done) || null)
-    : (todos.find(t => t.id === taskId && !t.completed) || null)
+    : isEvent
+      ? (linkedEvent ? { ...linkedEvent, focusSeconds: linkedEvent.extendedProps?.focusSeconds || 0 } : null)
+      : (todos.find(t => t.id === taskId && !t.completed) || null)
 
   function handleComplete() {
     setRunning(false)
@@ -237,11 +260,21 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       // Notify page.js so studySessions state stays in sync → cloud sync picks it up
       onSessionComplete?.(completedSession)
 
-      // Accumulate focus time on the task (additive field, ignored elsewhere)
+      // Accumulate focus time on the target (additive field, ignored elsewhere)
       if (linkedTarget) {
-        const updated = { ...linkedTarget, focusSeconds: (linkedTarget.focusSeconds || 0) + elapsed }
-        if (isCanvas) onUpdateCanvas?.(updated)
-        else          onUpdateTodo?.(updated)
+        const total = (linkedTarget.focusSeconds || 0) + elapsed
+        if (isCanvas) {
+          onUpdateCanvas?.({ ...linkedTarget, focusSeconds: total })
+        } else if (isEvent && linkedEvent) {
+          // Events keep their custom fields under extendedProps — writing
+          // focusSeconds at the top level would be dropped on the next save.
+          onSaveEvent?.({
+            ...linkedEvent,
+            extendedProps: { ...(linkedEvent.extendedProps ?? {}), focusSeconds: total },
+          }, 'single')
+        } else {
+          onUpdateTodo?.({ ...linkedTarget, focusSeconds: total })
+        }
       }
 
       // Log the session to the calendar as a real time-block.
@@ -350,6 +383,40 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     }
     return opts
   }, [canvasAssignments])
+
+  /* ── Pop-out (always-on-top) window ──────────────────────────────────────
+     Every hook in this component must stay above the `if (!open)` return below;
+     adding one after it changes the hook count between open and closed and
+     crashes with "Rendered more hooks than during the previous render." */
+  const [pipWindow, setPipWindow] = useState(null)
+  const canPip = pipSupported()
+
+  // The pop-out has its own close button, and closing it is not something this
+  // component initiates — so listen rather than assume.
+  useEffect(() => {
+    if (!pipWindow) return
+    const onGone = () => setPipWindow(null)
+    pipWindow.addEventListener('pagehide', onGone)
+    return () => pipWindow.removeEventListener('pagehide', onGone)
+  }, [pipWindow])
+
+  // Closing the timer (or unmounting) must take the pop-out with it, otherwise
+  // an orphaned always-on-top window is left floating with no way back to it.
+  // Closing it fires `pagehide`, which the listener above turns into state — so
+  // this effect only has to close the window, never to clear the state itself.
+  useEffect(() => {
+    if (!open && pipWindow) pipWindow.close()
+  }, [open, pipWindow])
+  useEffect(() => () => { try { pipWindow?.close() } catch {} }, [pipWindow])
+
+  const togglePip = useCallback(async () => {
+    if (pipWindow) { pipWindow.close(); setPipWindow(null); return }
+    // Must run inside the click: the browser rejects a PiP request that isn't
+    // tied to a user gesture.
+    const w = await openPipWindow({ width: 300, height: 330 })
+    if (w) setPipWindow(w)
+    else pushToast?.('Pop-out unavailable', 'Your browser blocked it or does not support pop-out windows.')
+  }, [pipWindow, pushToast])
 
   if (!open) {
     return burst ? <Confetti priority="high" x={burst.x} y={burst.y} /> : null
@@ -466,14 +533,37 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
   }
 
   function TaskPicker({ light }) {
+    // Only what's still ahead: focusing on an exam you already sat is never the
+    // intent, and past events would swamp the list within a term. Compared on
+    // the date string so an exam earlier *today* still counts as today's.
+    const today    = todayStr()
+    const upcoming = events
+      .filter(e => e && !e.deletedAt && !e.extendedProps?.focusBlock && (e.start ?? '').slice(0, 10) >= today)
+      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+
+    const exams  = upcoming.filter(e => e.extendedProps?.category === 'exam')
+    const others = upcoming.filter(e => e.extendedProps?.category !== 'exam').slice(0, 20)
+
+    const eventLabel = e => {
+      const when = (e.start ?? '').slice(5, 10).replace('-', '/')   // MM/DD
+      return when ? `${e.title} · ${when}` : e.title
+    }
+
     const focusOptions = [
       { value: '', label: 'No specific task' },
+      // Exams lead: revising for one is the longest-running focus target a
+      // student has, and it's the reason to pick an event at all.
+      ...(exams.length ? [{ header: true, value: '__h_exams', label: 'Exams & quizzes' }] : []),
+      ...exams.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
       ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
       ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
       ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
       ...canvasAssignments.filter(a => !a.done).map(a => ({
         value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
       })),
+      // Capped: a term's worth of classes would bury everything above it.
+      ...(others.length ? [{ header: true, value: '__h_events', label: 'Upcoming events' }] : []),
+      ...others.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
     ]
     return (
       <div>
@@ -520,10 +610,71 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     )
   }
 
+  /* ════════════ POP-OUT WINDOW ════════════
+     Deliberately not a copy of the panel: a floating window is small, glanced at
+     rather than read, and usually sitting over whatever you are actually doing.
+     So it carries only the four things that matter from across the room — phase,
+     time, what you're focusing on, and play/pause — and everything else stays
+     back in the main panel. Rendered through a portal so it shares this
+     component's state: pausing in either place pauses both, because there is
+     only one timer. */
+  function PipContent() {
+    return (
+      <div style={{
+        height: '100vh', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 10,
+        background: 'var(--surface)', color: 'var(--text)',
+        fontFamily: 'var(--font-sans), system-ui, sans-serif',
+        // No app chrome to fall back on, so the phase colour does the signalling.
+        borderTop: `3px solid ${accent}`,
+      }}>
+        <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: accent }}>
+          {PHASES[phase].label}
+        </div>
+
+        <div style={{ fontSize: '3.4rem', fontWeight: 800, lineHeight: 1, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+          {mm}:{ss}
+        </div>
+
+        {linkedTarget && (
+          <div style={{
+            maxWidth: '90%', fontSize: '0.72rem', color: 'var(--text-2)',
+            textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {linkedTarget.title}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 4 }}>
+          <IconBtn title="Reset" onClick={reset} color="var(--text-3)"><RotateCcw size={16} /></IconBtn>
+          <button onClick={toggleRun} title={running ? 'Pause' : 'Start'}
+            style={{
+              width: 54, height: 54, borderRadius: '50%', border: 'none', cursor: 'pointer',
+              background: accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: `0 6px 20px ${accent}55`,
+            }}>
+            {running ? <Pause size={23} fill="#fff" /> : <Play size={23} fill="#fff" style={{ marginLeft: 3 }} />}
+          </button>
+          <IconBtn title="Skip phase" onClick={skipPhase} color="var(--text-3)"><SkipForward size={16} /></IconBtn>
+        </div>
+
+        <div style={{ fontSize: '0.62rem', color: 'var(--text-3)' }}>
+          {sessionsToday} session{sessionsToday !== 1 ? 's' : ''} today
+        </div>
+      </div>
+    )
+  }
+
+  // Called, not mounted as <PipContent />, matching Ring/Controls/TaskPicker
+  // above: these are closures over state, and mounting them as components would
+  // remount on every render and drop their identity.
+  const pipPortal = pipWindow ? createPortal(PipContent(), pipWindow.document.body) : null
+
   /* ════════════ FULL-SCREEN ZEN MODE ════════════ */
   if (fullscreen) {
     return (
       <>
+        {pipPortal}
         {burst && <Confetti priority="high" x={burst.x} y={burst.y} />}
         <div style={{
           position: 'fixed', inset: 0, zIndex: 4000, overflow: 'hidden',
@@ -540,6 +691,12 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
               <span style={{ fontSize: '0.82rem', fontWeight: 800, letterSpacing: '0.04em' }}>Focus</span>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
+              {canPip && (
+                <IconBtn title={pipWindow ? 'Close pop-out' : 'Pop out — floats above other apps'}
+                  color={pipWindow ? '#fff' : 'rgba(255,255,255,0.6)'} onClick={togglePip}>
+                  <PictureInPicture2 size={17} />
+                </IconBtn>
+              )}
               <IconBtn title="Timer settings" color={showSettings ? '#fff' : 'rgba(255,255,255,0.6)'} onClick={() => setShowSettings(v => !v)}>
                 <Sliders size={17} />
               </IconBtn>
@@ -629,6 +786,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
 
   return (
     <>
+      {pipPortal}
       {burst && <Confetti priority="high" x={burst.x} y={burst.y} />}
 
       <div style={{
@@ -650,6 +808,15 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
             <IconBtn title="How it works" active={settings.showInfo} onClick={() => setSettings(s => ({ ...s, showInfo: !s.showInfo }))}>
               <Lightbulb size={15} />
             </IconBtn>
+            {canPip && (
+              <IconBtn
+                title={pipWindow ? 'Close pop-out' : 'Pop out — floats above other apps'}
+                active={!!pipWindow}
+                onClick={togglePip}
+              >
+                <PictureInPicture2 size={15} />
+              </IconBtn>
+            )}
             <IconBtn title="Full screen" onClick={() => setFullscreen(true)}><Maximize2 size={15} /></IconBtn>
             <IconBtn title={settings.sound ? 'Mute' : 'Unmute'} onClick={() => setSettings(s => ({ ...s, sound: !s.sound }))}>
               {settings.sound ? <Volume2 size={15} /> : <VolumeX size={15} />}
