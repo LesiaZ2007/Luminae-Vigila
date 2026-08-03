@@ -256,16 +256,29 @@ function NoteRow({ note, active, trashed, exiting, onClick, onToggleStar, onRest
   return (
     <div
       onClick={onClick}
-      className={exiting ? 'lv-note-row-exit' : 'lv-note-row-enter'}
+      // Trashed rows aren't openable, so they're plain content — giving them a
+      // button role would promise an interaction that doesn't exist.
+      role={trashed ? undefined : 'button'}
+      tabIndex={trashed ? undefined : 0}
+      aria-current={active ? 'true' : undefined}
+      aria-label={trashed ? undefined : `Open note: ${noteDisplayTitle(note)}`}
+      onKeyDown={e => {
+        if (trashed) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.() }
+      }}
+      className={`lv-focusable ${exiting ? 'lv-note-row-exit' : 'lv-note-row-enter'}`}
       style={{
         display: 'flex', gap: 8, padding: '9px 10px', borderRadius: 10, marginBottom: 3,
         cursor: trashed ? 'default' : 'pointer',
         background: active ? 'var(--blue-bg)' : 'transparent',
         border: `1px solid ${active ? 'var(--blue)' : 'transparent'}`,
         transition: 'background .12s',
+        textAlign: 'left',
       }}
       onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--surface2)' }}
       onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+      onFocus={e => { if (!active) e.currentTarget.style.background = 'var(--surface2)' }}
+      onBlur={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
     >
       <div style={{ width: 3, borderRadius: 2, background: note.color, flexShrink: 0, opacity: trashed ? .4 : 1 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
