@@ -152,7 +152,7 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
   return conflicts
 }
 
-export default function EventModal({ event, initialDate, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
+export default function EventModal({ event, initialDate, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
   // Per-event colour override, stored outside the event itself in eventPrefs.
   // Surfaced here because on mobile there's no right-click to reach the
   // calendar's recolour popover.
@@ -167,6 +167,12 @@ export default function EventModal({ event, initialDate, categories, onCategorie
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
   const init   = initState(event, initialDate, categories)
+  // Seed values used when creating from elsewhere (e.g. turning a note into an
+  // event). Only applied in create mode — an existing event owns its own data.
+  if (!event) {
+    if (initialTitle) init.title = initialTitle
+    if (initialNotes) init.notes = initialNotes
+  }
 
   const [title,       setTitle]       = useState(init.title)
   const [category,    setCategory]    = useState(init.category)
