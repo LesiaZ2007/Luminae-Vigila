@@ -98,7 +98,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Server-side rate limited** to 20 requests per minute per user to protect the Groq API key; exceeding the limit returns a 429 with a 30-second retry hint
 
 ### 🔍 Search
-- Search across events, tasks, and Canvas assignments with scope and status filters
+- Search across events, tasks, Canvas assignments, notes, and custom-list items with scope and status filters
 - Results grouped by type — Canvas assignments, tasks, and events in a split layout
 - **Smart navigation** — clicking a search result jumps the calendar directly to that event's date/week, opens the preview, and keeps the calendar on that date when you close it
 - **Due date labels** — smart relative labels (Today, Tomorrow, Overdue, etc.)
@@ -150,6 +150,9 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
 - **Cloud sync** — notes sync to Neon for signed-in users through `/api/sync`, stored in a `notes` table (JSONB, self-creating `CREATE TABLE IF NOT EXISTS`). Signed-out users keep everything in `localStorage` under `lv-notes`.
 - **Conflict resolution** — unlike lists and tasks, notes merge **strictly by `updatedAt`** (newest edit wins) rather than local-wins. A note body is a single blob, so local-wins would silently discard an edit made on another device.
 - **Lazy-loaded** — Tiptap/ProseMirror is code-split behind `next/dynamic` with `ssr: false`, so it never lands in the initial bundle for the default Calendar tab.
+- **Backlinks** — a note attached to a course, event, or task now shows up *on that item* too, via a Notes section in the event editor, the task editor, and the course card, each with a "New note" action that pre-links what you're looking at.
+- **Turn into a task or event** — promote a note (or just the text you've selected inside it) into a real task or calendar event. Opens the relevant editor prefilled rather than creating silently, since a task wants a due date and an event wants a time. The note is linked to whatever gets created.
+- **Share into a note (Android)** — luminaeVigila appears in the system share sheet. Highlight text anywhere, Share → luminaeVigila, and it arrives as a new note tagged `shared`. A "New note" home-screen shortcut starts one directly.
 
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
@@ -438,7 +441,15 @@ npm run test:watch  # watch mode
 Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
-- `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, and search matching
+- `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
+- `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete
+- `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
+
+Component tests live beside their components as `*.test.jsx` and opt into jsdom
+with a `@vitest-environment jsdom` docblock (the default stays `node`, so the
+pure-logic suite doesn't pay for a DOM):
+- `src/components/LinkedNotes.test.jsx` — which notes surface on a linked item
+- `src/components/NotesPanel.test.jsx` — search, filters, starring, and keyboard access
 
 ---
 
