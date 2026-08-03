@@ -1064,3 +1064,10 @@ select option {
     background: var(--surface2);
   }
 }
+
+/* Keyboard focus ring for custom (non-<button>) interactive rows.
+   :focus-visible only, so a mouse click doesn't leave a ring behind. */
+.lv-focusable:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
