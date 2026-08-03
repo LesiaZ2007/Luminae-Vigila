@@ -1087,3 +1087,17 @@ select option {
   outline: 2px solid var(--blue);
   outline-offset: -2px;
 }
+
+/* Mobile: the event brought to the front by a tap.
+   Lifts it above its neighbours and widens it back to the full column so an
+   event squeezed into a narrow overlap column becomes readable. */
+.fc .fc-timegrid-event-harness.lv-event-raised {
+  z-index: 20 !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+.fc .fc-timegrid-event-harness.lv-event-raised .fc-timegrid-event {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .28), 0 0 0 2px var(--surface);
+  transform: scale(1.01);
+  transition: transform .12s ease-out, box-shadow .12s ease-out;
+}
