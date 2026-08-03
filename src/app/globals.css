@@ -648,28 +648,44 @@ select option {
   margin-left: 0;
   margin-right: 0;
 }
-.fc .fc-timegrid-event-harness { margin-right: 0; }
 .fc .fc-timegrid-event { border-radius: 6px; min-width: 0; }
-.fc .fc-timegrid-event-harness-inset {
+
+/* ── Overlap layout ─────────────────────────────────────────────────────────
+   Everything below is scoped to one of the two OVERLAP_STRATEGY modes set in
+   WeeklyCalendar.js, which stamps .lv-overlap-columns / .lv-overlap-cascade on
+   the calendar container. Nothing here is global — that was the bug: the
+   harness-inset override applied in every mode and flattened FullCalendar's
+   column packing, so every event rendered full width and buried the ones
+   underneath it. */
+
+/* ── 'columns' (Google-style) ──
+   FullCalendar sizes and offsets the harnesses itself; we must not touch
+   left/right/width or the packing collapses. Only cosmetics here. */
+.lv-overlap-columns .fc .fc-timegrid-event-harness-inset .fc-timegrid-event {
+  /* Hairline gap between side-by-side columns so adjacent events read as
+     separate blocks rather than one wide one. */
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+/* ── 'cascade' (original) ──
+   Force every harness full width, then hand-place the later event at a fixed
+   indent so the earlier one peeks out on the left. */
+.lv-overlap-cascade .fc .fc-timegrid-event-harness { margin-right: 0; }
+.lv-overlap-cascade .fc .fc-timegrid-event-harness-inset {
   left: 0 !important;
   right: 0 !important;
 }
-
-/* Overlapping timed events: later-starting event sits at 85 % width offset
-   from the left so the earlier event peeks through on the left edge.
-   The earlier event stays full-width underneath.
-   Hovering the earlier event brings it above the later one. */
-.fc .lv-overlap-later-harness {
+.lv-overlap-cascade .fc .lv-overlap-later-harness {
   left: 15% !important;
   right: 0   !important;
   z-index: 2 !important;
 }
-.fc .lv-overlap-earlier-harness {
+.lv-overlap-cascade .fc .lv-overlap-earlier-harness {
   left: 0    !important;
   right: 0   !important;
   z-index: 1 !important;
 }
-.fc .lv-overlap-earlier-harness:hover {
+.lv-overlap-cascade .fc .lv-overlap-earlier-harness:hover {
   z-index: 10 !important;
 }
 
