@@ -6,11 +6,16 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone"],
+  "display_override": [
+    "standalone"
+  ],
   "orientation": "portrait-primary",
   "background_color": "#0a1628",
   "theme_color": "#243b55",
-  "categories": ["productivity", "education"],
+  "categories": [
+    "productivity",
+    "education"
+  ],
   "icons": [
     {
       "src": "/icon.svg",
@@ -41,6 +46,29 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "shortcuts": [
+    {
+      "name": "New note",
+      "short_name": "Note",
+      "url": "/share?compose=1",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }
