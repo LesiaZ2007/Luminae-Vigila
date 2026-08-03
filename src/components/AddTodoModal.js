@@ -21,16 +21,16 @@ const PRIORITY = [
   { id: 'high',   label: 'High',   color: '#ef4444' },
 ]
 
-export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate,
+export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate, initialTitle, initialNotes,
   allNotes = [], onOpenNote, onCreateLinkedNote }) {
   const isEdit   = !!editTodo
   const isCanvas = !!(editTodo?.canvasId)
 
-  const [title,         setTitle]         = useState(editTodo?.title || '')
+  const [title,         setTitle]         = useState(editTodo?.title || initialTitle || '')
   const [category,      setCategory]      = useState(editTodo?.category || todoCategories[0]?.id || '')
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
-  const [notes,         setNotes]         = useState(editTodo?.notes || '')
+  const [notes,         setNotes]         = useState(editTodo?.notes || initialNotes || '')
   const _existingCustomAt = editTodo?.reminder?.at ? new Date(editTodo.reminder.at) : null
   const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.at ? -1 : (editTodo?.reminder?.ms || 0))
   const [customReminderDate, setCustomReminderDate] = useState(

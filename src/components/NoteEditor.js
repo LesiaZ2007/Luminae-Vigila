@@ -37,8 +37,10 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   List, ListOrdered, ListChecks, Quote, Code, Heading1, Heading2,
   Undo2, Redo2, Star, Pin, Trash2, Bell, BellOff, Link2, Tag, X, Check,
+  ArrowUpRight, CalendarPlus, ListPlus,
 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
+import { notePlainText, noteDisplayTitle } from '@/lib/notes'
 import TimePicker from '@/components/TimePicker'
 
 // Highlighter swatches — deliberately light so text stays readable in both themes.
@@ -90,7 +92,8 @@ const Divider = () => (
   <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
 )
 
-export default function NoteEditor({ note, onChange, onDelete, linkOptions = [], isMobile = false }) {
+export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOptions = [], isMobile = false }) {
+  const [showConvert, setShowConvert] = useState(false)
   // The toolbar scrolls horizontally (overflow-x: auto), which clips any
   // absolutely-positioned child — so the swatch popover renders through a
   // portal anchored to the button's viewport rect, the same way DatePicker does.
@@ -378,6 +381,39 @@ export default function NoteEditor({ note, onChange, onDelete, linkOptions = [],
             </div>
           )}
 
+          {/* Turn into a task or event */}
+          {onConvert && (
+            <div style={{ position: 'relative' }}>
+              <button type="button" onClick={() => setShowConvert(v => !v)}
+                      title="Turn this note (or the selected text) into a task or event"
+                      style={metaBtn(false)}>
+                <ArrowUpRight size={12} /> Turn into
+              </button>
+              {showConvert && (
+                <>
+                  <div onClick={() => setShowConvert(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+                  <div className="lv-pop-in" style={{
+                    position: 'absolute', bottom: 28, right: 0, zIndex: 61, width: 200,
+                    borderRadius: 10, background: 'var(--surface)', border: '1px solid var(--border)',
+                    boxShadow: 'var(--shadow-md)', padding: 5,
+                  }}>
+                    <button type="button" style={linkRow(false)}
+                            onClick={() => { setShowConvert(false); onConvert('task', convertPayload(editor, note)) }}>
+                      <ListPlus size={13} /> Task
+                    </button>
+                    <button type="button" style={linkRow(false)}
+                            onClick={() => { setShowConvert(false); onConvert('event', convertPayload(editor, note)) }}>
+                      <CalendarPlus size={13} /> Event
+                    </button>
+                    <p style={{ fontSize: '0.64rem', color: 'var(--text-3)', margin: '4px 6px 2px', lineHeight: 1.4 }}>
+                      Select text first to use just that line as the title.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Reminder */}
           <div style={{ position: 'relative' }}>
             <button type="button" onClick={() => setShowReminder(v => !v)}
@@ -450,6 +486,25 @@ function ReminderPopover({ reminder, onClose, onSet }) {
       </div>
     </>
   )
+}
+
+/**
+ * What to carry across when turning a note into a task or event.
+ *
+ * If there's a selection, that's what the user pointed at — use it as the title
+ * and leave the body as supporting detail. Otherwise fall back to the note's
+ * own title and text.
+ */
+function convertPayload(editor, note) {
+  const sel = editor?.state
+    ? editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, ' ').trim()
+    : ''
+  const body = notePlainText(note?.html)
+  return {
+    noteId: note.id,
+    title:  (sel || noteDisplayTitle(note)).slice(0, 120),
+    notes:  body,
+  }
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
