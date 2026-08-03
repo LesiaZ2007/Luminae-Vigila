@@ -175,3 +175,30 @@ export function noteMatches(note, query) {
     (note.tags ?? []).some(t => t.toLowerCase().includes(q))
   )
 }
+
+/** Escape text that's about to be embedded in a note's HTML body. */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * Convert plain text (from an Android share, a paste, etc.) into note HTML.
+ *
+ * Blank lines become paragraph breaks and single newlines become <br>, which is
+ * what Tiptap would produce for the same text. The input is untrusted — a
+ * shared page title can contain anything — so it's escaped before any markup is
+ * added, not after.
+ */
+export function sharedTextToHtml(text) {
+  const trimmed = String(text ?? '').trim()
+  if (!trimmed) return ''
+  return trimmed
+    .split(/\r?\n\s*\r?\n/)
+    .map(para => `<p>${escapeHtml(para).replace(/\r?\n/g, '<br>')}</p>`)
+    .join('')
+}
