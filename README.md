@@ -375,8 +375,14 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - Items are sorted chronologically within each day; timed events appear before all-day/due-date items
 - Clicking any event opens its **EventModal**; clicking a task opens the **AddTodoModal**; Canvas assignments open their detail panel
 - Color-coded left stripe and icon match each item's category color for quick scanning
+- **Overdue work is pinned at the top** under its own red "Overdue" heading, ordered oldest-first (most late = most urgent), with each row showing how late it is (`Yesterday`, `4 days ago`, `Last week`)
+  - Covers tasks, Canvas assignments, custom lists, and custom-list items. Past *events* are excluded — an event that already happened isn't overdue, it just happened
+  - It gets its own group rather than sitting in the past days it belongs to: the agenda starts at Today, so those days would fall above the fold in reverse-urgency order
+  - Completed, done, and hidden items stay gone
 - Mobile-friendly — proper bottom padding for the tab bar
-- Empty state shown when nothing is scheduled in the next 14 days
+- Empty state shown when nothing is overdue or scheduled in the next 14 days
+
+> **Fixed:** the "Today" header highlight compared against `toISOString()`, which is UTC — from ~8 PM Eastern it highlighted tomorrow instead.
 
 ### 📚 Exam Study-Plan Generator
 - After saving any **Exam / Quiz** event, a compact follow-up modal appears: "Generate a study plan for this exam?"
@@ -524,6 +530,7 @@ pure-logic suite doesn't pay for a DOM):
 - `src/components/LinkedNotes.test.jsx` — which notes surface on a linked item
 - `src/components/NotesPanel.test.jsx` — search, filters, starring, and keyboard access
 - `src/components/WeeklyRecap.test.jsx` — the weekly focus total, and that the card settles instead of re-rendering forever when a caller passes fresh array literals
+- `src/components/AgendaView.test.jsx` — overdue work surfacing, its grouping and ordering, and that completed/hidden items stay gone
 
 ---
 
