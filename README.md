@@ -534,6 +534,38 @@ pure-logic suite doesn't pay for a DOM):
 
 ---
 
+## 🧹 Lint
+
+```bash
+npx eslint src --ext .js,.jsx
+```
+
+The React Compiler lint rules were adopted after most of this code was written,
+so there is a standing backlog. It went from **79 errors to 33** by fixing what
+were genuine defects — see the `fix(render)` and `fix(react)` commits.
+
+The remaining 33 are **not** believed to be bugs, and are deliberately left
+unsilenced rather than blanket-disabled, since a disable comment would make the
+count read clean without making the code better:
+
+- **29 × `react-hooks/set-state-in-effect`** — nearly all are "read `localStorage`
+  / `navigator` / the DOM on mount, then `setState`". A lazy `useState`
+  initializer would be the usual fix, but these are Client Components that Next.js
+  still server-renders, so touching `localStorage` during the initializer throws
+  on the server and mismatches on hydration. The effect is the correct pattern
+  here; the rule is being conservative.
+- **4 × TDZ / purity flags on deferred calls** — e.g. `pushToast` and
+  `handleComplete` referenced above their own declaration. Safe as written
+  (hoisted function declarations, or `const`s only read from an async
+  continuation), but genuinely worth reordering if those files are refactored.
+
+A few in the first group *are* real derived-state that belongs in `useMemo`
+(`TimePicker` syncing from its `value` prop, `SearchPanel` resetting its focused
+index). Those are worth converting individually, with tests, rather than in a
+mechanical sweep.
+
+---
+
 ## 🚀 Running Locally
 
 ```bash
