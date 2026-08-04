@@ -61,16 +61,6 @@ export default function SidebarCanvasSection({
     } catch {}
   }, [syncPrefs])
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const { connected: c } = await fetch('/api/canvas/credential').then(r => r.json())
-      setConnected(!!c)
-      setSyncPrefs(p => ({ ...p, connected: !!c }))
-      if (c) loadCourses()
-      else   setCourses([])
-    } catch {}
-  }, []) // eslint-disable-line
-
   const loadCourses = useCallback(async () => {
     try {
       const { courses: list, error } = await fetch('/api/canvas/courses').then(r => r.json())
@@ -88,6 +78,17 @@ export default function SidebarCanvasSection({
       })
     } catch {}
   }, [onToggleCourseOnCalendar])
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const { connected: c } = await fetch('/api/canvas/credential').then(r => r.json())
+      setConnected(!!c)
+      setSyncPrefs(p => ({ ...p, connected: !!c }))
+      if (c) loadCourses()
+      else   setCourses([])
+    } catch {}
+  }, [loadCourses])
+
 
   useEffect(() => { loadStatus() }, [loadStatus])
 

@@ -109,21 +109,6 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
   }
 
   // Load connection status on mount
-  useEffect(() => {
-    fetch('/api/canvas/credential')
-      .then(r => r.json())
-      .then(d => {
-        setConnected(d.connected)
-        setBaseUrl(d.baseUrl ?? '')
-        setInputUrl(d.baseUrl ?? '')
-        if (d.connected) {
-          setPrefs(p => ({ ...p, connected: true }))
-          loadCourses()
-        }
-      })
-      .catch(() => {})
-  }, []) // eslint-disable-line
-
   const loadCourses = useCallback(async () => {
     setCoursesLoading(true)
     try {
@@ -144,6 +129,22 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
     } catch { setCourses([]) }
     finally { setCoursesLoading(false) }
   }, [])
+
+  useEffect(() => {
+    fetch('/api/canvas/credential')
+      .then(r => r.json())
+      .then(d => {
+        setConnected(d.connected)
+        setBaseUrl(d.baseUrl ?? '')
+        setInputUrl(d.baseUrl ?? '')
+        if (d.connected) {
+          setPrefs(p => ({ ...p, connected: true }))
+          loadCourses()
+        }
+      })
+      .catch(() => {})
+  }, [loadCourses])
+
 
   function setCourseColor(courseId, color) {
     setPrefs(p => {
