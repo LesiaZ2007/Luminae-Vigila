@@ -13,12 +13,19 @@ import { WifiOff, Wifi } from 'lucide-react'
 export default function OfflineIndicator({ onReconnect }) {
   const [online,  setOnline]  = useState(true)   // starts optimistic; corrected after mount
   const [phase,   setPhase]   = useState('hidden') // 'hidden' | 'offline' | 'back-online' | 'hiding'
-  const hideTimer = { current: null }
+  // Was a plain `{ current: null }` object literal, which is rebuilt on every
+  // render — so `clearTimeout(hideTimer.current)` always read null and could
+  // never actually cancel anything. A connection that flapped left orphaned
+  // timers behind that later fired and stomped the phase back to 'hidden'.
+  const hideTimer = useRef(null)
 
   // Keep the latest onReconnect in a ref so the (empty-dep) listener effect
   // below always calls the current callback, not a stale closure.
   const onReconnectRef = useRef(onReconnect)
-  onReconnectRef.current = onReconnect
+  // Assigned in an effect, not during render: React may render without
+  // committing, and a render-phase write would publish a callback belonging to
+  // a render that never landed.
+  useEffect(() => { onReconnectRef.current = onReconnect }, [onReconnect])
 
   useEffect(() => {
     // Initialise from actual browser state

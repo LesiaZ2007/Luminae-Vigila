@@ -445,12 +445,21 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
   const [localOrder, setLocalOrder] = useState(null) // null = use prop order
   const orderedTodos = localOrder || todos
 
-  // Dragging state
+  // Dragging state.
+  //
+  // The id lives in BOTH a ref and state, deliberately. The ref is what the drag
+  // handlers read — they fire rapidly during a drag and need the current value
+  // synchronously, not next render. The state is what the row reads to style
+  // itself: `draggingId={dragIdRef.current}` was passed down before, and since
+  // writing a ref doesn't re-render, the dragged row never actually picked up
+  // its dragging style until some unrelated update happened to flush.
   const dragIdRef    = useRef(null)
   const dragOverIdRef = useRef(null)
+  const [draggingId, setDraggingId] = useState(null)
 
   function handleDragStart(id) {
     dragIdRef.current = id
+    setDraggingId(id)
   }
 
   function handleDragOver(id) {
@@ -480,6 +489,7 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
   function reset() {
     dragIdRef.current    = null
     dragOverIdRef.current = null
+    setDraggingId(null)
   }
 
   return (
@@ -500,7 +510,7 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      draggingId={dragIdRef.current}
+      draggingId={draggingId}
       isMobile={isMobile}
     />
   )

@@ -777,7 +777,11 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   const headerNameRef = useRef(null)
 
   // Drag state
+  // Mirrored in state as well as a ref: the handlers need the value
+  // synchronously mid-drag, but the row needs a re-render to actually show its
+  // dragging style. Reading dragIdRef.current during render never triggered one.
   const dragIdRef     = useRef(null)
+  const [draggingId, setDraggingId] = useState(null)
   const dragOverIdRef = useRef(null)
   const [localOrder, setLocalOrder] = useState(null)
 
@@ -895,7 +899,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   }
 
   // Drag handlers
-  function handleDragStart(id) { dragIdRef.current = id }
+  function handleDragStart(id) { dragIdRef.current = id; setDraggingId(id) }
 
   function handleDragOver(id) {
     if (!dragIdRef.current || id === dragIdRef.current) return
@@ -920,6 +924,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
 
   function resetDrag() {
     dragIdRef.current     = null
+    setDraggingId(null)
     dragOverIdRef.current = null
   }
 
@@ -1066,7 +1071,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
-                isDragging={dragIdRef.current === item.id}
+                isDragging={draggingId === item.id}
               />
             ))}
           </ul>
