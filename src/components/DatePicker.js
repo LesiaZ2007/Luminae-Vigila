@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
+import { todayStr } from '@/lib/localDate'
 
 const DAYS   = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June',
@@ -34,7 +35,9 @@ function parseTypedDate(str) {
 }
 
 export default function DatePicker({ value, onChange, min, placeholder = 'Select date' }) {
-  const todayStr = new Date().toISOString().slice(0, 10)
+  // Local, not toISOString() — that is UTC, so from ~8pm Eastern both the
+  // highlighted Today cell and the Today button jumped to tomorrow.
+  const today = todayStr()
 
   const [open,     setOpen]     = useState(false)
   const [closing,  setClosing]  = useState(false)
@@ -69,21 +72,32 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
     }
   }, [open])
 
-  // Sync text input + calendar view when popover opens or value changes externally
-  useEffect(() => {
+  /* Sync the text field and calendar view when the popover opens or `value`
+     changes from outside.
+
+     Done during render rather than in an effect: React throws this render away
+     and re-runs with the new state before committing, so nothing is painted in
+     between. As effects, the popover committed one frame showing the *previous*
+     value's text and month before correcting itself. */
+  const [prevOpen,  setPrevOpen]  = useState(open)
+  const [prevValue, setPrevValue] = useState(value)
+
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) {
       setInputVal(value || '')
       setInputErr(false)
     }
-  }, [open])
+  }
 
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value)
     if (value) {
       const d = new Date(value + 'T12:00:00')
       setView({ year: d.getFullYear(), month: d.getMonth() })
       if (open) setInputVal(value)
     }
-  }, [value])
+  }
 
   // Close on outside click (must check BOTH the trigger wrapper AND the portal div)
   useEffect(() => {
@@ -255,7 +269,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
               if (!day) return <div key={`e${i}`} />
               const cellStr  = `${view.year}-${String(view.month + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
               const isSel    = cellStr === value
-              const isToday  = cellStr === todayStr
+              const isToday  = cellStr === today
               const disabled = min && cellStr < min
               return (
                 <button key={cellStr} type="button"
@@ -283,7 +297,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
           {/* "Today" shortcut */}
           <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8, textAlign: 'center' }}>
             <button type="button"
-                    onClick={() => { onChange(todayStr); setInputVal(todayStr); setInputErr(false); closePopover() }}
+                    onClick={() => { onChange(today); setInputVal(today); setInputErr(false); closePopover() }}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, color: 'var(--blue)' }}>
               Today
             </button>

@@ -531,6 +531,7 @@ pure-logic suite doesn't pay for a DOM):
 - `src/components/NotesPanel.test.jsx` — search, filters, starring, and keyboard access
 - `src/components/WeeklyRecap.test.jsx` — the weekly focus total, and that the card settles instead of re-rendering forever when a caller passes fresh array literals
 - `src/components/AgendaView.test.jsx` — overdue work surfacing, its grouping and ordering, and that completed/hidden items stay gone
+- `src/components/TimePicker.test.jsx` — 12/24-hour display derivation and prop-following, written before the refactor that removed the internal mirror so it had something to be measured against
 
 ---
 
@@ -541,14 +542,14 @@ npx eslint src --ext .js,.jsx
 ```
 
 The React Compiler lint rules were adopted after most of this code was written,
-so there is a standing backlog. It went from **79 errors to 33** by fixing what
+so there is a standing backlog. It went from **79 errors to 29** by fixing what
 were genuine defects — see the `fix(render)` and `fix(react)` commits.
 
-The remaining 33 are **not** believed to be bugs, and are deliberately left
+The remaining 29 are **not** believed to be bugs, and are deliberately left
 unsilenced rather than blanket-disabled, since a disable comment would make the
 count read clean without making the code better:
 
-- **29 × `react-hooks/set-state-in-effect`** — nearly all are "read `localStorage`
+- **25 × `react-hooks/set-state-in-effect`** — nearly all are "read `localStorage`
   / `navigator` / the DOM on mount, then `setState`". A lazy `useState`
   initializer would be the usual fix, but these are Client Components that Next.js
   still server-renders, so touching `localStorage` during the initializer throws
@@ -559,10 +560,12 @@ count read clean without making the code better:
   (hoisted function declarations, or `const`s only read from an async
   continuation), but genuinely worth reordering if those files are refactored.
 
-A few in the first group *are* real derived-state that belongs in `useMemo`
-(`TimePicker` syncing from its `value` prop, `SearchPanel` resetting its focused
-index). Those are worth converting individually, with tests, rather than in a
-mechanical sweep.
+The derived-state cases in that group **have** now been converted individually
+(`TimePicker`, `SearchPanel`, `DatePicker`) — see the `refactor(derived-state)`
+commit. `TimePicker` in particular kept `hour`/`minute`/`period` in state and
+copied the `value` prop back into them via an effect, so the state was never the
+source of truth, only a lagging cache that disagreed with the prop for one render
+on every change.
 
 ---
 

@@ -148,8 +148,17 @@ export default function SearchPanel({
   const inputRef    = useRef(null)
   const resultsRef  = useRef(null)
 
-  // Reset focused index when query changes
-  useEffect(() => { setFocusedIndex(-1) }, [query])
+  /* Reset the keyboard-focused row when the query changes.
+     `query` is a prop, so this is React's "adjusting state when a prop changes"
+     case, which belongs in render rather than an effect: React discards this
+     render and immediately re-runs with the new state, before committing or
+     painting. As an effect it committed the stale index first — one frame with
+     row 4 highlighted in a fresh result set that may only have two rows. */
+  const [prevQuery, setPrevQuery] = useState(query)
+  if (query !== prevQuery) {
+    setPrevQuery(query)
+    setFocusedIndex(-1)
+  }
 
   // Save to history helper
   const saveToHistory = useCallback((q) => {
