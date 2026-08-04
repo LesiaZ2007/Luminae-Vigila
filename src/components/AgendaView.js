@@ -1,9 +1,27 @@
 'use client'
 
 import { useMemo } from 'react'
-import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks } from 'lucide-react'
+import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks, AlertTriangle } from 'lucide-react'
+import { todayStr } from '@/lib/localDate'
 
 const DAYS_AHEAD = 14
+
+// Overdue work is grouped under its own pinned heading rather than left in the
+// past days it belongs to — the agenda starts at Today, so those days would sit
+// above the fold in reverse-urgency order, which is exactly backwards.
+const OVERDUE_KEY = '__overdue__'
+
+/** '3 days ago' / 'Yesterday' — how late something is, in words. */
+function overdueLabel(dateStr) {
+  const due = new Date(dateStr + 'T00:00:00')
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const days = Math.round((today - due) / 86400000)
+  if (days <= 0) return ''
+  if (days === 1) return 'Yesterday'
+  if (days < 7)  return `${days} days ago`
+  if (days < 14) return 'Last week'
+  return due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 /**
  * Returns a human-friendly day header: "Today", "Tomorrow", or "Monday Jun 16".
@@ -119,12 +137,15 @@ export default function AgendaView({
     for (const todo of todos) {
       if (todo.completed || !todo.dueDate) continue
       const due = new Date(todo.dueDate + 'T00:00:00')
-      if (due < today || due > endDate) continue
+      if (due > endDate) continue
+      const overdue = due < today
       const catColor = todoCategories.find(c => c.id === todo.category)?.color || '#94a3b8'
       result.push({
         type: 'todo',
         id: todo.id,
-        dateStr: todo.dueDate,
+        overdue,
+        dueDateStr: todo.dueDate,
+        dateStr: overdue ? OVERDUE_KEY : todo.dueDate,
         sortKey: todo.dueDate + 'T23:59:00', // todos sort last within their day
         allDay: true,
         title: todo.title || 'Untitled task',
@@ -139,12 +160,15 @@ export default function AgendaView({
     for (const a of canvasAssignments) {
       if (a.done || a.hidden || !a.dueAt) continue
       const due = new Date(a.dueAt)
-      if (due < today || due > endDate) continue
+      if (due > endDate) continue
+      const overdue = due < today
       const dateStr = a.dueAt.slice(0, 10)
       result.push({
         type: 'canvas',
         id: a.id,
-        dateStr,
+        overdue,
+        dueDateStr: dateStr,
+        dateStr: overdue ? OVERDUE_KEY : dateStr,
         sortKey: a.dueAt,
         allDay: false,
         title: a.title || 'Assignment',
@@ -165,12 +189,15 @@ export default function AgendaView({
       // List-level due date (only when not fully complete)
       if (list.dueDate && !isComplete) {
         const due = new Date(list.dueDate + 'T00:00:00')
-        if (due >= today && due <= endDate) {
+        if (due <= endDate) {
+          const overdue = due < today
           result.push({
             type: 'custom-list',
             id: `list-${list.id}`,
             listId: list.id,
-            dateStr: list.dueDate,
+            overdue,
+            dueDateStr: list.dueDate,
+            dateStr: overdue ? OVERDUE_KEY : list.dueDate,
             sortKey: list.dueDate + 'T23:59:00',
             allDay: true,
             title: list.name,
@@ -185,12 +212,15 @@ export default function AgendaView({
       for (const item of items) {
         if (item.checked || !item.dueDate) continue
         const due = new Date(item.dueDate + 'T00:00:00')
-        if (due < today || due > endDate) continue
+        if (due > endDate) continue
+        const overdue = due < today
         result.push({
           type: 'custom-list-item',
           id: `listitem-${list.id}-${item.id}`,
           listId: list.id,
-          dateStr: item.dueDate,
+          overdue,
+          dueDateStr: item.dueDate,
+          dateStr: overdue ? OVERDUE_KEY : item.dueDate,
           sortKey: item.dueDate + 'T23:59:00',
           allDay: true,
           title: item.text,
@@ -201,8 +231,11 @@ export default function AgendaView({
       }
     }
 
-    // Sort: by date+time, then allDay items at end of each day
+    // Sort: overdue first, then by date+time, then allDay items at end of each day
     result.sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1
+      // Within overdue, oldest first — the most late is the most urgent.
+      if (a.overdue && b.overdue) return (a.dueDateStr ?? '').localeCompare(b.dueDateStr ?? '')
       if (a.dateStr !== b.dateStr) return a.dateStr.localeCompare(b.dateStr)
       // allDay items after timed items
       if (a.allDay !== b.allDay) return a.allDay ? 1 : -1
@@ -236,7 +269,7 @@ export default function AgendaView({
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text-3)', padding: 40 }}>
         <CalendarDays size={40} style={{ opacity: 0.3 }} />
-        <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-2)' }}>Nothing in the next 14 days</div>
+        <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-2)' }}>Nothing overdue or in the next 14 days</div>
         <div style={{ fontSize: '0.78rem', textAlign: 'center', maxWidth: 260 }}>
           Add events, tasks with due dates, or connect Canvas to see upcoming items here.
         </div>
@@ -246,7 +279,9 @@ export default function AgendaView({
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 8px 80px' : '16px 20px 32px', display: 'flex', flexDirection: 'column', gap: 0 }}>
-      {grouped.map(([dateStr, dayItems]) => (
+      {grouped.map(([dateStr, dayItems]) => {
+        const isOverdue = dateStr === OVERDUE_KEY
+        return (
         <div key={dateStr} style={{ marginBottom: 20 }}>
           {/* Day header */}
           <div style={{
@@ -262,15 +297,19 @@ export default function AgendaView({
             <span style={{
               fontSize: '0.82rem',
               fontWeight: 800,
-              color: dateStr === new Date().toISOString().slice(0, 10) ? 'var(--blue-text)' : 'var(--text)',
+              // Compared against a *local* today. This was toISOString(), which
+              // is UTC, so from ~8pm Eastern the highlight jumped to tomorrow.
+              color: isOverdue ? '#ef4444' : dateStr === todayStr() ? 'var(--blue-text)' : 'var(--text)',
               letterSpacing: '0.01em',
+              display: 'flex', alignItems: 'center', gap: 5,
             }}>
-              {dayLabel(dateStr)}
+              {isOverdue && <AlertTriangle size={13} />}
+              {isOverdue ? 'Overdue' : dayLabel(dateStr)}
             </span>
             <span style={{ fontSize: '0.66rem', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
               {dayItems.length} item{dayItems.length !== 1 ? 's' : ''}
             </span>
-            <div style={{ flex: 1, height: 1, background: 'var(--border)', marginLeft: 4 }} />
+            <div style={{ flex: 1, height: 1, background: isOverdue ? 'rgba(239,68,68,.3)' : 'var(--border)', marginLeft: 4 }} />
           </div>
 
           {/* Items */}
@@ -363,6 +402,14 @@ export default function AgendaView({
 
                   {/* Subtitle row */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 3, flexWrap: 'wrap' }}>
+                    {/* Under one "Overdue" heading the original due date is the
+                        only thing distinguishing a week-late item from a
+                        day-late one, so each row carries its own. */}
+                    {item.overdue && item.dueDateStr && (
+                      <span style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 700 }}>
+                        {overdueLabel(item.dueDateStr)}
+                      </span>
+                    )}
                     {!item.allDay && item.subtitle && (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.74rem', color: 'var(--text-3)', fontWeight: 600 }}>
                         <Clock size={10} />
@@ -413,7 +460,8 @@ export default function AgendaView({
             ))}
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
