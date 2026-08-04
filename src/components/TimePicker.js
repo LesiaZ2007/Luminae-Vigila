@@ -52,16 +52,23 @@ function parseTimeString(raw) {
 }
 
 export default function TimePicker({ value, onChange }) {
+  /* hour / minute / period are DERIVED from `value`, not mirrored into state.
+
+     They used to be three useStates kept in sync by an effect on [value]. That
+     mirror was redundant: every local edit already calls emit24 -> onChange, the
+     parent updates `value`, and the effect copied it straight back. The state
+     was never the source of truth, only a lagging cache of the prop — and one
+     that briefly disagreed with it on every change, for a render.
+
+     Deriving instead means there is one source of truth and no effect. */
   const [h24, rawMin] = (value || '09:00').split(':').map(Number)
-  const initPeriod = h24 >= 12 ? 'PM' : 'AM'
-  const initHour   = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24
-  const initMin    = rawMin || 0
+  const safeH24 = Number.isFinite(h24) ? h24 : 9
+  const period  = safeH24 >= 12 ? 'PM' : 'AM'
+  const hour    = safeH24 === 0 ? 12 : safeH24 > 12 ? safeH24 - 12 : safeH24
+  const minute  = Number.isFinite(rawMin) ? rawMin : 0
 
   const [open,       setOpen]       = useState(false)
   const [mode,       setMode]       = useState('hour')
-  const [hour,       setHour]       = useState(initHour)
-  const [minute,     setMinute]     = useState(initMin)
-  const [period,     setPeriod]     = useState(initPeriod)
   const [hoveredIdx, setHoveredIdx] = useState(-1)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -79,15 +86,6 @@ export default function TimePicker({ value, onChange }) {
   const svgRef     = useRef(null)
   const timerRef   = useRef(null)
   const inputRef   = useRef(null)
-
-  // Sync internal state when `value` prop changes from outside
-  useEffect(() => {
-    const [h, m] = (value || '09:00').split(':').map(Number)
-    const p = h >= 12 ? 'PM' : 'AM'
-    setHour(h === 0 ? 12 : h > 12 ? h - 12 : h)
-    setMinute(m || 0)
-    setPeriod(p)
-  }, [value])
 
   useEffect(() => {
     if (!open && !inlineEdit) return
@@ -118,9 +116,6 @@ export default function TimePicker({ value, onChange }) {
       const parsed = parseTimeString(str)
       if (parsed) {
         const { h24: h, min: m } = parsed
-        const p = h >= 12 ? 'PM' : 'AM'
-        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-        setHour(h12); setMinute(m); setPeriod(p)
         onChange(`${pad(h)}:${pad(m)}`)
       }
     }
@@ -129,24 +124,24 @@ export default function TimePicker({ value, onChange }) {
   }
 
   function pickHour(h) {
-    setHour(h); emit24(h, minute, period)
+    emit24(h, minute, period)
     setHoveredIdx(-1)
     if (!isDragging) {
       clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => setMode('minute'), 200)
     }
   }
-  function pickMinute(m) { setMinute(m); emit24(hour, m, period); setHoveredIdx(-1) }
-  function togglePeriod(p) { setPeriod(p); emit24(hour, minute, p) }
+  function pickMinute(m) { emit24(hour, m, period); setHoveredIdx(-1) }
+  function togglePeriod(p) { emit24(hour, minute, p) }
 
   function commitHour() {
     const n = parseInt(typedH, 10)
-    if (!isNaN(n) && n >= 1 && n <= 12) { setHour(n); emit24(n, minute, period) }
+    if (!isNaN(n) && n >= 1 && n <= 12) { emit24(n, minute, period) }
     setEditH(false); setTypedH(''); setMode('minute')
   }
   function commitMinute(andClose = false) {
     const n = parseInt(typedM, 10)
-    if (!isNaN(n) && n >= 0 && n <= 59) { setMinute(n); emit24(hour, n, period) }
+    if (!isNaN(n) && n >= 0 && n <= 59) { emit24(hour, n, period) }
     setEditM(false); setTypedM('')
     if (andClose) setOpen(false)
   }
@@ -165,8 +160,8 @@ export default function TimePicker({ value, onChange }) {
     if (!pos) return
     const items = mode === 'hour' ? HOURS : MINS
     const val   = coordsToValue(pos.x, pos.y, items)
-    if (mode === 'hour') { setHour(val); emit24(val, minute, period) }
-    else                  { setMinute(val); emit24(hour, val, period) }
+    if (mode === 'hour') { emit24(val, minute, period) }
+    else                  { emit24(hour, val, period) }
   }
   const onMouseMove = useCallback((e) => { if (isDragging) applyDragCoords(e.clientX, e.clientY) }, [isDragging, mode, hour, minute, period])
   const onMouseUp   = useCallback(() => {
