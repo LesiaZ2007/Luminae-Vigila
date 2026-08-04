@@ -235,6 +235,8 @@ A compact **"Your week"** section lives inside the **Focus Timer** panel (open i
 - **Personal-best confetti** — hitting a new longest streak triggers the existing confetti component
 - Streak is updated automatically when any task or Canvas assignment is marked done
 
+> **Fixed:** an infinite render loop. `todos` and `canvasAssignments` default to `[]`, and a default parameter builds a *new* array every render — so the refresh callback's identity churned, its effect re-ran, set state, and rendered again without end. It stayed quiet only because `page.js` happens to pass memoised arrays; any caller omitting a prop or passing a literal would have spun the tab. The state update now bails out when nothing changed, which breaks the cycle regardless of what callers do.
+
 > **Fixed:** the weekly focus total read `durationMs` while the Focus Timer writes `durationSec`, so **every session counted as zero** and the card showed `0h` no matter how much you'd focused. The Study Time panel was unaffected — it always read the right field. The card also now re-reads when a session completes instead of showing the total from when it mounted, and parses session dates as local (a bare `YYYY-MM-DD` read as UTC midnight dropped Sunday sessions out of the week that had just started).
 
 ### 📛 PWA App Icon Badge
@@ -521,6 +523,7 @@ with a `@vitest-environment jsdom` docblock (the default stays `node`, so the
 pure-logic suite doesn't pay for a DOM):
 - `src/components/LinkedNotes.test.jsx` — which notes surface on a linked item
 - `src/components/NotesPanel.test.jsx` — search, filters, starring, and keyboard access
+- `src/components/WeeklyRecap.test.jsx` — the weekly focus total, and that the card settles instead of re-rendering forever when a caller passes fresh array literals
 
 ---
 
