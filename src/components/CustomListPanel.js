@@ -1086,7 +1086,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
         >
           <div onClick={e => e.stopPropagation()}
                style={{ width: 'min(320px,100%)', background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)', padding: '24px 20px 18px' }}>
-            <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete "{list.name}"?</p>
+            <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete &ldquo;{list.name}&rdquo;?</p>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', margin: '0 0 20px' }}>All {totalCount} item{totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowDeleteConfirm(false)}
@@ -1297,7 +1297,7 @@ export default function CustomListPanel({
           >
             <div onClick={e => e.stopPropagation()}
                  style={{ width: 'min(320px,100%)', background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)', padding: '24px 20px 18px' }}>
-              <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete "{list.name}"?</p>
+              <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete &ldquo;{list.name}&rdquo;?</p>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', margin: '0 0 20px' }}>All {totalCount} item{totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.</p>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button onClick={() => setDeletingId(null)}

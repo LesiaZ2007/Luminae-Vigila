@@ -37,6 +37,7 @@ import Select from './Select'
 import WeeklyRecap from './WeeklyRecap'
 import { todayStr } from '@/lib/localDate'
 import { pipSupported, openPipWindow } from '@/lib/documentPip'
+import { makeRandom } from '@/lib/seededRandom'
 
 const DEFAULTS = {
   focusMin: 25,
@@ -962,15 +963,18 @@ function BackgroundFX({ type, accent }) {
 // Each streak is a very thin tall rectangle with a negative
 // skew so it looks like a diagonal rain streak.  Pure CSS animation, no images.
 function RainFX() {
-    const drops = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
-      id: i,
-      left:   Math.random() * 110 - 5,     // allow some off-screen starts
-      dur:    0.55 + Math.random() * 0.5,  // fast rain: 0.55–1.05s
-      delay:  -(Math.random() * 2),
-      height: 14 + Math.random() * 18,     // streak length in px
-      drift:  (Math.random() * 2 - 1) * 8, // subtle sideways jitter
-      opacity: 0.35 + Math.random() * 0.35,
-    })), [])
+    const drops = useMemo(() => {
+      const rand = makeRandom(0x2A19)
+      return Array.from({ length: 80 }, (_, i) => ({
+        id: i,
+        left:   rand() * 110 - 5,     // allow some off-screen starts
+        dur:    0.55 + rand() * 0.5,  // fast rain: 0.55–1.05s
+        delay:  -(rand() * 2),
+        height: 14 + rand() * 18,     // streak length in px
+        drift:  (rand() * 2 - 1) * 8, // subtle sideways jitter
+        opacity: 0.35 + rand() * 0.35,
+      }))
+    }, [])
 
     return (
       <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
@@ -997,23 +1001,26 @@ function RainFX() {
 // Warm glowing dots that drift randomly through the screen.
 // Two separate animations run simultaneously: a slow drift path and a glow pulse.
 function FirefliesFX() {
-    const flies = useMemo(() => Array.from({ length: 38 }, (_, i) => ({
-      id: i,
-      left: Math.random() * 95,
-      top:  Math.random() * 90,
-      size: 3 + Math.random() * 4,
-      driftDur:  8 + Math.random() * 12,
-      glowDur:   1.5 + Math.random() * 2.5,
-      driftDelay: -(Math.random() * 16),
-      glowDelay:  -(Math.random() * 4),
-      // Four random waypoints for the drift path
-      fx:  (Math.random() * 80 - 40) + 'px',
-      fy:  (Math.random() * 60 - 30) + 'px',
-      fx2: (Math.random() * 80 - 40) + 'px',
-      fy2: (Math.random() * 60 - 30) + 'px',
-      fx3: (Math.random() * 80 - 40) + 'px',
-      fy3: (Math.random() * 60 - 30) + 'px',
-    })), [])
+    const flies = useMemo(() => {
+      const rand = makeRandom(0xF17E)
+      return Array.from({ length: 38 }, (_, i) => ({
+        id: i,
+        left: rand() * 95,
+        top:  rand() * 90,
+        size: 3 + rand() * 4,
+        driftDur:  8 + rand() * 12,
+        glowDur:   1.5 + rand() * 2.5,
+        driftDelay: -(rand() * 16),
+        glowDelay:  -(rand() * 4),
+        // Four waypoints for the drift path
+        fx:  (rand() * 80 - 40) + 'px',
+        fy:  (rand() * 60 - 30) + 'px',
+        fx2: (rand() * 80 - 40) + 'px',
+        fy2: (rand() * 60 - 30) + 'px',
+        fx3: (rand() * 80 - 40) + 'px',
+        fy3: (rand() * 60 - 30) + 'px',
+      }))
+    }, [])
 
     return (
       <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
@@ -1043,18 +1050,23 @@ function FirefliesFX() {
 function ParticleFX({ type }) {
   const isSnow = type === 'snow'
   const particles = useMemo(() => {
+    // Seeded per effect: the field is identical every time this background is
+    // selected, which is what you want for ambience — and, unlike Math.random
+    // in a memo, it survives React discarding and recomputing the memo without
+    // the whole screen reshuffling.
+    const rand  = makeRandom(isSnow ? 0x51704 : 0x57AA5)
     const count = isSnow ? 70 : 55
     return Array.from({ length: count }, (_, i) => ({
       id: i,
-      left: Math.random() * 100,
-      top: Math.random() * 100,
-      size: isSnow ? 2 + Math.random() * 4 : 1.4 + Math.random() * 1.8,
+      left: rand() * 100,
+      top: rand() * 100,
+      size: isSnow ? 2 + rand() * 4 : 1.4 + rand() * 1.8,
       // Slow, long fades so the opacity fluctuates smoothly rather than blinking
-      dur: isSnow ? 7 + Math.random() * 9 : 5 + Math.random() * 7,
-      delay: Math.random() * -12,
-      drift: (Math.random() * 2 - 1) * 40,
+      dur: isSnow ? 7 + rand() * 9 : 5 + rand() * 7,
+      delay: rand() * -12,
+      drift: (rand() * 2 - 1) * 40,
     }))
-  }, [type, isSnow])
+  }, [isSnow])
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', zIndex: 1, pointerEvents: 'none' }}>
