@@ -366,7 +366,7 @@ function TourContent() {
         </div>
       ))}
       <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', margin: '4px 0 0', lineHeight: 1.5 }}>
-        Tip: You can re-open this tour any time from the sidebar (look for "Show tour").
+        Tip: You can re-open this tour any time from the sidebar (look for &ldquo;Show tour&rdquo;).
       </p>
     </div>
   )

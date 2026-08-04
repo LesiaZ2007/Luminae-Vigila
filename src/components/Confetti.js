@@ -1,5 +1,7 @@
 'use client'
 
+import { makeRandom, hashSeed } from '@/lib/seededRandom'
+
 export const CONFETTI_COLORS = {
   high:   ['#ef4444','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ec4899','#f97316'],
   medium: ['#f59e0b','#3b82f6','#10b981','#8b5cf6','#06b6d4'],
@@ -10,19 +12,27 @@ export default function Confetti({ priority, x = 200, y = 300 }) {
   const colors = CONFETTI_COLORS[priority] || CONFETTI_COLORS.low
   const count  = priority === 'high' ? 70 : priority === 'medium' ? 40 : 22
 
+  /* Seeded from the burst's own origin, so each celebration scatters
+     differently but a given burst stays put.
+
+     This was `Math.random()` with no memo, meaning every re-render that
+     happened during the ~1.6s the confetti is mounted re-rolled all of it and
+     the particles visibly jumped mid-flight. Deriving from x/y instead of
+     memoising is what makes it stable no matter how often the parent renders. */
+  const rand = makeRandom(hashSeed(Math.round(x), Math.round(y), priority, count))
   const particles = Array.from({ length: count }, (_, i) => {
-    const angle = (Math.random() * 2 - 1) * Math.PI * 0.8 - Math.PI / 2
-    const speed = 80 + Math.random() * 160
+    const angle = (rand() * 2 - 1) * Math.PI * 0.8 - Math.PI / 2
+    const speed = 80 + rand() * 160
     return {
       id:    i,
       color: colors[i % colors.length],
-      size:  5 + Math.random() * 7,
+      size:  5 + rand() * 7,
       dx:    Math.cos(angle) * speed,
       dy:    Math.sin(angle) * speed,
-      rot:   Math.random() * 720 - 360,
-      dur:   0.9 + Math.random() * 0.7,
-      delay: Math.random() * 0.25,
-      shape: Math.random() > 0.45 ? 'circle' : 'rect',
+      rot:   rand() * 720 - 360,
+      dur:   0.9 + rand() * 0.7,
+      delay: rand() * 0.25,
+      shape: rand() > 0.45 ? 'circle' : 'rect',
     }
   })
 
