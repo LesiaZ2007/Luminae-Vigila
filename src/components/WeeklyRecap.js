@@ -147,6 +147,14 @@ function fmtFocus(seconds) {
   return `${Math.round((seconds / 3600) * 10) / 10}h`
 }
 
+/** One level deep is enough — the recap data object is all primitives. */
+function shallowEqual(a, b) {
+  if (a === b) return true
+  if (!a || !b) return false
+  const ka = Object.keys(a), kb = Object.keys(b)
+  return ka.length === kb.length && ka.every(k => a[k] === b[k])
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function WeeklyRecap({
@@ -221,7 +229,18 @@ export default function WeeklyRecap({
     const streak     = ledger.streak     ?? 0
     const bestStreak = ledger.bestStreak ?? 0
 
-    setData({ totalCompleted, lastWeek, delta, focusSec, focusSecLast, streak, bestStreak })
+    const next = { totalCompleted, lastWeek, delta, focusSec, focusSecLast, streak, bestStreak }
+    // Bail out when nothing actually changed.
+    //
+    // `todos` and `canvasAssignments` default to `[]`, and a default parameter
+    // builds a *new* array on every render — so `refresh`'s identity churns every
+    // render, so the effect below re-runs every render. Setting a fresh object
+    // each time then renders again, forever. It only stays quiet in the app
+    // because page.js happens to pass memoised arrays; a caller that omits a prop
+    // or passes a literal would spin the tab. Returning `prev` makes React bail
+    // out of the re-render and breaks the cycle at the source, whatever the
+    // callers do.
+    setData(prev => shallowEqual(prev, next) ? prev : next)
     // sessionsVersion is not read here — it exists so finishing a focus session
     // re-runs this. Without it the card kept showing the total from mount, and a
     // session you just completed didn't appear until something else changed.
