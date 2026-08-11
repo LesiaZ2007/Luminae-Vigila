@@ -20,6 +20,35 @@ wrong. Everything below is the detail behind that button.
 | 4 | Subscription row | `POST /api/push/subscribe` → `push_subscriptions` | Session expired during upload → the device looks enabled locally but the server has no way to reach it |
 | 5 | Something to trigger the send | cron → `/api/push/reminders` | **This is the one that was missing.** See below |
 
+## The failure that looks like the opposite of itself
+
+**Symptom: the daily glance arrives, reminders don't.**
+
+The instinct is to suspect the device — notifications clearly work, so it must be the
+reminder logic. It almost never is. Vercel **injects `CRON_SECRET` into its own cron
+requests automatically**, but the reminder job is driven from *outside* Vercel with a
+secret you pasted by hand. So rotating `CRON_SECRET` in Vercel breaks exactly one of
+the three jobs:
+
+| Job | Called by | Survives a secret rotation? |
+|-----|-----------|------------------------------|
+| `/api/push/daily` | Vercel cron | ✅ Vercel supplies the new value |
+| `/api/push/digest` | Vercel cron | ✅ same |
+| `/api/push/reminders` | external pinger | ❌ **401 on every tick** |
+
+If your pinger has failure notifications on, this shows up as "your cron isn't
+working" emails while the app keeps delivering the morning summary — which is a
+genuinely confusing pair of signals. Check the pinger's execution history for the
+status code: **`401` means the secret, full stop.** Rotate it and set both sides (see
+[Getting a `CRON_SECRET` you can actually paste](#getting-a-cron_secret-you-can-actually-paste)).
+
+**Settings → Notifications → Test notifications** now reports this directly. Every
+authorised run stamps `cron_pings`, and `/api/push/status` reports how long ago each
+job last got through, so "nothing has called the reminder cron in three days" is a
+line of text rather than an inference. Only successes are recorded — logging
+rejections would mean a database write on every unauthenticated hit to a public URL,
+and a 401 loop and a dead pinger look identical from here anyway.
+
 ## The reminder scheduler needs a heartbeat
 
 `/api/push/reminders` is the job that makes reminders fire when the app is
@@ -136,7 +165,9 @@ reader's calendar day even when the hour isn't ideal for them.
 
 Both require a signed-in session and only ever touch the caller's own rows.
 
-- `GET /api/push/status` — reports which links are healthy. Booleans and counts
+- `GET /api/push/status` — reports which links are healthy, including a
+  `crons` array with each job's last successful ping and whether it is overdue
+  (reminders: 15 min, daily: 26 h, digest: 8 days). Booleans, counts and timestamps
   only; never returns key material or the cron secret.
 - `POST /api/push/test` — sends a real push to the caller's devices immediately,
   and reports the push service's actual rejection per endpoint. A 403 (key

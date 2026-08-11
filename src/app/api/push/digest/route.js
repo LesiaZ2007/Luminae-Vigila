@@ -4,26 +4,31 @@
  * Protected by Bearer token:
  *   Authorization: Bearer $CRON_SECRET
  *
- * Iterates every opted-in push subscription (digest_enabled = true),
- * looks up that user's todos/events for the next 7 days, and sends a
- * personalised summary push notification.
+ * Iterates every subscription belonging to a user who has the digest switched on
+ * (`users.digest_enabled`), looks up that user's todos/events for the next 7 days,
+ * and sends a personalised summary push notification.
+ *
+ * The opt-in is per *account*, not per subscription: see lib/pushSchema.js for why
+ * the per-device version silently delivered to exactly one of your devices.
  *
  * Errors per subscription are caught and logged without aborting others.
  */
 import webpush from 'web-push'
 import sql     from '@/lib/db'
+import { requireCron, requireVapid } from '@/lib/cronAuth'
+import { ensurePushSchema }          from '@/lib/pushSchema'
 
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
 export async function GET(request) {
   // ── Auth ────────────────────────────────────────────────────────────────────
-  const authHeader = request.headers.get('authorization') ?? ''
-  const token      = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  if (!token || token !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = await requireCron(request, 'digest')
+  if (denied) return denied
 
   // ── VAPID setup (use a generic subject since this isn't per-user) ──────────
+  const unconfigured = requireVapid()
+  if (unconfigured) return unconfigured
+
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT ?? 'mailto:noreply@localhost',
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
@@ -37,11 +42,14 @@ export async function GET(request) {
   const nowIso   = now.toISOString()
   const endIso   = weekEnd.toISOString()
 
-  // ── Fetch opted-in subscriptions ────────────────────────────────────────────
+  // ── Fetch every device of every opted-in account ────────────────────────────
+  await ensurePushSchema()
+
   const subs = await sql`
-    SELECT id, user_id, endpoint, p256dh, auth
-    FROM push_subscriptions
-    WHERE digest_enabled = true
+    SELECT s.id, s.user_id, s.endpoint, s.p256dh, s.auth
+    FROM push_subscriptions s
+    JOIN users u ON u.id = s.user_id
+    WHERE u.digest_enabled = true
   `
 
   let sent = 0, failed = 0, skipped = 0

@@ -847,40 +847,42 @@ export default function Home() {
     return () => clearInterval(id)
   }, [events, todos, notes, pushToast])
 
-  /* ── Digest preference ── */
-  // Read the current push subscription's digest_enabled from the DB when signed in.
+  /* ── Digest preference ──
+     Account-level, so it is read from the server rather than localStorage. The old
+     version cached it per device, which meant each browser displayed its own guess
+     at a setting it may never have written — and since the flag was stored per
+     subscription, enabling it on one device really did leave the others opted out. */
   useEffect(() => {
-    if (!currentUser || typeof navigator === 'undefined') return
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => {
-      if (!sub) return
-      // We don't have a dedicated GET endpoint, so we store the pref in localStorage
-      // to avoid an extra round-trip on every load. The canonical value is the DB.
-      try {
-        const saved = localStorage.getItem('lv-digest-enabled')
-        if (saved !== null) setDigestEnabled(JSON.parse(saved))
-      } catch {}
-    }).catch(() => {})
+    if (!currentUser) return
+    let cancelled = false
+    fetch('/api/push/digest-pref')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled && d) setDigestEnabled(d.digest_enabled === true) })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [currentUser])
 
   const toggleDigest = useCallback(async () => {
     if (!currentUser) return
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
     setDigestSaving(true)
+    const next = !digestEnabled
     try {
-      const reg = await navigator.serviceWorker.ready
-      const sub = await reg.pushManager.getSubscription()
-      if (!sub) { pushToast('Notifications not enabled', 'Enable push notifications first.'); return }
-      const next = !digestEnabled
+      // No subscription lookup: the preference is about the account. Requiring a
+      // push subscription on *this* device to change it was what made the setting
+      // unreachable from whichever device you happened to be holding.
       const res = await fetch('/api/push/digest-pref', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ endpoint: sub.endpoint, digest_enabled: next }),
+        body:    JSON.stringify({ digest_enabled: next }),
       })
       if (res.ok) {
         setDigestEnabled(next)
-        try { localStorage.setItem('lv-digest-enabled', JSON.stringify(next)) } catch {}
-        pushToast(next ? 'Sunday digest enabled' : 'Sunday digest disabled', next ? 'You\'ll get a weekly preview every Sunday at 6 PM UTC.' : 'No more weekly digest pushes.')
+        pushToast(
+          next ? 'Sunday digest enabled' : 'Sunday digest disabled',
+          next
+            ? 'Every Sunday at 6 PM UTC, on every device where you\'ve enabled notifications.'
+            : 'No more weekly digest pushes.',
+        )
       } else {
         pushToast('Could not update digest preference', 'Please try again.')
       }

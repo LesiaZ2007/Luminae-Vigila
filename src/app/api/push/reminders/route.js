@@ -17,6 +17,7 @@
  */
 import webpush from 'web-push'
 import sql     from '@/lib/db'
+import { requireCron, requireVapid }       from '@/lib/cronAuth'
 import { noteDisplayTitle, notePlainText } from '@/lib/notes'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
@@ -40,14 +41,14 @@ function reminderFireTime(item, dueIso) {
 }
 
 export async function GET(request) {
-  // ── Auth ──────────────────────────────────────────────────────────────────
-  const authHeader = request.headers.get('authorization') ?? ''
-  const token      = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  if (!token || token !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // ── Auth (also stamps the heartbeat /api/push/status reports) ──────────────
+  const denied = await requireCron(request, 'reminders')
+  if (denied) return denied
 
   // ── VAPID setup (generic subject — not per-user) ────────────────────────────
+  const unconfigured = requireVapid()
+  if (unconfigured) return unconfigured
+
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT ?? 'mailto:noreply@localhost',
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
