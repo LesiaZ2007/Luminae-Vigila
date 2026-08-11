@@ -16,19 +16,17 @@
  */
 import webpush from 'web-push'
 import sql     from '@/lib/db'
+import { requireCron, requireVapid }           from '@/lib/cronAuth'
+import { ensurePushSchema }                    from '@/lib/pushSchema'
 import { buildGlance, glanceNotificationBody } from '@/lib/glance'
 import { toDateStr } from '@/lib/localDate'
 
 export async function GET(request) {
-  const authHeader = request.headers.get('authorization') ?? ''
-  const token      = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  if (!token || token !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const denied = await requireCron(request, 'daily')
+  if (denied) return denied
 
-  if (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
-    return Response.json({ error: 'VAPID keys not configured' }, { status: 503 })
-  }
+  const unconfigured = requireVapid()
+  if (unconfigured) return unconfigured
 
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT ?? 'mailto:noreply@localhost',
@@ -38,8 +36,7 @@ export async function GET(request) {
 
   // Self-healing migrations, matching the pattern the rest of the API uses so a
   // fresh database works without a manual step.
-  await sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS daily_enabled BOOLEAN NOT NULL DEFAULT true`
-  await sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tz_offset INTEGER NOT NULL DEFAULT 0`
+  await ensurePushSchema()
 
   const subs = await sql`
     SELECT id, user_id, endpoint, p256dh, auth, tz_offset
