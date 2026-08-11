@@ -285,6 +285,19 @@ Push fails **silently**: the browser reports "enabled", the server reports "sent
 - `POST /api/push/test` — sends immediately and reports the push service's **actual rejection per endpoint**. A 403 (key mismatch) and a 410 (expired subscription) look identical from the client but need completely different fixes
 - **If the test arrives but reminders don't, the problem is the scheduler, not the device** — see below
 
+**Cron heartbeats.** Every authorised cron run stamps a row in `cron_pings`, and the
+troubleshooter reports how long ago each job last got through. This exists because a
+cron being pinged with the *wrong* secret is otherwise indistinguishable from a cron
+nobody pings at all — both are silent. Worse, **Vercel injects `CRON_SECRET` into its
+own crons**, so rotating the secret without updating the external pinger breaks only
+`/api/push/reminders`: the daily glance keeps arriving while reminders die, which
+reads as "notifications work, reminders are broken" and sends you inspecting the
+phone instead of the scheduler. The troubleshooter now says so in one line.
+
+Only successes are recorded. Logging rejections would mean a database write on every
+unauthenticated hit to a public URL, and buys nothing — a 401 loop and a dead pinger
+both show up as "last success was ages ago".
+
 Full detail in **[docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)**.
 
 ### 📬 Sunday Week-Ahead Push Digest
@@ -296,8 +309,22 @@ Opted-in users receive a background push every **Sunday at 6 PM UTC** with a per
 - Opt in/out via the **"📬 Weekly digest ON/OFF"** toggle in the **Focus Timer** panel's "Your week" section
 - Requires sign-in (the toggle shows "Sign in to get a Sunday week-ahead digest" otherwise)
 - The cron is configured in `vercel.json` and calls `GET /api/push/digest` — protected by `Authorization: Bearer $CRON_SECRET`
-- `digest_enabled` column added to `push_subscriptions` (backward compatible, `DEFAULT false`)
-- **Upgrade existing install:** run `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT false;` in the Neon SQL Editor
+- **The opt-in is per account, and defaults on.** It lives in `users.digest_enabled`, read
+  by the toggle through `GET /api/push/digest-pref`
+
+**Why it moved off `push_subscriptions`.** The flag used to be stored per subscription
+and defaulted to `false`, while the toggle read its state from `localStorage`. Three
+consequences, all silent: the feature shipped switched off for everybody; turning it on
+at a desk left every phone opted out; and each browser displayed its own cached guess at
+a setting it may never have written. A weekly week-ahead summary is a preference about
+*you*, not about a browser profile — so it is now one row per account, defaulting on to
+match `daily_enabled`. `push_subscriptions.digest_enabled` is left in place but unread;
+dropping a column is unrecoverable and buys nothing.
+
+- **Upgrade existing install:** nothing to run — `src/lib/pushSchema.js` applies
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT true`
+  on the next request to any push route, the same self-healing pattern the rest of the API
+  uses. To do it by hand, that statement is the whole migration
 
 ### 🔔 Browser Push Notifications
 - Service worker (`/sw.js`) enables notifications even when the tab is closed or backgrounded. Uses PNG icons (`icon-192.png` / `notification-icon.png`) — **Android Chrome does not render SVG notification icons**.
