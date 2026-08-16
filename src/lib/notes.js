@@ -143,13 +143,25 @@ export function noteDisplayTitle(note) {
   return firstLine ? firstLine.slice(0, 80) : 'Untitled note'
 }
 
-/** One-line preview of the body, excluding whatever became the title. */
+/** Does this note's body contain at least one image? */
+export function noteHasImage(html) {
+  return /<img\b/i.test(String(html ?? ''))
+}
+
+/**
+ * One-line preview of the body, excluding whatever became the title.
+ *
+ * A note that is nothing but a pasted screenshot flattens to an empty string,
+ * which would render as a blank card indistinguishable from an empty note. Saying
+ * "Image" is the honest summary of what is actually in there.
+ */
 export function notePreview(note, max = 140) {
   const text = notePlainText(note?.html)
   const body = (note?.title ?? '').trim()
     ? text
     : text.split('\n').slice(1).join(' ')
   const flat = body.replace(/\s+/g, ' ').trim()
+  if (!flat) return noteHasImage(note?.html) ? 'Image' : ''
   return flat.length > max ? flat.slice(0, max) + '…' : flat
 }
 

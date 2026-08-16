@@ -142,6 +142,14 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
 - **Motion** — rows slide in on creation and when filtering, and collapse horizontally on delete so removal reads as removal rather than a jump cut (the parent's delete is held ~200 ms so there's something left to animate). The panel and editor fade in on open, and the editor is keyed on note id so the fade replays per note. All of it is disabled under `prefers-reduced-motion`.
 - **Per-note colour** — eight accent swatches (same palette as Custom Lists) tint the note's spine in the list and the bar beside its title.
 - **Reminders** — set an absolute date + time on any note using the app's styled `<DatePicker>` / `<TimePicker>`. Reminders fire as an in-app toast while the tab is open **and** as a Web Push notification when the app is closed, via the existing `/api/push/reminders` cron (de-duplicated through the `sent_reminders` table like event and task reminders). The push body is a plain-text snippet of the note.
+- **Images** — **paste** a screenshot straight into the body (Ctrl/Cmd+V), **drag and drop** a file onto the editor, or use the 🖼 toolbar button (the button is there for mobile, where neither of the other two is comfortable). Multiple files at once are uploaded in the order you picked them, and a spinner in the toolbar tracks them.
+  - **Resized in the browser first.** Longest edge is capped at 1600 px and the result is re-encoded to WebP (JPEG where WebP isn't supported) at quality 0.85. A 4 MB phone photo lands at 150–400 KB. Images already under 320 KB pass through untouched rather than being re-compressed for nothing, and **GIFs are never re-encoded** because a canvas round-trip would flatten the animation away.
+  - **Stored in Postgres, not inlined.** The note body carries only `/api/notes/images/<id>`. Inlining base64 would put a multi-megabyte string into `localStorage` (a ~5 MB quota for the *whole app*) and re-upload it on every `/api/sync` POST. The bytes live in a `note_images` table; `allowBase64` is off in the Tiptap extension so a data URI can't sneak back in.
+  - **Private.** `GET /api/notes/images/<id>` requires a session and is scoped to `user_id` — a URL that escapes a note body is not a way to read someone else's picture. A wrong-owner read returns **404, not 403**, since distinguishing them would confirm the id exists. Responses are `Cache-Control: private, immutable` with an ETag, so repeat views are 304s.
+  - **Requires sign-in.** An image held only in one browser's `localStorage` would break the moment the note synced elsewhere, so signed-out users get a toast instead of a broken picture.
+  - **SVG is rejected** at upload. It's a document format that can carry script, and these bytes are served from the app's own origin. Allowed: PNG, JPEG, WebP, GIF, up to 4 MB after resizing.
+  - **Orphans are reaped** on sync, but only once they've been unreferenced for **30 days**. Sync is last-write-wins, so a phone that's been offline can POST a notes array predating an image added on a laptop — reaping strictly-unreferenced rows would delete it and leave a permanent broken image. The grace window makes that race require a 30-day-stale device.
+  - A note that is *only* an image previews as "Image" rather than a blank card, and its reminder push says "Image" rather than sending an empty body.
 - **Link to a course, event, or task** — attach a note to a Canvas course, calendar event, or open task. The linked item's name appears on the note's meta bar and a link icon shows in the list row.
 - **Soft delete with undo** — deleting moves a note to **Trash** and raises an undo toast. Trashed notes are restorable or permanently deletable from the Trash filter, and are purged automatically after **30 days**. Because the trash flag syncs, deleting on one device removes it on the others too.
 - **Autosave** — the body saves 400 ms after you stop typing, and flushes on note switch and on unmount so nothing is lost mid-sentence. A "Saved" / "2m ago" indicator sits in the meta bar.
@@ -344,6 +352,18 @@ dropping a column is unrecoverable and buys nothing.
 - Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
 - Select from 10 preset swatches — change applies immediately and persists across sessions
 - Google Calendar and Canvas events cannot be recolored
+
+### 🗓 Date & Time Popovers Stay On Screen
+
+Both pickers position themselves through the shared `useAnchoredPosition` hook
+(`src/lib/useAnchoredPosition.js`) rather than doing their own arithmetic, because
+they were getting it wrong in the same two ways.
+
+- **Measured, not guessed.** `DatePicker` used a hardcoded 360 px estimate of its own height to decide whether to flip above the trigger. Near the top of the screen that produced a **negative** `top` and the calendar's first weeks were simply unreachable. The hook reads the real `offsetHeight` and re-reads it through a `ResizeObserver` as the content changes (the month grid gains a row, an error line appears)
+- **Flips only when flipping helps.** Opening upward into an equally cramped space just moves the problem, so it flips only when below genuinely doesn't fit *and* above is roomier
+- **Clamped on both axes.** Neither picker clamped horizontally, so a trigger near the right edge pushed a fixed-width popover past it. When neither side fits at all — a short viewport, or a phone with the on-screen keyboard up — the popover is clamped into view and given a `maxHeight` so it scrolls instead of spilling
+- **`TimePicker` is now portaled.** It was `position: absolute` inside the trigger's wrapper, which meant any scrolling ancestor (the note editor's meta bar, modals) clipped it and it could only ever open downward, off the bottom of the screen. It now renders to `document.body` like `DatePicker`. Outside-click detection tests the popover *and* the trigger, so tapping the clock face no longer counts as clicking away
+- Recalculates on scroll (captured on **any** ancestor, not just the window), on resize, and on `visualViewport` resize — which is what actually fires when a mobile keyboard opens
 
 ### 📆 Mini Month Navigator *(desktop / tablet)*
 - Compact month grid in the sidebar for fast date jumping

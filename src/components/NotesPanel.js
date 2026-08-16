@@ -44,6 +44,7 @@ const FILTERS = [
 export default function NotesPanel({
   notes = [], activeNoteId, onSelect, onCreate, onUpdate,
   onTrash, onRestore, onPurge, onConvert, linkOptions = [], isMobile = false,
+  pushToast, signedIn = false,
 }) {
   const [query,  setQuery]  = useState('')
   const [filter, setFilter] = useState('all')
@@ -230,6 +231,8 @@ export default function NotesPanel({
                 onConvert={onConvert}
                 linkOptions={linkOptions}
                 isMobile={isMobile}
+                pushToast={pushToast}
+                signedIn={signedIn}
               />
             </>
           ) : (

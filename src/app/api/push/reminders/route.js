@@ -18,7 +18,7 @@
 import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid }       from '@/lib/cronAuth'
-import { noteDisplayTitle, notePlainText } from '@/lib/notes'
+import { noteDisplayTitle, notePlainText, noteHasImage } from '@/lib/notes'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
 // Prevents backfilling ancient reminders on the very first cron run, while being
@@ -106,7 +106,9 @@ export async function GET(request) {
       if (at == null) continue
       // Lead with the note's own text — the reminder label is just the time,
       // which the notification already shows.
-      const snippet = notePlainText(nt.html).replace(/\s+/g, ' ').trim().slice(0, 120)
+      const text    = notePlainText(nt.html).replace(/\s+/g, ' ').trim().slice(0, 120)
+      // An image-only note has no text at all; an empty push body reads as a bug.
+      const snippet = text || (noteHasImage(nt.html) ? 'Image' : '')
       candidates.push({ key: `nt-${nt.id}-${at}`, at, title: `Note: ${noteDisplayTitle(nt)}`, body: snippet })
     }
 

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import { todayStr } from '@/lib/localDate'
+import useAnchoredPosition from '@/lib/useAnchoredPosition'
 
 const DAYS   = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June',
@@ -45,7 +46,6 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
     const d = value ? new Date(value + 'T12:00:00') : new Date()
     return { year: d.getFullYear(), month: d.getMonth() }
   })
-  const [popupPos, setPopupPos] = useState({ top: 0, left: 0, width: 264 })
   const [inputVal, setInputVal] = useState('')
   const [inputErr, setInputErr] = useState(false)
 
@@ -53,24 +53,12 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
   const trigRef  = useRef(null)   // trigger button (for getBoundingClientRect)
   const popupRef = useRef(null)   // portal div — needed for outside-click detection
 
-  // Recalculate popover position on open and on scroll/resize
-  useEffect(() => {
-    if (!open || !trigRef.current) return
-    function calcPos() {
-      const rect      = trigRef.current.getBoundingClientRect()
-      const spaceBelow = window.innerHeight - rect.bottom
-      const popH      = 360  // approximate calendar + input height
-      const top       = spaceBelow >= popH ? rect.bottom + 6 : rect.top - popH - 6
-      setPopupPos({ top, left: rect.left, width: Math.max(264, rect.width) })
-    }
-    calcPos()
-    window.addEventListener('scroll', calcPos, true)
-    window.addEventListener('resize', calcPos)
-    return () => {
-      window.removeEventListener('scroll', calcPos, true)
-      window.removeEventListener('resize', calcPos)
-    }
-  }, [open])
+  // Measures the calendar rather than assuming a height, flips only when that
+  // helps, and clamps to the viewport on both axes. See lib/useAnchoredPosition.
+  const popupPos = useAnchoredPosition(open, trigRef, popupRef, {
+    minWidth: 264,
+    matchTriggerWidth: true,
+  })
 
   /* Sync the text field and calendar view when the popover opens or `value`
      changes from outside.
@@ -194,6 +182,10 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
           top:   popupPos.top,
           left:  popupPos.left,
           width: popupPos.width,
+          // Set only when the calendar cannot fit on either side (a short viewport,
+          // or a phone with the keyboard up) — then it scrolls instead of spilling.
+          maxHeight: popupPos.maxHeight,
+          overflowY: popupPos.maxHeight ? 'auto' : undefined,
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 14, boxShadow: 'var(--shadow-modal)', zIndex: 9999,
           padding: '12px 12px 10px',

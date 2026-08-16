@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import useAnchoredPosition from '@/lib/useAnchoredPosition'
 
 function pad(n) { return String(n).padStart(2, '0') }
 
@@ -83,14 +85,20 @@ export default function TimePicker({ value, onChange }) {
   const [typedM, setTypedM] = useState('')
 
   const wrapRef    = useRef(null)
+  const popupRef   = useRef(null)
   const svgRef     = useRef(null)
   const timerRef   = useRef(null)
   const inputRef   = useRef(null)
 
+  // The clock is portaled to <body> (see below), so it is no longer a DOM
+  // descendant of the trigger — an outside-click test against wrapRef alone would
+  // treat every tap on the clock face as "outside" and close it mid-drag.
   useEffect(() => {
     if (!open && !inlineEdit) return
     function onDown(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+      const inTrigger = wrapRef.current?.contains(e.target)
+      const inPopup   = popupRef.current?.contains(e.target)
+      if (!inTrigger && !inPopup) {
         setOpen(false)
         commitInline()
       }
@@ -98,6 +106,13 @@ export default function TimePicker({ value, onChange }) {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [open, inlineEdit, inlineVal])
+
+  // Centred under the trigger, flipped above it when there is no room below, and
+  // clamped inside the viewport either way. See lib/useAnchoredPosition.
+  const popupPos = useAnchoredPosition(open, wrapRef, popupRef, {
+    minWidth: 252,
+    align: 'center',
+  })
 
   useEffect(() => () => clearTimeout(timerRef.current), [])
 
@@ -256,11 +271,19 @@ export default function TimePicker({ value, onChange }) {
         </button>
       </div>
 
-      {/* ── Clock popover ── */}
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 200, background: 'var(--surface)', border: '1px solid var(--border)',
+      {/* ── Clock popover ──
+          Portaled to <body> rather than absolutely positioned inside the trigger:
+          as a descendant it was clipped by any scrolling ancestor (the note editor's
+          meta bar, modals) and could only ever open downward, off the bottom of the
+          screen. */}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={popupRef} style={{
+          position: 'fixed',
+          top:   popupPos.top,
+          left:  popupPos.left,
+          maxHeight: popupPos.maxHeight,
+          overflowY: popupPos.maxHeight ? 'auto' : undefined,
+          zIndex: 9999, background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 20, boxShadow: 'var(--shadow-modal)', padding: '16px 16px 14px',
           width: 252, userSelect: 'none',
         }}>
@@ -344,7 +367,8 @@ export default function TimePicker({ value, onChange }) {
             <button type="button" onClick={() => setOpen(false)}
                     style={{ padding: '6px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700 }}>OK</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
