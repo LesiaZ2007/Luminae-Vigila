@@ -353,6 +353,18 @@ dropping a column is unrecoverable and buys nothing.
 - Select from 10 preset swatches — change applies immediately and persists across sessions
 - Google Calendar and Canvas events cannot be recolored
 
+### 🗓 Date & Time Popovers Stay On Screen
+
+Both pickers position themselves through the shared `useAnchoredPosition` hook
+(`src/lib/useAnchoredPosition.js`) rather than doing their own arithmetic, because
+they were getting it wrong in the same two ways.
+
+- **Measured, not guessed.** `DatePicker` used a hardcoded 360 px estimate of its own height to decide whether to flip above the trigger. Near the top of the screen that produced a **negative** `top` and the calendar's first weeks were simply unreachable. The hook reads the real `offsetHeight` and re-reads it through a `ResizeObserver` as the content changes (the month grid gains a row, an error line appears)
+- **Flips only when flipping helps.** Opening upward into an equally cramped space just moves the problem, so it flips only when below genuinely doesn't fit *and* above is roomier
+- **Clamped on both axes.** Neither picker clamped horizontally, so a trigger near the right edge pushed a fixed-width popover past it. When neither side fits at all — a short viewport, or a phone with the on-screen keyboard up — the popover is clamped into view and given a `maxHeight` so it scrolls instead of spilling
+- **`TimePicker` is now portaled.** It was `position: absolute` inside the trigger's wrapper, which meant any scrolling ancestor (the note editor's meta bar, modals) clipped it and it could only ever open downward, off the bottom of the screen. It now renders to `document.body` like `DatePicker`. Outside-click detection tests the popover *and* the trigger, so tapping the clock face no longer counts as clicking away
+- Recalculates on scroll (captured on **any** ancestor, not just the window), on resize, and on `visualViewport` resize — which is what actually fires when a mobile keyboard opens
+
 ### 📆 Mini Month Navigator *(desktop / tablet)*
 - Compact month grid in the sidebar for fast date jumping
 - Click any day to navigate the main calendar to that week
