@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash,
-  notePlainText, noteDisplayTitle, notePreview, sortNotes, noteMatches,
+  notePlainText, noteDisplayTitle, notePreview, noteHasImage, sortNotes, noteMatches,
   TRASH_RETENTION_MS, sharedTextToHtml,
 } from './notes'
 
@@ -126,6 +126,37 @@ describe('notePreview', () => {
     const out = notePreview(long, 20)
     expect(out).toHaveLength(21)
     expect(out.endsWith('…')).toBe(true)
+  })
+
+  // A note that is only a pasted screenshot flattens to '' — without this it
+  // renders as a blank card, indistinguishable from an empty note.
+  it('says "Image" for a note whose body is only an image', () => {
+    expect(notePreview({ title: 'Whiteboard', html: '<img src="/api/notes/images/img-a">' })).toBe('Image')
+  })
+
+  it('prefers real text over the image fallback', () => {
+    expect(notePreview({ title: 'T', html: '<img src="/api/notes/images/img-a"><p>caption</p>' })).toBe('caption')
+  })
+
+  it('stays empty for a note with neither text nor image', () => {
+    expect(notePreview({ title: 'T', html: '<p></p>' })).toBe('')
+  })
+})
+
+describe('noteHasImage', () => {
+  it('detects an img tag', () => {
+    expect(noteHasImage('<p>a</p><img src="/api/notes/images/x">')).toBe(true)
+  })
+
+  it('is false for text-only and empty bodies', () => {
+    expect(noteHasImage('<p>just words</p>')).toBe(false)
+    expect(noteHasImage('')).toBe(false)
+    expect(noteHasImage(null)).toBe(false)
+  })
+
+  // 'imgur' contains 'img'; a naive substring check would call this a picture.
+  it('does not match a word that merely starts with img', () => {
+    expect(noteHasImage('<p>see imgur.com for the picture</p>')).toBe(false)
   })
 })
 

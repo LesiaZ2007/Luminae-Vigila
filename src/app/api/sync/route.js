@@ -13,8 +13,9 @@
  * NOT EXISTS) so existing deployed DBs that haven't run the new schema.sql
  * migration yet will self-heal on first sync rather than returning a 500.
  */
-import { getSession } from '@/lib/session'
-import sql            from '@/lib/db'
+import { getSession }        from '@/lib/session'
+import { reapOrphanImages }  from '@/lib/noteImages'
+import sql                   from '@/lib/db'
 
 // Ensure the study_sessions table exists.  Idempotent — safe to call every
 // request; Postgres skips the CREATE when the table is already there.
@@ -202,6 +203,15 @@ export async function POST(request) {
   // Execute all writes atomically — all succeed or all roll back.
   if (queries.length > 0) {
     await sql.transaction(queries)
+  }
+
+  // A full notes POST is the only moment the server sees every note this user has,
+  // so it is the only place orphaned images can be identified. Deliberately after
+  // the transaction and deliberately best-effort: reclaiming disk must never be the
+  // reason a note fails to save. See reapOrphanImages for the grace period that
+  // keeps a stale device from deleting an image a fresher one just added.
+  if (Array.isArray(notes)) {
+    try { await reapOrphanImages(userId, notes) } catch {}
   }
 
   return Response.json({ ok: true })
