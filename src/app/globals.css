@@ -932,6 +932,24 @@ select option {
   margin: 1.2em 0;
 }
 
+/* Pasted images. `height: auto` with the intrinsic width capped is what keeps a
+   4000px phone photo from forcing the whole editor to scroll sideways. */
+.lv-note-body img.lv-note-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  margin: 0.6em 0;
+}
+
+/* ProseMirror marks the selected node rather than using a text selection, so
+   without this there is no feedback that clicking an image selected it. */
+.lv-note-body img.lv-note-img.ProseMirror-selectednode {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
 .lv-note-body a {
   color: var(--blue);
   text-decoration: underline;
