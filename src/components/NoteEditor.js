@@ -33,14 +33,16 @@ import Highlight  from '@tiptap/extension-highlight'
 import TaskList   from '@tiptap/extension-task-list'
 import TaskItem   from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
+import Image      from '@tiptap/extension-image'
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   List, ListOrdered, ListChecks, Quote, Code, Heading1, Heading2,
   Undo2, Redo2, Star, Pin, Trash2, Bell, BellOff, Link2, Tag, X, Check,
-  ArrowUpRight, CalendarPlus, ListPlus,
+  ArrowUpRight, CalendarPlus, ListPlus, ImagePlus, Loader2,
 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import { notePlainText, noteDisplayTitle } from '@/lib/notes'
+import { imageFilesFrom, uploadNoteImage } from '@/lib/imagePaste'
 import TimePicker from '@/components/TimePicker'
 
 // Highlighter swatches — deliberately light so text stays readable in both themes.
@@ -92,8 +94,13 @@ const Divider = () => (
   <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
 )
 
-export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOptions = [], isMobile = false }) {
+export default function NoteEditor({
+  note, onChange, onDelete, onConvert, linkOptions = [], isMobile = false,
+  pushToast, signedIn = false,
+}) {
   const [showConvert, setShowConvert] = useState(false)
+  const [uploading,   setUploading]   = useState(0)
+  const fileInputRef = useRef(null)
   // The toolbar scrolls horizontally (overflow-x: auto), which clips any
   // absolutely-positioned child — so the swatch popover renders through a
   // portal anchored to the button's viewport rect, the same way DatePicker does.
@@ -111,6 +118,44 @@ export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOp
   const onChangeRef = useRef(onChange)
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
 
+  // useEditor is created once (deps: []), so anything its editorProps call must be
+  // reached through a ref or it captures the first render's closure forever.
+  const editorRef       = useRef(null)
+  const insertImagesRef = useRef(null)
+
+  /**
+   * Upload each file, then place it at the cursor.
+   *
+   * Sequential rather than parallel: pasting four screenshots should insert them in
+   * the order you picked them, and `setImage` writes at the current selection, which
+   * concurrent uploads would race over.
+   */
+  const insertImages = useCallback(async files => {
+    const ed = editorRef.current
+    if (!ed || files.length === 0) return
+
+    // An image kept only in this browser's localStorage would vanish the moment the
+    // note synced to another device — a broken picture is worse than a clear refusal.
+    if (!signedIn) {
+      pushToast?.('Sign in to add images', 'Images are stored with your account so they reach your other devices.')
+      return
+    }
+
+    for (const file of files) {
+      setUploading(n => n + 1)
+      try {
+        const { url } = await uploadNoteImage(file)
+        ed.chain().focus().setImage({ src: url, alt: file.name || 'Pasted image' }).run()
+      } catch (err) {
+        pushToast?.('Could not add image', err?.message || 'Please try again.')
+      } finally {
+        setUploading(n => n - 1)
+      }
+    }
+  }, [signedIn, pushToast])
+
+  useEffect(() => { insertImagesRef.current = insertImages }, [insertImages])
+
   const editor = useEditor({
     immediatelyRender: false, // required under SSR — Next renders this on the server first
     extensions: [
@@ -122,9 +167,32 @@ export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOp
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: 'Start writing… ** for bold, - for a list, [] for a checkbox' }),
+      // allowBase64 stays off on purpose: a data: URI would put the whole image
+      // inside the note body, which is exactly the localStorage-and-sync blowup
+      // that lib/noteImages.js exists to avoid.
+      Image.configure({ allowBase64: false, HTMLAttributes: { class: 'lv-note-img' } }),
     ],
     content: note?.html ?? '',
-    editorProps: { attributes: { class: 'lv-note-body' } },
+    editorProps: {
+      attributes: { class: 'lv-note-body' },
+      // Only claim the event when it actually carries image files — otherwise text,
+      // HTML, and ProseMirror's own internal node moves must fall through untouched.
+      handlePaste: (view, event) => {
+        const files = imageFilesFrom(event.clipboardData)
+        if (files.length === 0) return false
+        event.preventDefault()
+        insertImagesRef.current?.(files)
+        return true
+      },
+      handleDrop: (view, event, slice, moved) => {
+        if (moved) return false // dragging a node around inside the document
+        const files = imageFilesFrom(event.dataTransfer)
+        if (files.length === 0) return false
+        event.preventDefault()
+        insertImagesRef.current?.(files)
+        return true
+      },
+    },
     onUpdate: ({ editor }) => {
       clearTimeout(saveTimer.current)
       saveTimer.current = setTimeout(() => {
@@ -133,6 +201,8 @@ export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOp
       }, AUTOSAVE_MS)
     },
   }, [])
+
+  useEffect(() => { editorRef.current = editor }, [editor])
 
   // Swap the document when the user selects a different note. Flush any pending
   // save for the outgoing note first so the last keystrokes aren't dropped.
@@ -277,8 +347,39 @@ export default function NoteEditor({ note, onChange, onDelete, onConvert, linkOp
         <TBtn title="Quote"        active={editor?.isActive('blockquote')}  onClick={() => editor?.chain().focus().toggleBlockquote().run()}><Quote size={15} /></TBtn>
         <TBtn title="Inline code"  active={editor?.isActive('code')}        onClick={() => editor?.chain().focus().toggleCode().run()}><Code size={15} /></TBtn>
         <Divider />
+
+        {/* Images. Paste and drag-drop are the primary paths — this button exists
+            for mobile, where there is no comfortable way to do either. */}
+        <TBtn title="Add an image (or just paste one)" onClick={() => fileInputRef.current?.click()}>
+          <ImagePlus size={15} />
+        </TBtn>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          hidden
+          onChange={e => {
+            const files = [...(e.target.files ?? [])]
+            // Reset first, so picking the same file twice in a row still fires onChange.
+            e.target.value = ''
+            insertImagesRef.current?.(files)
+          }}
+        />
+
+        <Divider />
         <TBtn title="Undo" disabled={!editor?.can().undo()} onClick={() => editor?.chain().focus().undo().run()}><Undo2 size={15} /></TBtn>
         <TBtn title="Redo" disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()}><Redo2 size={15} /></TBtn>
+
+        {uploading > 0 && (
+          <span role="status" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+            marginLeft: 4, fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)',
+          }}>
+            <Loader2 size={12} style={{ animation: 'gc-spin 1s linear infinite' }} />
+            {uploading > 1 ? `Uploading ${uploading} images…` : 'Uploading…'}
+          </span>
+        )}
       </div>
 
       {/* ── Body ───────────────────────────────────────────────────────── */}
