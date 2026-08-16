@@ -169,6 +169,26 @@ CREATE TABLE IF NOT EXISTS sent_reminders (
   PRIMARY KEY (user_id, reminder_key)
 );
 
+-- ── Note Images ─────────────────────────────────────────────────────────────
+-- Images pasted or dropped into a note body. Stored here rather than inlined as
+-- base64 in the note HTML: notes are mirrored into localStorage (~5 MB for the
+-- whole app) and shipped whole on every /api/sync POST, so one phone photo would
+-- blow the quota and re-upload itself forever. The note body carries only
+-- /api/notes/images/<id>, which is session-authed and scoped to user_id.
+--
+-- Created automatically by src/lib/noteImages.js on first upload.
+CREATE TABLE IF NOT EXISTS note_images (
+  id         TEXT        NOT NULL,
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  mime       TEXT        NOT NULL,
+  bytes      BYTEA       NOT NULL,
+  byte_size  INTEGER     NOT NULL,
+  width      INTEGER,
+  height     INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, user_id)
+);
+
 -- ── Cron Heartbeats ─────────────────────────────────────────────────────────
 -- One row per scheduled job, stamped on every authorised run. Exists because a
 -- cron being pinged with the WRONG secret is otherwise indistinguishable from a

@@ -2644,6 +2644,8 @@ export default function Home() {
                 onPurge={purgeNote}
                 linkOptions={noteLinkOptions}
                 isMobile={isMobile}
+                pushToast={pushToast}
+                signedIn={!!currentUser}
               />
             </ErrorBoundary>
           </main>
