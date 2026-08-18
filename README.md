@@ -806,6 +806,80 @@ src/
 
 ---
 
+## 💸 Keeping Neon Usage Down
+
+Storage is not the constraint — the whole database is **~9 MB** against Neon's
+0.5 GiB free allowance. What costs money on Neon is **compute time**, and compute
+suspends only after a period of idleness. The reminder cron is pinged **every
+minute**, which means the database never gets to idle at all.
+
+That is the dominant factor by a wide margin, and it is a **deliberate trade-off,
+not a bug**: the ping interval *is* the reminder accuracy. A 15-minute tick means a
+reminder set for 3:07 arrives at 3:15. Check **Neon Console → your project → Usage**
+against your plan's compute-hour allowance before changing it; if you have headroom,
+per-minute accuracy is worth having.
+
+What *was* wasteful, and is fixed:
+
+- **DDL on every single request.** The self-healing-schema pattern (`CREATE TABLE IF
+  NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) is good — a fresh database works with no
+  manual migration — but it was being re-issued per request. Postgres skips the
+  create, yet the Neon driver still pays a full HTTP round trip to find that out. The
+  reminder cron spent **2 round trips a minute** proving its tables existed, and
+  `/api/sync` spent **4 per call, on both GET and POST**. `lib/ddlOnce.js` memoizes
+  each migration per process: a cold start pays once, warm requests pay nothing, and
+  a cold start is exactly when it might genuinely be needed.
+- **Three queries where one would do.** The reminder cron read `events`, `todos`, and
+  `notes` in three separate round trips and threw most of the rows away in JS. It is
+  now a single `UNION ALL` with `data ? 'reminder'` filtering in Postgres, so the wire
+  carries only rows that could actually fire.
+- **Housekeeping on the hot path.** The `sent_reminders` purge ran on every tick —
+  1,440 DELETEs a day to remove rows that are only ever a week old. Now every 6 hours.
+  The orphan-image reaper ran on every sync to discover nothing was 30 days old yet;
+  now hourly.
+- **Net effect:** a warm reminder tick went from **8 round trips to 3**, and a warm
+  `/api/sync` GET from 13 to 9. Measured warm latency: reminders ~100 ms, sync ~104 ms
+  (down from ~1.1 s on a cold start that pays the DDL).
+
+### Missing per-user indexes
+
+Every synced table is `PRIMARY KEY (id, user_id)` — note the column **order**. A
+composite btree can only serve a *prefix* of its columns, so an `(id, user_id)` index
+**cannot** answer `WHERE user_id = $1`, which is how essentially every read in the app
+is shaped. `EXPLAIN ANALYZE` confirms sequential scans on `events`, `todos`, and
+`notes`.
+
+At one user and ~120 rows that is microseconds, so this is **insurance, not an
+emergency** — it stops the per-minute cron reads getting linearly more expensive as
+history accumulates. `schema.sql` now declares them; to apply to an existing database,
+run this in the Neon SQL Editor:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_events_user           ON events(user_id);
+CREATE INDEX IF NOT EXISTS idx_todos_user            ON todos(user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_user            ON notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user   ON study_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_custom_lists_user     ON custom_lists(user_id);
+CREATE INDEX IF NOT EXISTS idx_event_categories_user ON event_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_todo_categories_user  ON todo_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_note_images_user      ON note_images(user_id);
+```
+
+### If you need a bigger cut
+
+Ranked by effect, since only the first one really moves compute-hours:
+
+1. **Lengthen the reminder ping interval** in cron-job.org. This is the only lever
+   that changes how much of the day the database is awake. Accuracy degrades to match.
+2. **Move the every-minute poll off Neon entirely.** Keep a "next reminder due at"
+   watermark in something that doesn't bill compute-hours (Upstash Redis' free tier
+   comfortably covers 1,440 pings/day) and only touch Neon when the watermark says
+   something is actually due. This keeps 1-minute accuracy *and* lets Neon idle
+   almost always — it is the correct architecture, at the cost of one more service
+   and an environment variable.
+3. **Vercel Pro** removes the reason the pinger is external in the first place, but
+   does nothing about Neon compute on its own.
+
 ## 🗄 Data Storage
 
 <div align="center">
@@ -823,8 +897,7 @@ src/
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
 | Streak ledger | Browser `localStorage` (`lv-streak`) |
-| Digest opt-in pref (local cache) | Browser `localStorage` (`lv-digest-enabled`) |
-| Digest opt-in pref (canonical) | Neon DB — `push_subscriptions.digest_enabled` |
+| Digest opt-in pref (canonical) | Neon DB — `users.digest_enabled` (per account, read via `GET /api/push/digest-pref`) |
 | Google Calendar tokens | Neon DB, per user |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
