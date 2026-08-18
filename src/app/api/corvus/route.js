@@ -3,6 +3,23 @@ import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
+/**
+ * Groq model backing Corvus.
+ *
+ * `llama-3.3-70b-versatile` was decommissioned, and because the failure surfaces as a
+ * 404 from Groq that this route re-throws as a 500, Corvus was returning an error for
+ * *every* message — not just the ones asking for reminders. Groq retires models on
+ * their own schedule, so this is overridable without a redeploy: set CORVUS_MODEL in
+ * the environment. `GET /api/corvus` reports which model is live and whether the key
+ * can reach it.
+ *
+ * Chosen for tool calling (Corvus is almost entirely tool calls) with a large enough
+ * context window for the system prompt plus a schedule digest. Verify a replacement
+ * actually emits tool_calls before switching — several Groq models accept a `tools`
+ * array and then describe the call in prose instead of making it.
+ */
+const CORVUS_MODEL = process.env.CORVUS_MODEL || 'openai/gpt-oss-120b'
+
 // ---------------------------------------------------------------------------
 // Sliding-window rate limiter — per-server-instance in-memory Map.
 // This is best-effort abuse mitigation; the Map resets on every redeploy.
@@ -50,6 +67,8 @@ const TOOLS = [
           repeatType:    { type: 'string', description: 'Recurrence: daily, weekly, or custom' },
           repeatDays:    { type: 'array', items: { type: 'integer' }, description: 'For custom only: day numbers 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat' },
           repeatUntil:   { type: 'string', description: 'Repeat end date YYYY-MM-DD (optional for tasks)' },
+          reminderMinutesBefore: { type: 'integer', description: 'Send a push reminder this many minutes before the due date (which is treated as midnight). Use 1440 for one day before, 2880 for two days, 10080 for a week. Requires dueDate.' },
+          reminderAt:            { type: 'string', description: 'Send a push reminder at this exact local time, YYYY-MM-DDTHH:MM. Use this when the user names a time ("remind me Friday at 5pm") rather than an offset. Takes precedence over reminderMinutesBefore.' },
         },
         required: ['title'],
       },
@@ -72,6 +91,8 @@ const TOOLS = [
           repeatType:  { type: 'string', description: 'Recurrence: daily, weekly, biweekly, monthly, or custom' },
           repeatDays:  { type: 'array', items: { type: 'integer' }, description: 'For custom only: day numbers 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat' },
           repeatUntil: { type: 'string', description: 'Repeat end date YYYY-MM-DD — REQUIRED if user wants recurring event' },
+          reminderMinutesBefore: { type: 'integer', description: 'Send a push reminder this many minutes before the event starts. Common: 15, 30, 60, 120, 1440 (one day).' },
+          reminderAt:            { type: 'string', description: 'Send a push reminder at this exact local time, YYYY-MM-DDTHH:MM. Use this when the user names a time ("remind me at 8am the day before") rather than an offset. Takes precedence over reminderMinutesBefore.' },
         },
         required: ['title', 'start'],
       },
@@ -91,6 +112,8 @@ const TOOLS = [
           end:      { type: 'string', description: 'New end ISO datetime' },
           category: { type: 'string' },
           notes:    { type: 'string' },
+          reminderMinutesBefore: { type: 'integer', description: 'Set a push reminder this many minutes before the event starts. Pass 0 to remove an existing reminder.' },
+          reminderAt:            { type: 'string', description: 'Set a push reminder at this exact local time, YYYY-MM-DDTHH:MM. Takes precedence over reminderMinutesBefore.' },
         },
         required: ['eventId'],
       },
@@ -110,6 +133,8 @@ const TOOLS = [
           priority: { type: 'string', enum: ['low', 'medium', 'high'] },
           category: { type: 'string' },
           notes:    { type: 'string' },
+          reminderMinutesBefore: { type: 'integer', description: 'Set a push reminder this many minutes before the due date (midnight). 1440 = one day before. Pass 0 to remove an existing reminder.' },
+          reminderAt:            { type: 'string', description: 'Set a push reminder at this exact local time, YYYY-MM-DDTHH:MM. Takes precedence over reminderMinutesBefore.' },
         },
         required: ['taskId'],
       },
@@ -300,11 +325,32 @@ BEHAVIOR RULES:
    - Editing an existing item → edit_event or edit_task (immediate, no preview)
    - Marking done → complete_task
 
-5. Date resolution: "Wednesday", "this Friday", "next Monday" → resolve to nearest upcoming YYYY-MM-DD.
+5. REMINDERS — you can set these, so do:
+   Any phrasing about being reminded, alerted, notified, pinged, or "don't let me forget"
+   means setting a reminder field on the same tool call. Do NOT put it in notes, and do
+   NOT claim you set one without passing a field.
+   - "remind me 30 minutes before" → reminderMinutesBefore: 30
+   - "remind me an hour before" → reminderMinutesBefore: 60
+   - "remind me the day before" → reminderMinutesBefore: 1440
+   - "remind me a week before" → reminderMinutesBefore: 10080
+   - "remind me Friday at 5pm" → reminderAt: "2026-08-21T17:00"
+   - A named clock time is always reminderAt; a relative offset is always
+     reminderMinutesBefore. Never both.
+   - Adding a reminder to something that already exists → edit_event / edit_task with
+     the reminder field. reminderMinutesBefore: 0 removes one.
+   - A task's offset counts back from MIDNIGHT on its due date, so for a task due the
+     25th, reminderMinutesBefore: 1440 fires on the 24th at 00:00. If the user wants a
+     particular time of day on a task, use reminderAt instead.
+   - A reminder on a task requires a dueDate. If the user asks for one without a date,
+     ask for the date.
+   - Reminders arrive as phone push notifications even when the app is closed, so it is
+     worth confirming in your reply that one is set and when it will fire.
 
-6. NEVER call a tool with a placeholder or made-up date. If you don't have the date, ask first.
+6. Date resolution: "Wednesday", "this Friday", "next Monday" → resolve to nearest upcoming YYYY-MM-DD.
 
-7. Recurring events and tasks:
+7. NEVER call a tool with a placeholder or made-up date. If you don't have the date, ask first.
+
+8. Recurring events and tasks:
    - If the user says "every week", "repeating", "recurring", "every Monday" etc. → use repeatType and repeatUntil
    - repeatType: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom'
    - For 'custom' (specific days of week): use repeatDays (array of day numbers 0=Sun…6=Sat)
@@ -337,7 +383,7 @@ BEHAVIOR RULES:
     const groqMessages = toGroqMessages(messages)
 
     const response = await groq.chat.completions.create({
-      model:       'llama-3.3-70b-versatile',
+      model:       CORVUS_MODEL,
       messages:    [{ role: 'system', content: systemPrompt }, ...groqMessages],
       tools:       TOOLS,
       tool_choice: 'auto',
@@ -348,6 +394,52 @@ BEHAVIOR RULES:
     return Response.json({ content })
   } catch (err) {
     console.error('Corvus Groq error:', err)
+
+    // A retired model is a configuration problem, not a transient one, and the
+    // generic 500 gave no hint which. Say so, since it is the single most likely
+    // reason Corvus stops working without anything in this repo changing.
+    const msg = String(err?.message ?? '')
+    if (/model_not_found|does not exist or you do not have access/i.test(msg)) {
+      return Response.json({
+        error: `Corvus's language model (${CORVUS_MODEL}) is no longer available from Groq. ` +
+               'Groq retires models on their own schedule — set CORVUS_MODEL to a current one. ' +
+               'GET /api/corvus lists what this API key can reach.',
+        code: 'model_unavailable',
+      }, { status: 503 })
+    }
     return Response.json({ error: err.message }, { status: 500 })
+  }
+}
+
+/**
+ * GET /api/corvus — is Corvus's model still there?
+ *
+ * Exists because a decommissioned model is invisible: the app looks fine until you
+ * send a message, and then every message fails identically regardless of what you
+ * asked. Signed-in only, and it reports model ids — never the API key.
+ */
+export async function GET() {
+  const session = await getSession()
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  if (!process.env.GROQ_API_KEY) {
+    return Response.json({ model: CORVUS_MODEL, healthy: false, problem: 'GROQ_API_KEY is not set on this deployment.' })
+  }
+
+  try {
+    const list      = await groq.models.list()
+    const available = (list.data ?? []).map(m => m.id)
+    const healthy   = available.includes(CORVUS_MODEL)
+
+    return Response.json({
+      model: CORVUS_MODEL,
+      healthy,
+      problem: healthy ? null
+        : `${CORVUS_MODEL} is not available to this API key. Set CORVUS_MODEL to one of the alternatives below.`,
+      // Chat-capable ids only: the audio and moderation models cannot back Corvus.
+      alternatives: available.filter(id => !/whisper|tts|guard|orpheus/i.test(id)).sort(),
+    })
+  } catch (err) {
+    return Response.json({ model: CORVUS_MODEL, healthy: false, problem: `Could not reach Groq: ${err.message}` })
   }
 }

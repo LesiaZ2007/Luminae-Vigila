@@ -1,9 +1,50 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Zap, ZapOff, Calendar, CheckSquare, ChevronRight, Maximize2, X, Pencil, RefreshCw, Trash2, Clock, CalendarDays } from 'lucide-react'
+import { Send, Zap, ZapOff, Calendar, CheckSquare, ChevronRight, Maximize2, X, Pencil, RefreshCw, Trash2, Clock, CalendarDays, Bell } from 'lucide-react'
 import EventModal   from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
+import { buildReminder, describeReminder } from '@/lib/reminders'
+
+/**
+ * Turn a `preview_*` / `edit_*` tool call's reminder arguments into the app's
+ * reminder object.
+ *
+ * `reminderMinutesBefore: 0` is meaningful — it is how the assistant removes a
+ * reminder on an edit — so an explicit 0 has to reach the caller as null rather
+ * than being treated as "not supplied".
+ */
+function reminderFromToolData(data, isTask) {
+  if (!data) return null
+  return buildReminder({
+    minutesBefore: data.reminderMinutesBefore,
+    at:            data.reminderAt,
+    isTask,
+  })
+}
+
+/** The inverse, so a reminder edited in a modal survives back into the tool-call shape. */
+function reminderToToolData(reminder) {
+  if (!reminder)     return { reminderMinutesBefore: 0, reminderAt: null }
+  if (reminder.at)   return { reminderMinutesBefore: undefined, reminderAt: reminder.at }
+  return { reminderMinutesBefore: Math.round(reminder.ms / 60_000), reminderAt: null }
+}
+
+/** Label for the preview cards, or '' when this item has no reminder. */
+function previewReminderText(data, isTask) {
+  return describeReminder(reminderFromToolData(data, isTask))
+}
+
+/**
+ * Did this tool call say anything about a reminder?
+ *
+ * Distinguishes "leave the existing reminder alone" from "remove it": an edit that
+ * only renames a task must not silently clear a reminder, but `reminderMinutesBefore:
+ * 0` must, so absence and zero cannot be conflated.
+ */
+function hasReminderArg(inp) {
+  return inp?.reminderAt !== undefined || inp?.reminderMinutesBefore !== undefined
+}
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 const SESSION_KEY       = 'corvus-session'
@@ -238,6 +279,16 @@ function PreviewPanel({ pending, events, eventCategories, onConfirm, onCancel, o
               </div>
             </div>
           )}
+          {/* A reminder you cannot see before confirming is one you cannot trust. */}
+          {previewReminderText(data, isTask) && (
+            <div>
+              <div style={{ fontSize: '0.67rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)', marginBottom: 3 }}>Reminder</div>
+              <div style={{ fontSize: '0.88rem', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Bell size={12} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+                {previewReminderText(data, isTask)}
+              </div>
+            </div>
+          )}
           {data.notes && (
             <div>
               <div style={{ fontSize: '0.67rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)', marginBottom: 3 }}>Notes</div>
@@ -307,6 +358,11 @@ function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel,
             <RefreshCw size={9} />
             {d.repeatType === 'daily' ? 'Daily' : d.repeatType === 'weekly' ? 'Weekly' : d.repeatType === 'biweekly' ? 'Bi-weekly' : d.repeatType === 'monthly' ? 'Monthly' : 'Custom'}
             {d.repeatUntil && ` · until ${formatDate(d.repeatUntil)}`}
+          </span>
+        )}
+        {previewReminderText(d, isTask) && (
+          <span style={{ fontSize: '0.72rem', color: 'var(--blue)', display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Bell size={9} /> {previewReminderText(d, isTask)}
           </span>
         )}
       </div>
@@ -523,6 +579,9 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
           }
           if (inp.notes !== undefined) updated.extendedProps.notes = inp.notes
         }
+        // Only touch the reminder when the call actually mentioned one, so editing a
+        // title doesn't wipe a reminder set earlier. An explicit 0 means "remove it".
+        if (hasReminderArg(inp)) updated.reminder = reminderFromToolData(inp, false)
         onSaveEvent(updated)
         setItems(p => [...p, { type: 'action', text: `Updated "${updated.title}"` }])
         setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Event updated.' }] }])
@@ -533,8 +592,12 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     } else if (name === 'edit_task') {
       const t = todos.find(t => t.id === inp.taskId)
       if (t) {
-        const { taskId, ...changes } = inp
-        onUpdateTodo({ ...t, ...changes })
+        // The reminder args are their own vocabulary, not todo fields — spreading them
+        // raw would write reminderMinutesBefore onto the task and set no reminder.
+        const { taskId, reminderMinutesBefore, reminderAt, ...changes } = inp
+        const updated = { ...t, ...changes }
+        if (hasReminderArg(inp)) updated.reminder = reminderFromToolData(inp, true)
+        onUpdateTodo(updated)
         setItems(p => [...p, { type: 'action', text: `Updated "${t.title}"` }])
         setHistory(h => [...h, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Task updated.' }] }])
       } else {
@@ -586,6 +649,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
         category: data.category || todoCategories[0]?.id || 'academic',
         linkedEventId: data.linkedEventId || '', notes: data.notes || '',
         recurrence,
+        reminder: reminderFromToolData(data, true),
       })
     } else {
       const cat    = (eventCategories || []).find(c => c.id === data.category) || eventCategories?.[0]
@@ -599,7 +663,12 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
         days: data.repeatType === 'custom' ? (data.repeatDays || []) : [],
         until: data.repeatUntil || null,
       } : null
-      onSaveEvent({ title: data.title, start: data.start, end: end || data.start, allDay: isAllDay, color: cat?.color, extendedProps: { category: cat?.id, notes: data.notes || null }, recurrence })
+      onSaveEvent({
+        title: data.title, start: data.start, end: end || data.start, allDay: isAllDay,
+        color: cat?.color, extendedProps: { category: cat?.id, notes: data.notes || null },
+        recurrence,
+        reminder: reminderFromToolData(data, false),
+      })
     }
   }
 
@@ -673,13 +742,15 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
     }
   }
 
-  // Build the event object to pass to EventModal for editing the preview
+  // Build the event object to pass to EventModal for editing the preview.
+  // The reminder has to come along: handing EventModal `reminder: null` made opening
+  // "Edit details" silently discard a reminder Corvus had just set.
   function previewAsEvent() {
     if (!pending) return null
     const d = pending.data
     const start = d.start ? (d.start.length === 10 ? d.start + 'T09:00:00' : d.start) : new Date().toISOString()
     const recurrence = d.repeatType ? { type: d.repeatType, days: d.repeatDays || [], until: d.repeatUntil || null } : null
-    return { title: d.title, start, end: d.end || start, allDay: d.allDay || !d.start?.includes('T'), extendedProps: { category: d.category || eventCategories?.[0]?.id, notes: d.notes || '' }, reminder: null, recurrence }
+    return { title: d.title, start, end: d.end || start, allDay: d.allDay || !d.start?.includes('T'), extendedProps: { category: d.category || eventCategories?.[0]?.id, notes: d.notes || '' }, reminder: reminderFromToolData(d, false), recurrence }
   }
 
   function handleEditModalSave(saved) {
@@ -689,6 +760,9 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       repeatType:  saved.recurrence?.type  || null,
       repeatDays:  saved.recurrence?.days  || [],
       repeatUntil: saved.recurrence?.until || null,
+      // Round-trip whatever the modal produced back into the tool-call shape so the
+      // preview card and the eventual write agree.
+      ...reminderToToolData(saved.reminder),
     }
     setPending(p => ({ ...p, data: { ...p.data, ...newData } }))
     setItems(p => p.map(it => it.toolUseId === pending.toolUseId ? { ...it, data: { ...it.data, ...newData } } : it))
@@ -701,6 +775,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       repeatType:  updated.recurrence?.type  || null,
       repeatDays:  updated.recurrence?.days  || [],
       repeatUntil: updated.recurrence?.until || null,
+      ...reminderToToolData(updated.reminder),
     }
     setPending(p => ({ ...p, data: { ...p.data, ...newData } }))
     setItems(p => p.map(it => it.toolUseId === pending.toolUseId ? { ...it, data: { ...it.data, ...newData } } : it))
