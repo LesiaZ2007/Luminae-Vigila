@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS google_accounts (
 
 CREATE INDEX IF NOT EXISTS idx_google_accounts_user_id ON google_accounts(user_id);
 
+-- Id of the secondary Google calendar this app created for mirroring events and due
+-- tasks out to Google (so they reach Pixel's At a Glance). Added lazily by
+-- src/lib/googleTokenStore.js; listed here so a hand-built database matches.
+-- ALTER TABLE google_accounts ADD COLUMN IF NOT EXISTS mirror_calendar_id TEXT;
+
 -- ── Canvas LMS credential (one per user) ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS canvas_credentials (
   user_id    UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

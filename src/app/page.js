@@ -435,6 +435,28 @@ export default function Home() {
       .catch(() => { mergeStarted.current = false }) // let a reload retry the merge
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ── Mirror out to Google Calendar ────────────────────────────────────────
+     Every write to the cloud is a candidate for re-mirroring, but a reconcile is
+     a Google API round trip per changed item, so doing it on every 2-second
+     debounce would burn quota while someone is typing. Fifteen minutes is well
+     inside how fresh a lock-screen glance needs to be, and the button in Google
+     settings covers "I want it now".
+
+     Kept in a ref rather than state: this must not re-render anything, and the
+     value only ever gates a fetch. */
+  const lastMirrorAt = useRef(0)
+  const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
+
+  const maybeMirrorToGoogle = useCallback(async () => {
+    if (!currentUser) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (Date.now() - lastMirrorAt.current < MIRROR_MIN_GAP_MS) return
+    lastMirrorAt.current = Date.now()
+    // No toast either way. The user did not ask for this on this keystroke, and the
+    // settings panel is where a real result belongs.
+    try { await fetch('/api/google/mirror', { method: 'POST' }) } catch {}
+  }, [currentUser])
+
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
   // Pushes the full local state to the DB 2 seconds after any change.
   // Only runs after the initial merge is complete (hasMergedCloud guard).
@@ -456,7 +478,13 @@ export default function Home() {
           customLists:    customListsRaw,
           notes,
         }),
-      }).catch(() => {})
+      })
+        // Mirror out to Google afterwards, never before: the mirror reads the app's
+        // data from the database, so running it first would publish the previous
+        // state. Rate-limited and fire-and-forget — a glance surface being a few
+        // minutes stale is fine, and a Google outage must not affect saving.
+        .then(() => maybeMirrorToGoogle())
+        .catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
   }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
