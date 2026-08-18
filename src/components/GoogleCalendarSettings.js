@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Plus, Trash2, ChevronDown, ChevronRight, RefreshCw, AlertCircle } from 'lucide-react'
+import { X, Plus, Trash2, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Smartphone } from 'lucide-react'
+import { MIRROR_CALENDAR_NAME } from '@/lib/googleMirror'
 
 const COLOR_PRESETS = [
   '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
@@ -20,7 +21,46 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
   const [connecting,  setConnecting] = useState(false)
   const [syncing,     setSyncing]    = useState(false)
   const [notConfigured, setNotConfigured] = useState(false)
+  const [mirroring,  setMirroring]  = useState(false)
+  const [mirrorMsg,  setMirrorMsg]  = useState('')
+  const [mirrorErr,  setMirrorErr]  = useState(false)
   const popupPollRef = useRef(null)
+
+  /**
+   * Push events and due tasks out to the app's own Google calendar.
+   *
+   * Reports the counts rather than a bare "done": a mirror that silently wrote nothing
+   * (because consent predates the write scope) looks identical to one that worked.
+   */
+  const runMirror = useCallback(async () => {
+    setMirroring(true); setMirrorMsg(''); setMirrorErr(false)
+    try {
+      const res  = await fetch('/api/google/mirror', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setMirrorErr(true)
+        setMirrorMsg(data.code === 'needs_reconsent'
+          ? 'Disconnect and reconnect this Google account — sending to Google needs a permission that was added after you last connected.'
+          : data.error || 'Could not send to Google.')
+        return
+      }
+      const bits = []
+      if (data.inserted) bits.push(`${data.inserted} added`)
+      if (data.updated)  bits.push(`${data.updated} updated`)
+      if (data.deleted)  bits.push(`${data.deleted} removed`)
+      setMirrorErr(data.errorCount > 0)
+      setMirrorMsg(
+        (bits.length ? bits.join(', ') : `already up to date (${data.unchanged} items)`) +
+        (data.errorCount ? ` — ${data.errorCount} failed: ${data.errors[0]}` : '') +
+        '. It can take a minute to reach your phone.',
+      )
+    } catch {
+      setMirrorErr(true)
+      setMirrorMsg('Could not reach the server.')
+    } finally {
+      setMirroring(false)
+    }
+  }, [])
 
   const [prefs, setPrefs] = useState(() => {
     try { return JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}') }
@@ -334,6 +374,40 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
             />
           ))}
         </div>
+
+        {/* Mirror-out to Google — the only route to Pixel's At a Glance */}
+        {accounts.length > 0 && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Smartphone size={13} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)' }}>Show in At a Glance</span>
+            </div>
+            <p style={{ margin: '0 0 8px', fontSize: '0.71rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Copies your events and due-dated tasks into a Google calendar called
+              “{MIRROR_CALENDAR_NAME}”, which Pixel’s At a Glance and your lock screen read.
+              It’s one-way — edits there get overwritten — and that calendar is hidden from
+              the import list above so nothing duplicates.
+            </p>
+            <button
+              onClick={runMirror}
+              disabled={mirroring}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px',
+                borderRadius: 8, border: '1px solid var(--border)',
+                background: 'transparent', color: 'var(--text)',
+                fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600,
+                cursor: mirroring ? 'default' : 'pointer', opacity: mirroring ? 0.6 : 1,
+              }}>
+              <RefreshCw size={12} style={{ animation: mirroring ? 'gc-spin 1s linear infinite' : 'none' }} />
+              {mirroring ? 'Sending…' : 'Send to Google now'}
+            </button>
+            {mirrorMsg && (
+              <p style={{ margin: '7px 0 0', fontSize: '0.71rem', lineHeight: 1.45, color: mirrorErr ? 'var(--red)' : 'var(--text-2)' }}>
+                {mirrorMsg}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         {accounts.length > 0 && (

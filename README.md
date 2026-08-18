@@ -38,6 +38,69 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - Calendar visibility toggles and custom colors are never reset by background syncs
 - **Signing in does not auto-connect Google Calendar** — that is a separate explicit step
 
+### 📱 Show in At a Glance (mirror out to Google)
+
+**At a Glance has no third-party API.** Nothing can register content with it; it reads
+Google's own services. A PWA additionally cannot provide an Android home-screen widget
+at any version — which is why the daily push exists and its own source calls it "the
+closest thing to a home-screen widget a PWA can deliver". So the only route to that
+surface is **writing to Google Calendar**, which At a Glance already reads. Lock-screen
+glances, Assistant, and Wear come along for free.
+
+- Copies your **events and due-dated tasks** into a Google calendar the app creates,
+  called `luminaeVigila`. Tasks become all-day entries prefixed `☑` so a glance can tell
+  work-due from somewhere-to-be
+- **One-way.** Edits made in Google get overwritten on the next reconcile
+- Runs automatically at most **every 15 minutes** after a cloud sync, plus a **Send to
+  Google now** button in Google Calendar settings. A reconcile costs an API call per
+  *changed* item, so doing it on every 2-second sync debounce would burn quota while
+  you type
+- Bounded window: **7 days back, 60 days forward.** At a Glance only looks forward, and
+  mirroring all history would spend calls on things nobody will glance at
+
+#### It cannot create a duplicate loop
+
+The app already *imports* Google events, so writing events out naively would re-import
+them as duplicates, then mirror the duplicates. Three independent things prevent it:
+
+1. Mirrored events live on **their own calendar**, created by this app
+2. That calendar is **filtered out of `GET /api/google/calendars`**, so it can never be
+   selected as an import source in the first place
+3. Every mirrored event carries **`extendedProperties.private.lvId`**, so ours are
+   always identifiable even if the other two failed
+
+Only the app's *own* events and tasks are mirrored. Imported Google events are never
+stored in the `events` table (the sync route is explicit that Google events are live,
+not synced), so they cannot be picked up and written back.
+
+#### Deterministic ids, and only writing what changed
+
+Google lets the caller choose an event id if it is base32hex (`[a-v0-9]{5,1024}`). Hex is
+a subset of that alphabet, so `lv` + hex(appId) is always legal and always the same for a
+given item — which makes each write a true upsert with **no local table mapping app ids
+to Google ids**, and nothing to go stale if a write half-fails.
+
+Each event also stores a content fingerprint. Without it every reconcile would `PATCH`
+every event — hundreds of calls to write values already there. With it, a steady state
+costs **one `events.list`** and nothing else.
+
+Events without the `lvId` marker are **never touched**. Deleting those would be
+destroying data the app did not create.
+
+#### Least-privilege scope, and why you must reconnect
+
+The mirror requests **`calendar.app.created`** only — permission to create secondary
+calendars and manage events *on calendars this app created*. Deliberately **not**
+`calendar.events` (event write on every calendar you own) or `calendar` (everything).
+The mirror is incapable of touching a real calendar even if this code were wrong.
+
+Because that scope did not exist on your grant before, **an already-connected account
+must be disconnected and reconnected**. `GET /api/google/mirror` checks the *actual*
+granted scopes via token introspection rather than inferring write access from a call
+that only needs read — so it reports `needsReconsent: true` honestly instead of claiming
+readiness it cannot deliver. `POST` in that state returns **403 with
+`code: needs_reconsent`**, and the settings panel says what to do.
+
 ### 🟠 Canvas LMS
 - Connect with your Canvas API token + institution URL (no IT setup needed)
 - **Canvas Calendar Feed (no token needed)** — paste your personal iCal feed URL (Canvas → Calendar → Calendar Feed) to pull assignment due dates and events without an API token; works for any public `.ics` subscription URL too; events appear in Canvas orange on the calendar

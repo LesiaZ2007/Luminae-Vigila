@@ -4,6 +4,37 @@
  * Each user can have multiple connected Google accounts.
  */
 import sql from './db'
+import { ddlOnce } from './ddlOnce'
+
+/**
+ * Column holding the id of the Google calendar this app created for mirroring.
+ *
+ * Self-healing like the rest of the schema, and memoized per process so it is not a
+ * round trip on every calendar read. See lib/googleMirror.js for what it is for.
+ */
+export function ensureMirrorColumn() {
+  return ddlOnce('googleMirrorColumn', () =>
+    sql`ALTER TABLE google_accounts ADD COLUMN IF NOT EXISTS mirror_calendar_id TEXT`)
+}
+
+/** The remembered mirror calendar id for one account, or null. */
+export async function getMirrorCalendarId(accountId, userId) {
+  await ensureMirrorColumn()
+  const rows = await sql`
+    SELECT mirror_calendar_id FROM google_accounts
+    WHERE id = ${accountId} AND user_id = ${userId}
+  `
+  return rows[0]?.mirror_calendar_id ?? null
+}
+
+/** Remember the mirror calendar id for one account. */
+export async function setMirrorCalendarId(accountId, userId, calendarId) {
+  await ensureMirrorColumn()
+  await sql`
+    UPDATE google_accounts SET mirror_calendar_id = ${calendarId}
+    WHERE id = ${accountId} AND user_id = ${userId}
+  `
+}
 
 /**
  * Return all Google accounts for the given user.

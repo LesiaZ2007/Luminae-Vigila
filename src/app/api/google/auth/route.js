@@ -24,6 +24,12 @@ export async function GET(request) {
     access_type: 'offline',
     scope: [
       'https://www.googleapis.com/auth/calendar.readonly',
+      // Least-privilege write access: `calendar.app.created` allows creating secondary
+      // calendars and managing events *only on calendars this app created*. The mirror
+      // needs to make its own calendar and write to it; it must never be able to touch
+      // the user's real calendars, which the broader `calendar` or `calendar.events`
+      // scopes would both permit. See lib/googleMirror.js.
+      'https://www.googleapis.com/auth/calendar.app.created',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     prompt: 'consent',
