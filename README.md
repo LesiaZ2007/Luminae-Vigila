@@ -89,13 +89,39 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - Only local data is included — Google Calendar and Canvas data re-sync from the source
 
 ### 🪶 Corvus AI Assistant
-- Chat-based assistant powered by [Groq](https://groq.com) (`llama-3.3-70b-versatile`)
+- Chat-based assistant powered by [Groq](https://groq.com), on `openai/gpt-oss-120b` by default
 - Aware of your upcoming events, tasks, Canvas assignments, **and class schedule entries**
 - **Distinguishes events from classes** — recurring class schedule entries are labeled `[CLASS]`; professor-posted Canvas events are `[CANVAS EVENT]`; user-created entries are `[EVENT]`. Corvus uses the correct term in every response.
 - **Add events and tasks**, edit them, and mark things complete — all via natural language
+- **Set reminders by asking.** "remind me 30 minutes before", "remind me the day before",
+  "remind me Friday at 5pm" — a relative phrase becomes `reminderMinutesBefore`, a named
+  clock time becomes `reminderAt`. Works on new items *and* on existing ones ("add a
+  reminder an hour before my Chem Exam" → `edit_event`), and `reminderMinutesBefore: 0`
+  removes one. The reminder appears on the confirmation card before you accept it, and
+  fires as a real push notification through the same `/api/push/reminders` cron as a
+  hand-made one — the labels are generated to match the dropdowns exactly, so the two
+  are indistinguishable after the fact
 - **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
 - **Server-side rate limited** to 20 requests per minute per user to protect the Groq API key; exceeding the limit returns a 429 with a 30-second retry hint
+
+#### The model is pinned but overridable — and it *will* go stale
+
+Groq retires models on their own schedule, and when one goes the failure is total and
+silent-looking: Groq returns a 404, the route re-threw it as a generic 500, and *every*
+Corvus message failed identically no matter what you asked. That is how
+`llama-3.3-70b-versatile` being decommissioned presented as "Corvus is having trouble
+with reminders."
+
+- Override with the **`CORVUS_MODEL`** environment variable — no redeploy needed to swap
+  models when the current one is retired
+- A retired model now returns **503 with `code: model_unavailable`** and says what to do,
+  rather than a bare 500
+- **`GET /api/corvus`** (signed-in) reports the configured model, whether this API key can
+  actually reach it, and lists the chat-capable alternatives. Never returns the key
+- When picking a replacement, **verify it emits `tool_calls`** — Corvus is almost entirely
+  tool calls, and several models accept a `tools` array and then describe the call in prose
+  instead of making it
 
 ### 🔍 Search
 - Search across events, tasks, Canvas assignments, notes, and custom-list items with scope and status filters
@@ -634,6 +660,10 @@ Create `.env.local` in the project root:
 ```env
 # Groq — required for Corvus AI
 GROQ_API_KEY=your_groq_api_key
+# Optional: override Corvus's model. Groq retires models on their own schedule, and
+# when the pinned one goes EVERY Corvus message fails. Set this to swap without a
+# redeploy; GET /api/corvus lists what your key can reach.
+# CORVUS_MODEL=openai/gpt-oss-120b
 
 # Google OAuth — required for sign-in AND Google Calendar
 GOOGLE_CLIENT_ID=your_google_client_id
