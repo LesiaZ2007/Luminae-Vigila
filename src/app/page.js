@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
 
@@ -97,6 +98,16 @@ const DEFAULT_TODO_CATS = [
 
 export default function Home() {
   const { theme, setTheme } = useTheme()
+
+  // Every theme switch goes through here so the mode cross-fades instead of
+  // snapping — see lib/themeTransition.js. The cleanup is kept in a ref so an
+  // unmount mid-animation cannot leave the transition class stuck on <html>.
+  const themeCleanupRef = useRef(null)
+  const setThemeSmooth = useCallback(next => {
+    themeCleanupRef.current = withThemeTransition(() => setTheme(next))
+  }, [setTheme])
+  useEffect(() => () => themeCleanupRef.current?.(), [])
+
   const [mounted,       setMounted]       = useState(false)
   const [todoPanelWidth, setTodoPanelWidth] = useState(520)
   const resizingRef    = useRef(false)
@@ -2623,7 +2634,7 @@ export default function Home() {
           {/* Settings menu — dark mode, accent color, show tour */}
           <SettingsMenu
             theme={theme}
-            onSetTheme={setTheme}
+            onSetTheme={setThemeSmooth}
             onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
             signedIn={!!currentUser}
             variant="sidebar"
@@ -3027,7 +3038,7 @@ export default function Home() {
               {/* Settings menu — dark mode, accent color, show tour */}
               <SettingsMenu
                 theme={theme}
-                onSetTheme={setTheme}
+                onSetTheme={setThemeSmooth}
                 onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
                 signedIn={!!currentUser}
                 variant="sidebar"

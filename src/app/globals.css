@@ -181,6 +181,38 @@ body {
   font-size: 14px;
 }
 
+/* ── Smooth light ⇄ dark switching ──
+   The theme is a swap of the custom properties above, and custom properties do not
+   animate — without this every surface repaints in one frame and the change reads as
+   a flash. The class is added to <html> only for the length of the switch (see
+   lib/themeTransition.js); a permanent transition here would animate the first paint
+   after hydration and make every ordinary hover feel sluggish.
+
+   !important is deliberate: it has to beat the per-component `transition` rules for
+   these few hundred milliseconds. Only cheap, compositor-friendly paint properties
+   are listed — box-shadow and transform are left out so the calendar's large DOM is
+   not animating expensive properties on thousands of nodes at once. */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition-property: background-color, background-image, border-color, color, fill, stroke !important;
+  transition-duration: 320ms !important;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition-delay: 0s !important;
+}
+
+/* A full-page cross-fade is exactly the large-area movement this setting asks us to
+   suppress. The theme still changes — it just changes instantly. */
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition-duration: 0s !important;
+  }
+}
+
 /* Native date/time inputs respect color scheme */
 input[type="date"], input[type="time"], input[type="datetime-local"] {
   color-scheme: light;
