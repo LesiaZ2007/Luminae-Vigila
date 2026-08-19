@@ -18,12 +18,57 @@
 import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid }       from '@/lib/cronAuth'
+import { ddlOnce }                         from '@/lib/ddlOnce'
 import { noteDisplayTitle, notePlainText, noteHasImage } from '@/lib/notes'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
 // Prevents backfilling ancient reminders on the very first cron run, while being
 // wide enough to tolerate a missed cron tick or two.
 const GRACE_MS = 30 * 60 * 1000 // 30 minutes
+
+// Purging the dedup log is housekeeping, not the job. Running it on every tick meant
+// 1,440 DELETEs a day to remove rows that are only ever a week old, so it now runs at
+// most this often per process — and the table is bounded by the grace window anyway.
+const CLEANUP_EVERY_MS = 6 * 60 * 60 * 1000 // 6 hours
+let lastCleanupAt = 0
+
+function ensureSentRemindersTable() {
+  return ddlOnce('sentReminders', () => sql`
+    CREATE TABLE IF NOT EXISTS sent_reminders (
+      user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reminder_key TEXT        NOT NULL,
+      sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, reminder_key)
+    )
+  `)
+}
+
+/**
+ * Every reminder-bearing event, task, and note for one user, in a single query.
+ *
+ * `data ? 'reminder'` is the JSONB key-exists test — a prefilter, not the decision;
+ * the caller still validates the reminder's shape. It exists so the wire carries the
+ * handful of rows that could possibly fire rather than the user's entire history.
+ */
+async function fetchReminderCandidates(userId) {
+  try {
+    return await sql`
+      SELECT 'ev' AS kind, data FROM events WHERE user_id = ${userId} AND data ? 'reminder'
+      UNION ALL
+      SELECT 'td' AS kind, data FROM todos  WHERE user_id = ${userId} AND data ? 'reminder'
+      UNION ALL
+      SELECT 'nt' AS kind, data FROM notes  WHERE user_id = ${userId} AND data ? 'reminder'
+    `
+  } catch {
+    // `notes` may not exist on a deployment that has never synced since the Notes
+    // feature shipped. A UNION fails whole rather than per-branch, so retry without it.
+    return sql`
+      SELECT 'ev' AS kind, data FROM events WHERE user_id = ${userId} AND data ? 'reminder'
+      UNION ALL
+      SELECT 'td' AS kind, data FROM todos  WHERE user_id = ${userId} AND data ? 'reminder'
+    `
+  }
+}
 
 /** Compute the epoch-ms fire time for an item's reminder, or null if none/invalid. */
 function reminderFireTime(item, dueIso) {
@@ -55,15 +100,9 @@ export async function GET(request) {
     process.env.VAPID_PRIVATE_KEY,
   )
 
-  // Dedup log — idempotent create so a fresh DB works without a manual migration.
-  await sql`
-    CREATE TABLE IF NOT EXISTS sent_reminders (
-      user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      reminder_key TEXT        NOT NULL,
-      sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (user_id, reminder_key)
-    )
-  `
+  // Dedup log — idempotent create, memoized so this costs a round trip once per
+  // process rather than once per minute. See lib/ddlOnce.
+  await ensureSentRemindersTable()
 
   const now      = Date.now()
   const windowLo = now - GRACE_MS
@@ -76,14 +115,15 @@ export async function GET(request) {
   let sent = 0, failed = 0, due = 0
 
   for (const { user_id } of users) {
-    // Gather this user's reminder-bearing items.
-    // `notes` may not exist yet on a deploy that hasn't run a sync since the
-    // Notes feature shipped — fall back to empty rather than failing the run.
-    const [eventRows, todoRows, noteRows] = await Promise.all([
-      sql`SELECT data FROM events WHERE user_id = ${user_id}`,
-      sql`SELECT data FROM todos  WHERE user_id = ${user_id}`,
-      sql`SELECT data FROM notes  WHERE user_id = ${user_id}`.catch(() => []),
-    ])
+    // One round trip for all three item types instead of three, and `data ? 'reminder'`
+    // filters to reminder-bearing rows in Postgres rather than shipping every event,
+    // task, and note over the wire to be discarded in JS. On a job that runs every
+    // minute forever, both of those are the difference between idling and not.
+    const rows = await fetchReminderCandidates(user_id)
+
+    const eventRows = rows.filter(r => r.kind === 'ev')
+    const todoRows  = rows.filter(r => r.kind === 'td')
+    const noteRows  = rows.filter(r => r.kind === 'nt')
 
     const candidates = []
     for (const { data: ev } of eventRows) {
@@ -152,7 +192,11 @@ export async function GET(request) {
   }
 
   // Best-effort cleanup: drop dedup rows older than 7 days so the table stays small.
-  await sql`DELETE FROM sent_reminders WHERE sent_at < NOW() - INTERVAL '7 days'`
+  // Rate-limited per process — see CLEANUP_EVERY_MS.
+  if (now - lastCleanupAt > CLEANUP_EVERY_MS) {
+    lastCleanupAt = now
+    await sql`DELETE FROM sent_reminders WHERE sent_at < NOW() - INTERVAL '7 days'`
+  }
 
   return Response.json({ ok: true, due, sent, failed })
 }

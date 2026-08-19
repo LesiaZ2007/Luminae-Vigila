@@ -28,6 +28,7 @@
  * byte-identical on a round trip including null and high bytes.
  */
 import sql from '@/lib/db'
+import { ddlOnce } from '@/lib/ddlOnce'
 
 /**
  * Server-side ceiling on a stored image, after the client has already downscaled.
@@ -47,8 +48,8 @@ export const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'i
 /** Unreferenced images survive this long before being reaped. See `reapOrphanImages`. */
 export const ORPHAN_GRACE_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
 
-export async function ensureNoteImagesTable() {
-  await sql`
+export function ensureNoteImagesTable() {
+  return ddlOnce('noteImages', () => sql`
     CREATE TABLE IF NOT EXISTS note_images (
       id         TEXT        NOT NULL,
       user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -60,7 +61,7 @@ export async function ensureNoteImagesTable() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (id, user_id)
     )
-  `
+  `)
 }
 
 /** The public path for a stored image. Kept in one place so the reaper's regex agrees with it. */

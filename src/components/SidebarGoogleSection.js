@@ -10,6 +10,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronRight, Settings2, RefreshCw } from 'lucide-react'
 import { GoogleLogo } from '@/components/GoogleCalendarSettings'
+import {
+  readLocalPrefs, writeLocalPrefs, hydrateGooglePrefs, persistGooglePrefs,
+} from '@/lib/googlePrefs'
 
 const COLOR_PRESETS = [
   '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
@@ -23,16 +26,29 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
   const [expanded,   setExpanded]   = useState({})    // { accountId: bool }
   const [gcExpanded, setGcExpanded] = useState(true)  // the whole section
 
-  // Read prefs from localStorage, re-render when they change
-  const [prefs, setPrefs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}') }
-    catch { return {} }
-  })
+  // The cache renders instantly; the account copy is pulled in once accounts load.
+  const [prefs, setPrefs] = useState(() => readLocalPrefs())
+  const hydratedRef = useRef(false)
 
-  // Persist prefs
+  // Persist to cache always, to the account once hydrated — so a browser that has not
+  // pulled the saved choices yet cannot overwrite them with its empty local copy.
   useEffect(() => {
-    localStorage.setItem('lv-google-prefs', JSON.stringify(prefs))
-  }, [prefs])
+    if (!hydratedRef.current) { writeLocalPrefs(prefs); return }
+    persistGooglePrefs(prefs, accounts)
+  }, [prefs, accounts])
+
+  // Saved choices are keyed by email server-side, so hiding a calendar on one device
+  // hides it everywhere and survives reconnecting the account.
+  useEffect(() => {
+    if (!accounts.length || hydratedRef.current) return
+    let cancelled = false
+    hydrateGooglePrefs(accounts).then(merged => {
+      if (cancelled) return
+      setPrefs(merged)
+      hydratedRef.current = true
+    })
+    return () => { cancelled = true }
+  }, [accounts])
 
   /* ── Load accounts ── */
   const loadAccounts = useCallback(async () => {

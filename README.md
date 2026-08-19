@@ -34,9 +34,124 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 🔵 Google Calendar
 - Connect **multiple Google accounts** and toggle individual calendars on or off
-- Events auto-refresh every 5 minutes; per-calendar color overrides stored locally
+- Events auto-refresh every 5 minutes
 - Calendar visibility toggles and custom colors are never reset by background syncs
 - **Signing in does not auto-connect Google Calendar** — that is a separate explicit step
+
+### 🔁 Reconnecting, and hidden calendars that stay hidden
+
+Two problems with one shared root cause: preferences were keyed to an account id that
+changes, and never left the browser.
+
+**Hidden calendars now follow the account, not the browser.** Visibility and colour
+choices live in `google_calendar_prefs`, keyed by **Google account email**. Previously
+they were `localStorage` only, keyed by the account's UUID — and disconnecting an
+account deletes its row, so re-adding the same account minted a *new* UUID and every
+calendar you had hidden came back, on an account you had just repaired. Email is how
+this app identifies a Google account anyway (`upsertAccount` conflicts on
+`user_id + google_email`), so it is the key that actually survives the round trip.
+Living server-side also means hiding a calendar on your laptop hides it on your phone.
+
+- `localStorage` remains a **read cache** so the calendar renders instantly and works
+  offline; the account copy is the durable one
+- Choices that only ever existed in one browser are **migrated up** on first load,
+  rather than lost
+- Uploads are suppressed until hydration has run, so a browser that has not pulled the
+  saved copy yet cannot overwrite it with an empty one. An empty payload is likewise
+  rejected server-side — it means "this device has nothing to say", never "clear
+  everything"
+
+**Reconnecting is now one click, in place.**
+
+- The **Reconnect** button appears on any account that needs it, and reconnects *in
+  place* rather than disconnect-then-add — which is what preserves the account id, and
+  with it every calendar choice keyed to it
+- `login_hint` sends you straight to that Google account instead of an account chooser.
+  Picking the wrong entry there used to connect a *second* account and leave the broken
+  one broken, which reads as "reconnecting did nothing"
+- **`GET /api/google/accounts?health=1`** asks Google what each stored grant is still
+  good for, so a dead account is visibly dead in settings instead of looking identical
+  to one with no calendars ticked. Opt-in, because it costs a round trip per account
+- **Fixed:** the "Reconnect" action on the disconnected toast called
+  `window.open('/api/google/auth')` — an endpoint that returns **JSON containing** the
+  consent URL, not a redirect. The popup showed a wall of raw JSON, so the single most
+  reachable way back from a disconnect did not work at all
+
+#### Why accounts keep disconnecting in the first place
+
+**Most likely: the OAuth app is in "Testing" publishing status.** Google expires refresh
+tokens for test-mode apps after **7 days**, so a connection dies roughly weekly no
+matter what this code does. Fix it in **Google Cloud Console → APIs & Services → OAuth
+consent screen → Publish app**. An unverified production app still shows an
+"unverified" interstitial and is capped at 100 users, but its refresh tokens **do not
+expire on a timer** — which is the actual difference.
+
+The other cause is a missing refresh token entirely, which the health check reports
+separately as `no_refresh_token`; the connect flow already requests `access_type:
+offline` with `prompt: consent`, so this should be rare.
+
+### 📱 Show in At a Glance (mirror out to Google)
+
+**At a Glance has no third-party API.** Nothing can register content with it; it reads
+Google's own services. A PWA additionally cannot provide an Android home-screen widget
+at any version — which is why the daily push exists and its own source calls it "the
+closest thing to a home-screen widget a PWA can deliver". So the only route to that
+surface is **writing to Google Calendar**, which At a Glance already reads. Lock-screen
+glances, Assistant, and Wear come along for free.
+
+- Copies your **events and due-dated tasks** into a Google calendar the app creates,
+  called `luminaeVigila`. Tasks become all-day entries prefixed `☑` so a glance can tell
+  work-due from somewhere-to-be
+- **One-way.** Edits made in Google get overwritten on the next reconcile
+- Runs automatically at most **every 15 minutes** after a cloud sync, plus a **Send to
+  Google now** button in Google Calendar settings. A reconcile costs an API call per
+  *changed* item, so doing it on every 2-second sync debounce would burn quota while
+  you type
+- Bounded window: **7 days back, 60 days forward.** At a Glance only looks forward, and
+  mirroring all history would spend calls on things nobody will glance at
+
+#### It cannot create a duplicate loop
+
+The app already *imports* Google events, so writing events out naively would re-import
+them as duplicates, then mirror the duplicates. Three independent things prevent it:
+
+1. Mirrored events live on **their own calendar**, created by this app
+2. That calendar is **filtered out of `GET /api/google/calendars`**, so it can never be
+   selected as an import source in the first place
+3. Every mirrored event carries **`extendedProperties.private.lvId`**, so ours are
+   always identifiable even if the other two failed
+
+Only the app's *own* events and tasks are mirrored. Imported Google events are never
+stored in the `events` table (the sync route is explicit that Google events are live,
+not synced), so they cannot be picked up and written back.
+
+#### Deterministic ids, and only writing what changed
+
+Google lets the caller choose an event id if it is base32hex (`[a-v0-9]{5,1024}`). Hex is
+a subset of that alphabet, so `lv` + hex(appId) is always legal and always the same for a
+given item — which makes each write a true upsert with **no local table mapping app ids
+to Google ids**, and nothing to go stale if a write half-fails.
+
+Each event also stores a content fingerprint. Without it every reconcile would `PATCH`
+every event — hundreds of calls to write values already there. With it, a steady state
+costs **one `events.list`** and nothing else.
+
+Events without the `lvId` marker are **never touched**. Deleting those would be
+destroying data the app did not create.
+
+#### Least-privilege scope, and why you must reconnect
+
+The mirror requests **`calendar.app.created`** only — permission to create secondary
+calendars and manage events *on calendars this app created*. Deliberately **not**
+`calendar.events` (event write on every calendar you own) or `calendar` (everything).
+The mirror is incapable of touching a real calendar even if this code were wrong.
+
+Because that scope did not exist on your grant before, **an already-connected account
+must be disconnected and reconnected**. `GET /api/google/mirror` checks the *actual*
+granted scopes via token introspection rather than inferring write access from a call
+that only needs read — so it reports `needsReconsent: true` honestly instead of claiming
+readiness it cannot deliver. `POST` in that state returns **403 with
+`code: needs_reconsent`**, and the settings panel says what to do.
 
 ### 🟠 Canvas LMS
 - Connect with your Canvas API token + institution URL (no IT setup needed)
@@ -89,13 +204,39 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - Only local data is included — Google Calendar and Canvas data re-sync from the source
 
 ### 🪶 Corvus AI Assistant
-- Chat-based assistant powered by [Groq](https://groq.com) (`llama-3.3-70b-versatile`)
+- Chat-based assistant powered by [Groq](https://groq.com), on `openai/gpt-oss-120b` by default
 - Aware of your upcoming events, tasks, Canvas assignments, **and class schedule entries**
 - **Distinguishes events from classes** — recurring class schedule entries are labeled `[CLASS]`; professor-posted Canvas events are `[CANVAS EVENT]`; user-created entries are `[EVENT]`. Corvus uses the correct term in every response.
 - **Add events and tasks**, edit them, and mark things complete — all via natural language
+- **Set reminders by asking.** "remind me 30 minutes before", "remind me the day before",
+  "remind me Friday at 5pm" — a relative phrase becomes `reminderMinutesBefore`, a named
+  clock time becomes `reminderAt`. Works on new items *and* on existing ones ("add a
+  reminder an hour before my Chem Exam" → `edit_event`), and `reminderMinutesBefore: 0`
+  removes one. The reminder appears on the confirmation card before you accept it, and
+  fires as a real push notification through the same `/api/push/reminders` cron as a
+  hand-made one — the labels are generated to match the dropdowns exactly, so the two
+  are indistinguishable after the fact
 - **Interactive mention cards** — when Corvus discusses existing events or tasks (e.g. "urgent deadlines", "week summary"), it shows tappable preview cards for each item; tap one to navigate directly to it
 - Runs as a floating panel or a full-screen tab
 - **Server-side rate limited** to 20 requests per minute per user to protect the Groq API key; exceeding the limit returns a 429 with a 30-second retry hint
+
+#### The model is pinned but overridable — and it *will* go stale
+
+Groq retires models on their own schedule, and when one goes the failure is total and
+silent-looking: Groq returns a 404, the route re-threw it as a generic 500, and *every*
+Corvus message failed identically no matter what you asked. That is how
+`llama-3.3-70b-versatile` being decommissioned presented as "Corvus is having trouble
+with reminders."
+
+- Override with the **`CORVUS_MODEL`** environment variable — no redeploy needed to swap
+  models when the current one is retired
+- A retired model now returns **503 with `code: model_unavailable`** and says what to do,
+  rather than a bare 500
+- **`GET /api/corvus`** (signed-in) reports the configured model, whether this API key can
+  actually reach it, and lists the chat-capable alternatives. Never returns the key
+- When picking a replacement, **verify it emits `tool_calls`** — Corvus is almost entirely
+  tool calls, and several models accept a `tools` array and then describe the call in prose
+  instead of making it
 
 ### 🔍 Search
 - Search across events, tasks, Canvas assignments, notes, and custom-list items with scope and status filters
@@ -634,6 +775,10 @@ Create `.env.local` in the project root:
 ```env
 # Groq — required for Corvus AI
 GROQ_API_KEY=your_groq_api_key
+# Optional: override Corvus's model. Groq retires models on their own schedule, and
+# when the pinned one goes EVERY Corvus message fails. Set this to swap without a
+# redeploy; GET /api/corvus lists what your key can reach.
+# CORVUS_MODEL=openai/gpt-oss-120b
 
 # Google OAuth — required for sign-in AND Google Calendar
 GOOGLE_CLIENT_ID=your_google_client_id
@@ -806,6 +951,80 @@ src/
 
 ---
 
+## 💸 Keeping Neon Usage Down
+
+Storage is not the constraint — the whole database is **~9 MB** against Neon's
+0.5 GiB free allowance. What costs money on Neon is **compute time**, and compute
+suspends only after a period of idleness. The reminder cron is pinged **every
+minute**, which means the database never gets to idle at all.
+
+That is the dominant factor by a wide margin, and it is a **deliberate trade-off,
+not a bug**: the ping interval *is* the reminder accuracy. A 15-minute tick means a
+reminder set for 3:07 arrives at 3:15. Check **Neon Console → your project → Usage**
+against your plan's compute-hour allowance before changing it; if you have headroom,
+per-minute accuracy is worth having.
+
+What *was* wasteful, and is fixed:
+
+- **DDL on every single request.** The self-healing-schema pattern (`CREATE TABLE IF
+  NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) is good — a fresh database works with no
+  manual migration — but it was being re-issued per request. Postgres skips the
+  create, yet the Neon driver still pays a full HTTP round trip to find that out. The
+  reminder cron spent **2 round trips a minute** proving its tables existed, and
+  `/api/sync` spent **4 per call, on both GET and POST**. `lib/ddlOnce.js` memoizes
+  each migration per process: a cold start pays once, warm requests pay nothing, and
+  a cold start is exactly when it might genuinely be needed.
+- **Three queries where one would do.** The reminder cron read `events`, `todos`, and
+  `notes` in three separate round trips and threw most of the rows away in JS. It is
+  now a single `UNION ALL` with `data ? 'reminder'` filtering in Postgres, so the wire
+  carries only rows that could actually fire.
+- **Housekeeping on the hot path.** The `sent_reminders` purge ran on every tick —
+  1,440 DELETEs a day to remove rows that are only ever a week old. Now every 6 hours.
+  The orphan-image reaper ran on every sync to discover nothing was 30 days old yet;
+  now hourly.
+- **Net effect:** a warm reminder tick went from **8 round trips to 3**, and a warm
+  `/api/sync` GET from 13 to 9. Measured warm latency: reminders ~100 ms, sync ~104 ms
+  (down from ~1.1 s on a cold start that pays the DDL).
+
+### Missing per-user indexes
+
+Every synced table is `PRIMARY KEY (id, user_id)` — note the column **order**. A
+composite btree can only serve a *prefix* of its columns, so an `(id, user_id)` index
+**cannot** answer `WHERE user_id = $1`, which is how essentially every read in the app
+is shaped. `EXPLAIN ANALYZE` confirms sequential scans on `events`, `todos`, and
+`notes`.
+
+At one user and ~120 rows that is microseconds, so this is **insurance, not an
+emergency** — it stops the per-minute cron reads getting linearly more expensive as
+history accumulates. `schema.sql` now declares them; to apply to an existing database,
+run this in the Neon SQL Editor:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_events_user           ON events(user_id);
+CREATE INDEX IF NOT EXISTS idx_todos_user            ON todos(user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_user            ON notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user   ON study_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_custom_lists_user     ON custom_lists(user_id);
+CREATE INDEX IF NOT EXISTS idx_event_categories_user ON event_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_todo_categories_user  ON todo_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_note_images_user      ON note_images(user_id);
+```
+
+### If you need a bigger cut
+
+Ranked by effect, since only the first one really moves compute-hours:
+
+1. **Lengthen the reminder ping interval** in cron-job.org. This is the only lever
+   that changes how much of the day the database is awake. Accuracy degrades to match.
+2. **Move the every-minute poll off Neon entirely.** Keep a "next reminder due at"
+   watermark in something that doesn't bill compute-hours (Upstash Redis' free tier
+   comfortably covers 1,440 pings/day) and only touch Neon when the watermark says
+   something is actually due. This keeps 1-minute accuracy *and* lets Neon idle
+   almost always — it is the correct architecture, at the cost of one more service
+   and an environment variable.
+3. **Vercel Pro** removes the reason the pinger is external in the first place, but
+   does nothing about Neon compute on its own.
+
 ## 🗄 Data Storage
 
 <div align="center">
@@ -823,9 +1042,9 @@ src/
 | Canvas seen-IDs (notification diff) | Browser `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit-hours, grade overrides | Browser `localStorage` (`lv-gpa`) |
 | Streak ledger | Browser `localStorage` (`lv-streak`) |
-| Digest opt-in pref (local cache) | Browser `localStorage` (`lv-digest-enabled`) |
-| Digest opt-in pref (canonical) | Neon DB — `push_subscriptions.digest_enabled` |
+| Digest opt-in pref (canonical) | Neon DB — `users.digest_enabled` (per account, read via `GET /api/push/digest-pref`) |
 | Google Calendar tokens | Neon DB, per user |
+| Google calendar show/hide + colours | Neon DB — `google_calendar_prefs`, keyed by **email** so they survive a reconnect and follow you across devices. `localStorage` (`lv-google-prefs`) is a read cache |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
 | User accounts | Neon DB — created on first sign-in |

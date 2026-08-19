@@ -1,7 +1,8 @@
 import { google }           from 'googleapis'
-import { getAccount }       from '@/lib/googleTokenStore'
+import { getAccount, getMirrorCalendarId } from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
 import { getSession }       from '@/lib/session'
+import { MIRROR_CALENDAR_NAME } from '@/lib/googleMirror'
 
 export async function GET(request) {
   const session = await getSession()
@@ -18,7 +19,15 @@ export async function GET(request) {
     const calApi   = google.calendar({ version: 'v3', auth })
     const { data } = await calApi.calendarList.list({ showHidden: false })
 
-    const calendars = (data.items ?? []).map(cal => ({
+    // The mirror calendar must never appear as an import source. It holds copies of
+    // this user's own events, so importing it would duplicate every one of them, and
+    // the duplicates would then be mirrored in turn. Filtered by stored id, with a
+    // name fallback for the window before the id is recorded.
+    const mirrorId = await getMirrorCalendarId(account.id, session.userId)
+
+    const calendars = (data.items ?? [])
+      .filter(cal => cal.id !== mirrorId && cal.summary !== MIRROR_CALENDAR_NAME)
+      .map(cal => ({
       id:              cal.id,
       summary:         cal.summary ?? '(unnamed)',
       backgroundColor: cal.backgroundColor ?? '#4285f4',
