@@ -15,59 +15,61 @@
  */
 import { getSession }        from '@/lib/session'
 import { reapOrphanImages }  from '@/lib/noteImages'
+import { ddlOnce }           from '@/lib/ddlOnce'
 import sql                   from '@/lib/db'
 
-// Ensure the study_sessions table exists.  Idempotent — safe to call every
-// request; Postgres skips the CREATE when the table is already there.
-async function ensureStudySessionsTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS study_sessions (
-      id         TEXT        NOT NULL,
-      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      data       JSONB       NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (id, user_id)
-    )
-  `
-}
+/**
+ * Self-creating tables for the sync payload.
+ *
+ * All four were previously issued on every GET *and* every POST — eight DDL round
+ * trips per sync cycle to re-prove tables that nothing ever drops. They are
+ * memoized per process now (see lib/ddlOnce) and batched into one transaction on
+ * the first call, so a cold start pays a single round trip and warm requests pay
+ * none. A fresh database still self-heals, which was the point of the pattern.
+ */
+const REAP_EVERY_MS = 60 * 60 * 1000 // 1 hour
+let lastReapAt = 0
 
-// Ensure the custom_lists table exists.  Each row is one list (with all its
-// items embedded as JSONB), identified by the list's client-side id.
-async function ensureCustomListsTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS custom_lists (
-      id         TEXT        NOT NULL,
-      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      data       JSONB       NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (id, user_id)
-    )
-  `
-}
-
-// Ensure the notes table exists.  One row per note, the whole note object
-// (title, HTML body, tags, reminder, trash flag) stored as JSONB.
-async function ensureEventCategoriesTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS event_categories (
-      id         TEXT        NOT NULL,
-      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      data       JSONB       NOT NULL,
-      PRIMARY KEY (id, user_id)
-    )
-  `
-}
-
-async function ensureNotesTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS notes (
-      id         TEXT        NOT NULL,
-      user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      data       JSONB       NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (id, user_id)
-    )
-  `
+function ensureSyncTables() {
+  return ddlOnce('syncTables', () => sql.transaction([
+    sql`
+      CREATE TABLE IF NOT EXISTS study_sessions (
+        id         TEXT        NOT NULL,
+        user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        data       JSONB       NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (id, user_id)
+      )
+    `,
+    // One row per list, with all its items embedded as JSONB.
+    sql`
+      CREATE TABLE IF NOT EXISTS custom_lists (
+        id         TEXT        NOT NULL,
+        user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        data       JSONB       NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (id, user_id)
+      )
+    `,
+    sql`
+      CREATE TABLE IF NOT EXISTS event_categories (
+        id         TEXT        NOT NULL,
+        user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        data       JSONB       NOT NULL,
+        PRIMARY KEY (id, user_id)
+      )
+    `,
+    // One row per note: title, HTML body, tags, reminder, trash flag.
+    sql`
+      CREATE TABLE IF NOT EXISTS notes (
+        id         TEXT        NOT NULL,
+        user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        data       JSONB       NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (id, user_id)
+      )
+    `,
+  ]))
 }
 
 export async function GET() {
@@ -78,10 +80,7 @@ export async function GET() {
 
   const { userId } = session
 
-  await ensureStudySessionsTable()
-  await ensureCustomListsTable()
-  await ensureNotesTable()
-  await ensureEventCategoriesTable()
+  await ensureSyncTables()
 
   const [evRows, tdRows, catRows, clsRows, prefRows, ssRows, clRows, nRows, evCatRows] = await Promise.all([
     sql`SELECT data FROM events          WHERE user_id = ${userId}`,
@@ -117,10 +116,7 @@ export async function POST(request) {
   const { userId } = session
   const { events, todos, todoCategories, classSchedule, eventPrefs, studySessions, customLists, notes, eventCategories } = await request.json()
 
-  await ensureStudySessionsTable()
-  await ensureCustomListsTable()
-  await ensureNotesTable()
-  await ensureEventCategoriesTable()
+  await ensureSyncTables()
 
   // Build an array of tagged-template query objects and run them all in ONE atomic
   // transaction. If anything fails mid-way, the entire write is rolled back — no
@@ -210,7 +206,12 @@ export async function POST(request) {
   // the transaction and deliberately best-effort: reclaiming disk must never be the
   // reason a note fails to save. See reapOrphanImages for the grace period that
   // keeps a stale device from deleting an image a fresher one just added.
-  if (Array.isArray(notes)) {
+  // Rate-limited per process: the reaper only ever removes rows that have been
+  // unreferenced for 30 days, so running it on every sync spends a round trip to
+  // discover there is nothing 30 days old yet. Hourly is far more often than the
+  // grace window needs.
+  if (Array.isArray(notes) && Date.now() - lastReapAt > REAP_EVERY_MS) {
+    lastReapAt = Date.now()
     try { await reapOrphanImages(userId, notes) } catch {}
   }
 

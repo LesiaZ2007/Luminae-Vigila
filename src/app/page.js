@@ -50,6 +50,8 @@ import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 import { buildGlance }    from '@/lib/glance'
 import { todayStr }       from '@/lib/localDate'
+import { connectGoogleAccount } from '@/lib/googleConnect'
+import { hydrateGooglePrefs }   from '@/lib/googlePrefs'
 import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
 
 // Both of these are code-split, so a cold load has a real gap before the chunk
@@ -435,6 +437,28 @@ export default function Home() {
       .catch(() => { mergeStarted.current = false }) // let a reload retry the merge
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ── Mirror out to Google Calendar ────────────────────────────────────────
+     Every write to the cloud is a candidate for re-mirroring, but a reconcile is
+     a Google API round trip per changed item, so doing it on every 2-second
+     debounce would burn quota while someone is typing. Fifteen minutes is well
+     inside how fresh a lock-screen glance needs to be, and the button in Google
+     settings covers "I want it now".
+
+     Kept in a ref rather than state: this must not re-render anything, and the
+     value only ever gates a fetch. */
+  const lastMirrorAt = useRef(0)
+  const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
+
+  const maybeMirrorToGoogle = useCallback(async () => {
+    if (!currentUser) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (Date.now() - lastMirrorAt.current < MIRROR_MIN_GAP_MS) return
+    lastMirrorAt.current = Date.now()
+    // No toast either way. The user did not ask for this on this keystroke, and the
+    // settings panel is where a real result belongs.
+    try { await fetch('/api/google/mirror', { method: 'POST' }) } catch {}
+  }, [currentUser])
+
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
   // Pushes the full local state to the DB 2 seconds after any change.
   // Only runs after the initial merge is complete (hasMergedCloud guard).
@@ -456,7 +480,13 @@ export default function Home() {
           customLists:    customListsRaw,
           notes,
         }),
-      }).catch(() => {})
+      })
+        // Mirror out to Google afterwards, never before: the mirror reads the app's
+        // data from the database, so running it first would publish the previous
+        // state. Rate-limited and fire-and-forget — a glance surface being a few
+        // minutes stale is fine, and a Google outage must not affect saving.
+        .then(() => maybeMirrorToGoogle())
+        .catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
   }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1365,7 +1395,24 @@ export default function Home() {
           pushToast(
             'Google Calendar disconnected',
             `Reconnect ${label || 'your account'} to keep events syncing.`,
-            [{ label: 'Reconnect', onClick: () => window.open('/api/google/auth', 'gc_reconnect', 'width=500,height=650') }],
+            // Was window.open('/api/google/auth') — that endpoint returns JSON holding
+            // the consent URL, not a redirect, so the popup showed raw JSON and the
+            // most reachable way back from a disconnect simply did not work.
+            [{
+              label: 'Reconnect',
+              onClick: async () => {
+                // Reconnect the first dead account by email so Google skips the
+                // chooser; picking wrong there adds a second account and leaves this
+                // one broken.
+                const result = await connectGoogleAccount({ email: disconnected[0]?.email })
+                if (!result.ok && result.error) {
+                  pushToast('Could not reconnect', result.error)
+                  return
+                }
+                gcDisconnectWarnedRef.current = null
+                syncGoogleCalendar()
+              },
+            }],
           )
         }
       } else {
@@ -1378,10 +1425,31 @@ export default function Home() {
     }
   }, [pushToast])
 
-  // Initial sync on mount (only if prefs exist)
+  /* ── Initial sync, after pulling saved calendar choices down ──
+     Hydrating first matters on a device that has never seen these accounts: without
+     it, a fresh browser (or one where the account was just reconnected under a new id)
+     has an empty local cache, syncs zero calendars, and shows nothing — then silently
+     corrects itself only if the user happens to open Google settings.
+
+     Hydration is keyed by email, so hidden calendars stay hidden across a reconnect
+     and across devices. */
   useEffect(() => {
-    const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
-    if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    let cancelled = false
+    ;(async () => {
+      let accounts = []
+      try {
+        const res = await fetch('/api/google/accounts')
+        if (res.ok) accounts = (await res.json())?.accounts ?? []
+      } catch { /* signed out or offline — fall back to the local cache below */ }
+
+      if (cancelled) return
+      if (accounts.length) await hydrateGooglePrefs(accounts)
+      if (cancelled) return
+
+      const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
+      if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    })()
+    return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodic sync every 15 minutes

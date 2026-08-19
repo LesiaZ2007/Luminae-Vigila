@@ -26,16 +26,17 @@
  * same way either way.
  */
 import sql from '@/lib/db'
+import { ddlOnce } from '@/lib/ddlOnce'
 
 /** One row per cron path, upserted — bounded regardless of ping frequency. */
-async function ensurePingTable() {
-  await sql`
+function ensurePingTable() {
+  return ddlOnce('cronPings', () => sql`
     CREATE TABLE IF NOT EXISTS cron_pings (
       path         TEXT        PRIMARY KEY,
       last_success TIMESTAMPTZ NOT NULL,
       success_count BIGINT     NOT NULL DEFAULT 1
     )
-  `
+  `)
 }
 
 /**
