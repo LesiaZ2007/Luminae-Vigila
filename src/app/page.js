@@ -265,9 +265,14 @@ export default function Home() {
 
   const shownReminders  = useRef(new Set())
   const hasMergedCloud  = useRef(false)   // true only after initial cloud pull SUCCEEDS
-  const mergeStarted    = useRef(false)   // dedupes the initial fetch (independent of success)
+  const mergeStarted    = useRef(false)   // an attempt is in flight right now
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
   const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
+
+  // True once the initial merge has failed enough times to be worth admitting to.
+  // Sync failing silently is what makes people reload the page to "fix" it; a
+  // retry that is visibly happening is the difference between broken and busy.
+  const [syncStalled, setSyncStalled] = useState(false)
 
   const [digestEnabled, setDigestEnabled] = useState(false)
   const [digestSaving,  setDigestSaving]  = useState(false)
@@ -328,22 +333,60 @@ export default function Home() {
       .catch(() => {})
   }, [])
 
-  // ── Initial cloud merge ────────────────────────────────────────────────────
-  // Runs once when the user first signs in (or on page load if already signed in).
-  // Pulls cloud data and merges it with local state — local wins on conflict.
-  // Then immediately pushes the merged result back so new local items are uploaded.
-  useEffect(() => {
-    if (!currentUser || mergeStarted.current) return
-    mergeStarted.current = true
+  /* ── Initial cloud merge ──────────────────────────────────────────────────
+     Pulls cloud data, merges it with local state, then pushes the merged result
+     back so new local items are uploaded.
 
-    fetch('/api/sync')
-      .then(r => r.ok ? r.json() : null)
-      .then(cloud => {
-        // A failed/empty GET must NOT unlock the debounced POST — otherwise the
-        // next local state change would upload our (possibly empty) local state
-        // and clobber the cloud we never managed to read. Leave hasMergedCloud
-        // false so ongoing sync stays disabled until a reload retries the merge.
-        if (!cloud) { mergeStarted.current = false; return }
+     Everything else depends on this succeeding. `hasMergedCloud` gates BOTH the
+     debounced push and the background pull — deliberately, because uploading
+     before a successful read could clobber the cloud with a half-empty local
+     state. The consequence is that a single failed GET at load used to disable
+     sync in both directions for the entire session: the effect only depends on
+     `currentUser`, so nothing re-ran it, and the old comment said as much
+     ("let a reload retry the merge"). Opening the app on a flaky connection —
+     or catching a cold database — meant syncing was silently dead until you
+     reloaded, which is exactly the "I have to refresh all the time" symptom.
+
+     So it retries now, with backoff, and on the two events that mean a retry is
+     likely to work: coming back online, and returning to the tab. */
+  const mergeAttempts  = useRef(0)
+  const mergeRetryTimer = useRef(null)
+  // Declared before the callback that uses it: the retry timer fires long after the
+  // render that scheduled it, so it must reach the *current* callback, and reading a
+  // ref declared further down would be a use-before-declaration.
+  const runInitialMergeRef = useRef(null)
+
+  const runInitialMerge = useCallback(async () => {
+    if (!currentUser) return
+    if (hasMergedCloud.current) return
+    if (mergeStarted.current) return          // an attempt is already in flight
+    mergeStarted.current = true
+    mergeAttempts.current += 1
+
+    const scheduleRetry = () => {
+      mergeStarted.current = false
+      // 2s, 4s, 8s, 16s, 32s, then every 60s. Unbounded on purpose: the
+      // alternative is an app that has quietly stopped syncing forever.
+      const delay = Math.min(2000 * 2 ** (mergeAttempts.current - 1), 60_000)
+      clearTimeout(mergeRetryTimer.current)
+      mergeRetryTimer.current = setTimeout(() => { runInitialMergeRef.current?.() }, delay)
+      setSyncStalled(mergeAttempts.current >= 3)
+    }
+
+    let cloud = null
+    try {
+      const res = await fetch('/api/sync')
+      cloud = res.ok ? await res.json() : null
+    } catch {
+      cloud = null
+    }
+
+    // A failed/empty GET must NOT unlock the debounced POST — otherwise the next
+    // local state change would upload our (possibly empty) local state and
+    // clobber the cloud we never managed to read.
+    if (!cloud) { scheduleRetry(); return }
+
+    {
 
         // Read current local arrays straight from localStorage — the source of
         // truth at load time. Computing the merge synchronously lets us set state
@@ -433,9 +476,46 @@ export default function Home() {
             )
           }
         }).catch(() => {})
-      })
-      .catch(() => { mergeStarted.current = false }) // let a reload retry the merge
+
+      // The read succeeded, which is what the rest of sync was waiting for. A
+      // failed push-back is recoverable on its own — the debounced push is live
+      // now and will retry on the next change.
+      mergeAttempts.current = 0
+      setSyncStalled(false)
+      clearTimeout(mergeRetryTimer.current)
+    }
+    // pushToast is declared below this point, so listing it here would be a
+    // use-before-declaration flag. Same omission the original merge effect used.
   }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { runInitialMergeRef.current = runInitialMerge }, [runInitialMerge])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Kicked off after the current commit rather than during it. The merge sets
+    // state on completion, and starting it inside the effect body makes that
+    // indistinguishable from a synchronous setState-in-effect — to the linter and
+    // to React's scheduler both. A zero timeout also lets the first paint land
+    // before a network round trip competes with it.
+    const kickoff = setTimeout(() => { runInitialMergeRef.current?.() }, 0)
+
+    // Both of these mean "a retry is likely to work now", which is far better
+    // than waiting out a backoff that started while the connection was down.
+    const retryIfUnmerged = () => {
+      if (!hasMergedCloud.current) runInitialMergeRef.current?.()
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') retryIfUnmerged() }
+
+    window.addEventListener('online', retryIfUnmerged)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearTimeout(kickoff)
+      window.removeEventListener('online', retryIfUnmerged)
+      document.removeEventListener('visibilitychange', onVisible)
+      clearTimeout(mergeRetryTimer.current)
+    }
+  }, [currentUser])
 
   /* ── Mirror out to Google Calendar ────────────────────────────────────────
      Every write to the cloud is a candidate for re-mirroring, but a reconcile is
@@ -3212,7 +3292,11 @@ export default function Home() {
       )}
 
       {/* ── Offline indicator (always mounted — shows/hides itself) ── */}
-      <OfflineIndicator onReconnect={flushSyncNow} />
+      <OfflineIndicator
+        onReconnect={flushSyncNow}
+        syncStalled={syncStalled}
+        onRetrySync={() => { mergeAttempts.current = 0; runInitialMergeRef.current?.() }}
+      />
 
       {/* ── Onboarding wizard (first-run only) ── */}
       {showOnboarding && (
