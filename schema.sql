@@ -36,6 +36,30 @@ CREATE TABLE IF NOT EXISTS google_accounts (
 
 CREATE INDEX IF NOT EXISTS idx_google_accounts_user_id ON google_accounts(user_id);
 
+-- Id of the secondary Google calendar this app created for mirroring events and due
+-- tasks out to Google (so they reach Pixel's At a Glance). Added lazily by
+-- src/lib/googleTokenStore.js; listed here so a hand-built database matches.
+-- ALTER TABLE google_accounts ADD COLUMN IF NOT EXISTS mirror_calendar_id TEXT;
+
+-- ── Google Calendar Preferences ─────────────────────────────────────────────
+-- Which Google calendars are shown/hidden and in what colour.
+--
+-- Keyed by google_email rather than by google_accounts.id, deliberately. The id is
+-- not stable across a reconnect: disconnecting deletes the row, so re-adding the same
+-- account mints a new UUID and every hidden calendar reappeared — on an account the
+-- user had just repaired. Email is how this app identifies a Google account anyway
+-- (upsertAccount conflicts on user_id + google_email), so it is the key that survives.
+--
+-- Living server-side also means hiding a calendar on a laptop hides it on the phone.
+-- Created automatically by src/app/api/google/prefs/route.js.
+CREATE TABLE IF NOT EXISTS google_calendar_prefs (
+  user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  google_email TEXT        NOT NULL,
+  data         JSONB       NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, google_email)
+);
+
 -- ── Canvas LMS credential (one per user) ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS canvas_credentials (
   user_id    UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -157,6 +181,24 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+
+-- ── Per-user lookup indexes ─────────────────────────────────────────────────
+-- Every synced table is keyed PRIMARY KEY (id, user_id) — note the column ORDER.
+-- A composite btree can only serve a prefix of its columns, so an (id, user_id)
+-- index cannot answer `WHERE user_id = $1`, which is how essentially every query
+-- in the app reads these tables. Without these, each read is a sequential scan.
+--
+-- At one user and ~100 rows that is microseconds, so this is not urgent — it is
+-- insurance against the reminder cron's per-minute reads getting linearly more
+-- expensive as history accumulates.
+CREATE INDEX IF NOT EXISTS idx_events_user           ON events(user_id);
+CREATE INDEX IF NOT EXISTS idx_todos_user            ON todos(user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_user            ON notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_user   ON study_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_custom_lists_user     ON custom_lists(user_id);
+CREATE INDEX IF NOT EXISTS idx_event_categories_user ON event_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_todo_categories_user  ON todo_categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_note_images_user      ON note_images(user_id);
 
 -- ── Sent Reminders ──────────────────────────────────────────────────────────
 -- Dedup log so the server-side reminder cron (/api/push/reminders) sends each
