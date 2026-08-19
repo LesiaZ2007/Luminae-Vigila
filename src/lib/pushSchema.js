@@ -11,6 +11,7 @@
  * Every statement here is safe to run on every request.
  */
 import sql from '@/lib/db'
+import { ddlOnce } from '@/lib/ddlOnce'
 
 /**
  * `digest_enabled` lives on `users`, not on `push_subscriptions`.
@@ -29,10 +30,12 @@ import sql from '@/lib/db'
  * `push_subscriptions.digest_enabled` is left in place but is no longer read.
  * Dropping a column is unrecoverable and buys nothing here.
  */
-export async function ensurePushSchema() {
-  await Promise.all([
+export function ensurePushSchema() {
+  // Three round trips per request, on endpoints hit every minute, to re-prove
+  // columns that cannot disappear. Memoized per process — see lib/ddlOnce.
+  return ddlOnce('pushSchema', () => Promise.all([
     sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS daily_enabled BOOLEAN NOT NULL DEFAULT true`,
     sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tz_offset     INTEGER NOT NULL DEFAULT 0`,
     sql`ALTER TABLE users              ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT true`,
-  ])
+  ]))
 }

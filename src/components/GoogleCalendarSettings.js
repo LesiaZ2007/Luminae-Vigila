@@ -1,7 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Plus, Trash2, ChevronDown, ChevronRight, RefreshCw, AlertCircle } from 'lucide-react'
+import { X, Plus, Trash2, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Smartphone } from 'lucide-react'
+import { MIRROR_CALENDAR_NAME } from '@/lib/googleMirror'
+import {
+  readLocalPrefs, writeLocalPrefs, hydrateGooglePrefs, persistGooglePrefs,
+} from '@/lib/googlePrefs'
+import { connectGoogleAccount } from '@/lib/googleConnect'
 
 const COLOR_PRESETS = [
   '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
@@ -20,22 +25,67 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
   const [connecting,  setConnecting] = useState(false)
   const [syncing,     setSyncing]    = useState(false)
   const [notConfigured, setNotConfigured] = useState(false)
+  const [mirroring,  setMirroring]  = useState(false)
+  const [mirrorMsg,  setMirrorMsg]  = useState('')
+  const [mirrorErr,  setMirrorErr]  = useState(false)
   const popupPollRef = useRef(null)
 
-  const [prefs, setPrefs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}') }
-    catch { return {} }
-  })
+  /**
+   * Push events and due tasks out to the app's own Google calendar.
+   *
+   * Reports the counts rather than a bare "done": a mirror that silently wrote nothing
+   * (because consent predates the write scope) looks identical to one that worked.
+   */
+  const runMirror = useCallback(async () => {
+    setMirroring(true); setMirrorMsg(''); setMirrorErr(false)
+    try {
+      const res  = await fetch('/api/google/mirror', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setMirrorErr(true)
+        setMirrorMsg(data.code === 'needs_reconsent'
+          ? 'Disconnect and reconnect this Google account — sending to Google needs a permission that was added after you last connected.'
+          : data.error || 'Could not send to Google.')
+        return
+      }
+      const bits = []
+      if (data.inserted) bits.push(`${data.inserted} added`)
+      if (data.updated)  bits.push(`${data.updated} updated`)
+      if (data.deleted)  bits.push(`${data.deleted} removed`)
+      setMirrorErr(data.errorCount > 0)
+      setMirrorMsg(
+        (bits.length ? bits.join(', ') : `already up to date (${data.unchanged} items)`) +
+        (data.errorCount ? ` — ${data.errorCount} failed: ${data.errors[0]}` : '') +
+        '. It can take a minute to reach your phone.',
+      )
+    } catch {
+      setMirrorErr(true)
+      setMirrorMsg('Could not reach the server.')
+    } finally {
+      setMirroring(false)
+    }
+  }, [])
 
-  // Persist prefs to localStorage whenever they change
+  const [prefs, setPrefs] = useState(() => readLocalPrefs())
+  // Suppresses the upload on the render that hydration itself caused — otherwise
+  // loading the server's copy immediately writes it straight back.
+  const hydratedRef = useRef(false)
+
+  // Persist to the cache and to the account. Skipped until hydration has run, so a
+  // browser that has not yet fetched the server copy cannot overwrite it with a stale
+  // local one.
   useEffect(() => {
-    localStorage.setItem('lv-google-prefs', JSON.stringify(prefs))
-  }, [prefs])
+    if (!hydratedRef.current) { writeLocalPrefs(prefs); return }
+    persistGooglePrefs(prefs, accounts)
+  }, [prefs, accounts])
 
-  /* ── Load accounts from server ── */
+  /* ── Load accounts from server, with health ──
+     `health=1` asks Google what each stored grant is still good for. Without it a
+     dead account is indistinguishable from one with no calendars ticked, and the only
+     hint arrives later as a toast when an events fetch happens to fail. */
   const loadAccounts = useCallback(async () => {
     try {
-      const res  = await fetch('/api/google/accounts')
+      const res  = await fetch('/api/google/accounts?health=1')
       const data = await res.json()
       setAccounts(data.accounts ?? [])
     } catch { /* silent */ } finally {
@@ -43,7 +93,39 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
     }
   }, [])
 
+  /* ── Reconnect one account in place ──
+     Not "disconnect then add": disconnecting deletes the row, so re-adding mints a new
+     account id. Reconnecting keeps the id, and `login_hint` sends the user straight to
+     the right Google account instead of a chooser where picking wrong would connect a
+     second account and leave the broken one broken. */
+  const [reconnecting, setReconnecting] = useState(null) // accountId | null
+  const handleReconnect = useCallback(async email => {
+    setReconnecting(email)
+    const result = await connectGoogleAccount({ email })
+    setReconnecting(null)
+    if (!result.ok && result.error) alert(result.error)
+    await loadAccounts()
+    onSync?.()
+  }, [loadAccounts, onSync])
+
   useEffect(() => { loadAccounts() }, [loadAccounts])
+
+  /* ── Pull saved calendar choices down once the accounts are known ──
+     Keyed by email server-side, so choices made before a reconnect (or on another
+     device) reattach to whatever account id this session happens to have. */
+  useEffect(() => {
+    if (!accounts.length || hydratedRef.current) return
+    let cancelled = false
+    hydrateGooglePrefs(accounts).then(merged => {
+      if (cancelled) return
+      setPrefs(merged)
+      hydratedRef.current = true
+      // The calendar is rendered from the same cache, so a pull that changes anything
+      // has to trigger a re-sync or the change is invisible until the next reload.
+      onSync?.()
+    })
+    return () => { cancelled = true }
+  }, [accounts, onSync])
 
   /* ── Load calendars for each account ── */
   useEffect(() => {
@@ -154,51 +236,15 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
     return typeof cp === 'object' && cp?.color ? cp.color : (cal.backgroundColor ?? '#4285f4')
   }
 
-  /* ── Add account (popup flow) ── */
+  /* ── Add account (shared popup flow) ── */
   async function handleAddAccount() {
     setConnecting(true)
-    try {
-      const res  = await fetch('/api/google/auth')
-      const data = await res.json()
+    const result = await connectGoogleAccount()
+    setConnecting(false)
 
-      if (data.error === 'not_configured') {
-        setNotConfigured(true)
-        setConnecting(false)
-        return
-      }
-
-      const popup = window.open(
-        data.url,
-        'google-auth',
-        'width=520,height=660,menubar=no,toolbar=no,location=yes,scrollbars=yes',
-      )
-
-      function cleanup() {
-        window.removeEventListener('message', onMsg)
-        clearInterval(pollInterval)
-        popupPollRef.current = null
-      }
-
-      function onMsg(e) {
-        if (e.data?.type === 'gc_connected') {
-          cleanup()
-          setConnecting(false)
-          loadAccounts()
-        } else if (e.data?.type === 'gc_error') {
-          cleanup()
-          setConnecting(false)
-          alert('Could not connect: ' + e.data.error)
-        }
-      }
-
-      window.addEventListener('message', onMsg)
-      const pollInterval = setInterval(() => {
-        if (popup?.closed) { cleanup(); setConnecting(false); loadAccounts() }
-      }, 600)
-      popupPollRef.current = pollInterval
-    } catch {
-      setConnecting(false)
-    }
+    if (result.reason === 'not_configured') { setNotConfigured(true); return }
+    if (!result.ok && result.error) alert('Could not connect: ' + result.error)
+    await loadAccounts()
   }
 
   /* ── Disconnect account ── */
@@ -331,9 +377,45 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
               onToggleCalendar={(calId, v) => toggleCalendar(acc.id, calId, v)}
               onCalendarColor={(calId, color) => setCalendarColor(acc.id, calId, color)}
               onDisconnect={() => handleDisconnect(acc.id)}
+              onReconnect={() => handleReconnect(acc.email)}
+              reconnecting={reconnecting === acc.email}
             />
           ))}
         </div>
+
+        {/* Mirror-out to Google — the only route to Pixel's At a Glance */}
+        {accounts.length > 0 && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Smartphone size={13} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text)' }}>Show in At a Glance</span>
+            </div>
+            <p style={{ margin: '0 0 8px', fontSize: '0.71rem', color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Copies your events and due-dated tasks into a Google calendar called
+              “{MIRROR_CALENDAR_NAME}”, which Pixel’s At a Glance and your lock screen read.
+              It’s one-way — edits there get overwritten — and that calendar is hidden from
+              the import list above so nothing duplicates.
+            </p>
+            <button
+              onClick={runMirror}
+              disabled={mirroring}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px',
+                borderRadius: 8, border: '1px solid var(--border)',
+                background: 'transparent', color: 'var(--text)',
+                fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600,
+                cursor: mirroring ? 'default' : 'pointer', opacity: mirroring ? 0.6 : 1,
+              }}>
+              <RefreshCw size={12} style={{ animation: mirroring ? 'gc-spin 1s linear infinite' : 'none' }} />
+              {mirroring ? 'Sending…' : 'Send to Google now'}
+            </button>
+            {mirrorMsg && (
+              <p style={{ margin: '7px 0 0', fontSize: '0.71rem', lineHeight: 1.45, color: mirrorErr ? 'var(--red)' : 'var(--text-2)' }}>
+                {mirrorMsg}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         {accounts.length > 0 && (
@@ -352,9 +434,17 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
 /* ──────────────────────────────────────────────────────────
    Account row
 ────────────────────────────────────────────────────────── */
-function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onToggleAccount, isCalendarEnabled, calendarColor, onToggleCalendar, onCalendarColor, onDisconnect }) {
+function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onToggleAccount, isCalendarEnabled, calendarColor, onToggleCalendar, onCalendarColor, onDisconnect, onReconnect, reconnecting }) {
+  // `needsReconnect` means the grant is gone; `missingWriteScope` means it works for
+  // reading but predates the mirror's scope. Different problems, same one-click fix,
+  // but only the first one is broken enough to shout about.
+  const broken = acc.needsReconnect === true
+
   return (
-    <div style={{ marginBottom: 10, borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+    <div style={{
+      marginBottom: 10, borderRadius: 12, overflow: 'hidden',
+      border: `1px solid ${broken ? 'var(--red)' : 'var(--border)'}`,
+    }}>
 
       {/* Account header */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '10px 13px', background: 'var(--surface2)', gap: 8 }}>
@@ -365,9 +455,32 @@ function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onTog
           {expanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
         </button>
 
-        <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {acc.email}
         </span>
+
+        {/* One click back to working. Reconnect rather than disconnect+add, so the
+            account id — and every calendar choice keyed to it — survives. */}
+        {(broken || acc.missingWriteScope) && (
+          <button
+            onClick={onReconnect}
+            disabled={reconnecting}
+            title={broken
+              ? 'This account needs to be reconnected before its events can sync'
+              : 'Reconnect to allow sending your schedule to Google'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+              padding: '3px 8px', borderRadius: 999,
+              border: `1px solid ${broken ? 'var(--red)' : 'var(--border)'}`,
+              background: 'transparent',
+              color: broken ? 'var(--red)' : 'var(--text-2)',
+              fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+              cursor: reconnecting ? 'default' : 'pointer', opacity: reconnecting ? 0.6 : 1,
+            }}>
+            <RefreshCw size={10} style={{ animation: reconnecting ? 'gc-spin 1s linear infinite' : 'none' }} />
+            {reconnecting ? 'Opening…' : 'Reconnect'}
+          </button>
+        )}
 
         <Toggle enabled={accountEnabled} onChange={onToggleAccount} />
 
@@ -381,6 +494,21 @@ function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onTog
           <Trash2 size={13} />
         </button>
       </div>
+
+      {broken && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 6,
+          padding: '7px 13px', background: 'var(--red-bg, rgba(239,68,68,.08))',
+          borderTop: '1px solid var(--border)',
+        }}>
+          <AlertCircle size={12} style={{ color: 'var(--red)', flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-2)', lineHeight: 1.45 }}>
+            {acc.reason === 'no_refresh_token'
+              ? 'Google never granted a long-lived token for this account, so it cannot refresh itself. Reconnect to fix it.'
+              : 'Google has stopped accepting this connection. Reconnecting takes a few seconds and keeps your calendar choices.'}
+          </span>
+        </div>
+      )}
 
       {/* Calendar list */}
       {expanded && (
