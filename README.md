@@ -598,6 +598,19 @@ Choose your preferred accent color from the **Settings** menu (the gear button a
 
 The accent is applied via a `data-accent` attribute on `<html>` and saved to `localStorage` (`lv-accent`). A before-paint inline script in `layout.js` restores it before the first render so there is never a flash of the wrong color. Both light and dark mode look polished with every accent.
 
+### 🌗 Light ⇄ dark, cross-faded
+
+Switching appearance eases the whole app from one palette to the other over 320 ms instead of snapping. Light, **System**, and Dark sit in the same segmented control in Settings.
+
+- **Why it needed doing at all** — the theme is a swap of CSS custom properties on `<html>`, and custom properties are not animatable. Every surface, border, and label repainted in a single frame, which reads as a flash rather than a mode change. Dark mode inverts nearly the entire viewport, so it is the one palette change big enough for that to hurt
+- **The transition is temporary, not permanent** — a standing `transition` on background and text colour would animate the first paint after hydration (the app would fade in from unstyled on every load) and would put a 320 ms tail on every ordinary hover and focus change for the rest of the session. Instead a `theme-transition` class goes onto `<html>` for the duration of the switch and comes straight back off
+- **`!important`, deliberately** — for those few hundred milliseconds the rule has to beat the per-component `transition` declarations scattered through the app. It is scoped to a class that only exists mid-switch, so nothing else pays for it
+- **Only cheap properties animate** — `background-color`, `background-image`, `border-color`, `color`, `fill`, `stroke`. `box-shadow` and `transform` are left out on purpose: the calendar grid can hold thousands of nodes, and animating shadow across all of them at once is the one thing that would drop frames
+- **`prefers-reduced-motion` gets the instant swap** — a full-page cross-fade is precisely the large-area movement that setting exists to suppress. The theme still changes; it just changes immediately
+- **Rapid toggling is safe** — the pending removal timer is cancelled and restarted on each switch, so an earlier toggle can never strip the class off a later one mid-animation. The timer is also cancelled on unmount
+
+**Fixed alongside:** the Settings control had always offered a **System** option, but `ThemeProvider` was mounted with `enableSystem={false}`, so choosing it set a value `next-themes` then ignored — the button looked selected while the app stayed on whatever it had been. System now genuinely follows the OS setting.
+
 ### 📡 Offline Indicator
 A subtle pill badge appears in the bottom-right corner when the app loses internet connectivity:
 - Shows "Offline — changes will sync when you reconnect" with a WifiOff icon
