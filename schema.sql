@@ -41,6 +41,25 @@ CREATE INDEX IF NOT EXISTS idx_google_accounts_user_id ON google_accounts(user_i
 -- src/lib/googleTokenStore.js; listed here so a hand-built database matches.
 -- ALTER TABLE google_accounts ADD COLUMN IF NOT EXISTS mirror_calendar_id TEXT;
 
+-- ── Google Calendar Preferences ─────────────────────────────────────────────
+-- Which Google calendars are shown/hidden and in what colour.
+--
+-- Keyed by google_email rather than by google_accounts.id, deliberately. The id is
+-- not stable across a reconnect: disconnecting deletes the row, so re-adding the same
+-- account mints a new UUID and every hidden calendar reappeared — on an account the
+-- user had just repaired. Email is how this app identifies a Google account anyway
+-- (upsertAccount conflicts on user_id + google_email), so it is the key that survives.
+--
+-- Living server-side also means hiding a calendar on a laptop hides it on the phone.
+-- Created automatically by src/app/api/google/prefs/route.js.
+CREATE TABLE IF NOT EXISTS google_calendar_prefs (
+  user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  google_email TEXT        NOT NULL,
+  data         JSONB       NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, google_email)
+);
+
 -- ── Canvas LMS credential (one per user) ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS canvas_credentials (
   user_id    UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

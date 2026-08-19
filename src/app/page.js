@@ -50,6 +50,8 @@ import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 import { buildGlance }    from '@/lib/glance'
 import { todayStr }       from '@/lib/localDate'
+import { connectGoogleAccount } from '@/lib/googleConnect'
+import { hydrateGooglePrefs }   from '@/lib/googlePrefs'
 import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
 
 // Both of these are code-split, so a cold load has a real gap before the chunk
@@ -1393,7 +1395,24 @@ export default function Home() {
           pushToast(
             'Google Calendar disconnected',
             `Reconnect ${label || 'your account'} to keep events syncing.`,
-            [{ label: 'Reconnect', onClick: () => window.open('/api/google/auth', 'gc_reconnect', 'width=500,height=650') }],
+            // Was window.open('/api/google/auth') — that endpoint returns JSON holding
+            // the consent URL, not a redirect, so the popup showed raw JSON and the
+            // most reachable way back from a disconnect simply did not work.
+            [{
+              label: 'Reconnect',
+              onClick: async () => {
+                // Reconnect the first dead account by email so Google skips the
+                // chooser; picking wrong there adds a second account and leaves this
+                // one broken.
+                const result = await connectGoogleAccount({ email: disconnected[0]?.email })
+                if (!result.ok && result.error) {
+                  pushToast('Could not reconnect', result.error)
+                  return
+                }
+                gcDisconnectWarnedRef.current = null
+                syncGoogleCalendar()
+              },
+            }],
           )
         }
       } else {
@@ -1406,10 +1425,31 @@ export default function Home() {
     }
   }, [pushToast])
 
-  // Initial sync on mount (only if prefs exist)
+  /* ── Initial sync, after pulling saved calendar choices down ──
+     Hydrating first matters on a device that has never seen these accounts: without
+     it, a fresh browser (or one where the account was just reconnected under a new id)
+     has an empty local cache, syncs zero calendars, and shows nothing — then silently
+     corrects itself only if the user happens to open Google settings.
+
+     Hydration is keyed by email, so hidden calendars stay hidden across a reconnect
+     and across devices. */
   useEffect(() => {
-    const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
-    if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    let cancelled = false
+    ;(async () => {
+      let accounts = []
+      try {
+        const res = await fetch('/api/google/accounts')
+        if (res.ok) accounts = (await res.json())?.accounts ?? []
+      } catch { /* signed out or offline — fall back to the local cache below */ }
+
+      if (cancelled) return
+      if (accounts.length) await hydrateGooglePrefs(accounts)
+      if (cancelled) return
+
+      const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
+      if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    })()
+    return () => { cancelled = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodic sync every 15 minutes
