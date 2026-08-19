@@ -34,9 +34,61 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 🔵 Google Calendar
 - Connect **multiple Google accounts** and toggle individual calendars on or off
-- Events auto-refresh every 5 minutes; per-calendar color overrides stored locally
+- Events auto-refresh every 5 minutes
 - Calendar visibility toggles and custom colors are never reset by background syncs
 - **Signing in does not auto-connect Google Calendar** — that is a separate explicit step
+
+### 🔁 Reconnecting, and hidden calendars that stay hidden
+
+Two problems with one shared root cause: preferences were keyed to an account id that
+changes, and never left the browser.
+
+**Hidden calendars now follow the account, not the browser.** Visibility and colour
+choices live in `google_calendar_prefs`, keyed by **Google account email**. Previously
+they were `localStorage` only, keyed by the account's UUID — and disconnecting an
+account deletes its row, so re-adding the same account minted a *new* UUID and every
+calendar you had hidden came back, on an account you had just repaired. Email is how
+this app identifies a Google account anyway (`upsertAccount` conflicts on
+`user_id + google_email`), so it is the key that actually survives the round trip.
+Living server-side also means hiding a calendar on your laptop hides it on your phone.
+
+- `localStorage` remains a **read cache** so the calendar renders instantly and works
+  offline; the account copy is the durable one
+- Choices that only ever existed in one browser are **migrated up** on first load,
+  rather than lost
+- Uploads are suppressed until hydration has run, so a browser that has not pulled the
+  saved copy yet cannot overwrite it with an empty one. An empty payload is likewise
+  rejected server-side — it means "this device has nothing to say", never "clear
+  everything"
+
+**Reconnecting is now one click, in place.**
+
+- The **Reconnect** button appears on any account that needs it, and reconnects *in
+  place* rather than disconnect-then-add — which is what preserves the account id, and
+  with it every calendar choice keyed to it
+- `login_hint` sends you straight to that Google account instead of an account chooser.
+  Picking the wrong entry there used to connect a *second* account and leave the broken
+  one broken, which reads as "reconnecting did nothing"
+- **`GET /api/google/accounts?health=1`** asks Google what each stored grant is still
+  good for, so a dead account is visibly dead in settings instead of looking identical
+  to one with no calendars ticked. Opt-in, because it costs a round trip per account
+- **Fixed:** the "Reconnect" action on the disconnected toast called
+  `window.open('/api/google/auth')` — an endpoint that returns **JSON containing** the
+  consent URL, not a redirect. The popup showed a wall of raw JSON, so the single most
+  reachable way back from a disconnect did not work at all
+
+#### Why accounts keep disconnecting in the first place
+
+**Most likely: the OAuth app is in "Testing" publishing status.** Google expires refresh
+tokens for test-mode apps after **7 days**, so a connection dies roughly weekly no
+matter what this code does. Fix it in **Google Cloud Console → APIs & Services → OAuth
+consent screen → Publish app**. An unverified production app still shows an
+"unverified" interstitial and is capped at 100 users, but its refresh tokens **do not
+expire on a timer** — which is the actual difference.
+
+The other cause is a missing refresh token entirely, which the health check reports
+separately as `no_refresh_token`; the connect flow already requests `access_type:
+offline` with `prompt: consent`, so this should be rare.
 
 ### 📱 Show in At a Glance (mirror out to Google)
 
@@ -992,6 +1044,7 @@ Ranked by effect, since only the first one really moves compute-hours:
 | Streak ledger | Browser `localStorage` (`lv-streak`) |
 | Digest opt-in pref (canonical) | Neon DB — `users.digest_enabled` (per account, read via `GET /api/push/digest-pref`) |
 | Google Calendar tokens | Neon DB, per user |
+| Google calendar show/hide + colours | Neon DB — `google_calendar_prefs`, keyed by **email** so they survive a reconnect and follow you across devices. `localStorage` (`lv-google-prefs`) is a read cache |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
 | User accounts | Neon DB — created on first sign-in |

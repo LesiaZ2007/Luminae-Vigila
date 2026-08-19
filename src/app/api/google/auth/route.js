@@ -20,8 +20,15 @@ export async function GET(request) {
 
   const origin = new URL(request.url).origin
   const oauth2 = makeOAuth2Client(origin)
+
+  // Reconnecting a specific account should land on that account, not an account
+  // chooser. Picking the wrong entry there connects a *second* Google account and
+  // leaves the broken one broken — which reads as "reconnecting did nothing".
+  const email = new URL(request.url).searchParams.get('email')
+
   const url = oauth2.generateAuthUrl({
     access_type: 'offline',
+    ...(email ? { login_hint: email } : {}),
     scope: [
       'https://www.googleapis.com/auth/calendar.readonly',
       // Least-privilege write access: `calendar.app.created` allows creating secondary
