@@ -6,6 +6,7 @@ import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
+import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
 
 /**
  * How overlapping timed events are laid out.
@@ -391,6 +392,15 @@ export default function WeeklyCalendar({
       )
     }
 
+    // Notes live under different keys depending on where the event came from: ours
+    // use `notes`, imported Google events carry `description`.
+    const notesText = flattenNotes(
+      arg.event.extendedProps?.notes || arg.event.extendedProps?.description,
+    )
+    const noteLines = notesText
+      ? noteLineBudget({ durationMins, allDay: arg.event.allDay, isMobile, linkedCount: Math.min(linkedTodos.length, 4) })
+      : 0
+
     return (
       <div className="flex flex-col h-full overflow-hidden px-0.5" style={{ position: 'relative' }}>
         {!arg.event.allDay && (
@@ -416,6 +426,34 @@ export default function WeeklyCalendar({
         {linkedTodos.length > 3 && (
           <div style={{ fontSize: '0.63rem', opacity: 0.7, marginTop: 1, flexShrink: 0 }}>
             +{linkedTodos.length - 3} more
+          </div>
+        )}
+
+        {/* Notes, but only when the block is genuinely tall enough to hold a line.
+            Smaller and more transparent than the title so it reads as secondary and
+            never competes with the thing you are scanning for. See noteLineBudget. */}
+        {noteLines > 0 && notesText && (
+          <div
+            title={notesText}
+            style={{
+              marginTop: 2,
+              fontSize: '0.6rem',
+              lineHeight: 1.35,
+              opacity: 0.62,
+              fontWeight: 400,
+              // flex-1 + minHeight 0 lets the block take the leftover space and clip
+              // there, so a mis-estimated line count degrades to a clean cut rather
+              // than overflowing the event.
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflow: 'hidden',
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: noteLines,
+              wordBreak: 'break-word',
+            }}
+          >
+            {notesText}
           </div>
         )}
       </div>
