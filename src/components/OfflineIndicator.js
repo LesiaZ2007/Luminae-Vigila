@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { WifiOff, Wifi } from 'lucide-react'
+import { WifiOff, Wifi, RefreshCw } from 'lucide-react'
 
 /**
  * OfflineIndicator — subtle banner that appears when the browser loses internet
@@ -10,7 +10,7 @@ import { WifiOff, Wifi } from 'lucide-react'
  * Uses window online/offline events + navigator.onLine for initial state.
  * Styled to the Luminae Vigila brand; auto-hides after reconnect.
  */
-export default function OfflineIndicator({ onReconnect }) {
+export default function OfflineIndicator({ onReconnect, syncStalled = false, onRetrySync }) {
   const [online,  setOnline]  = useState(true)   // starts optimistic; corrected after mount
   const [phase,   setPhase]   = useState('hidden') // 'hidden' | 'offline' | 'back-online' | 'hiding'
   // Was a plain `{ current: null }` object literal, which is rebuilt on every
@@ -60,6 +60,39 @@ export default function OfflineIndicator({ onReconnect }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /* Sync can be stalled while the browser is perfectly online — a failed initial
+     merge, a cold database, a 500. That case used to be completely invisible, so
+     the only discoverable fix was reloading the page. This says so instead, and
+     offers the retry directly. Connectivity still wins the slot when both apply,
+     since being offline explains the stall. */
+  if (phase === 'hidden' && syncStalled) {
+    return (
+      <button
+        type="button"
+        onClick={onRetrySync}
+        aria-live="polite"
+        style={{
+          position: 'fixed',
+          bottom: 'calc(76px + env(safe-area-inset-bottom, 0px) + 10px)',
+          right: 16, zIndex: 3000,
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '8px 14px', borderRadius: 999,
+          fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 700, lineHeight: 1,
+          cursor: 'pointer', userSelect: 'none',
+          background: 'rgba(30,20,5,0.88)',
+          color: '#fbbf24',
+          border: '1px solid rgba(251,191,36,0.35)',
+          backdropFilter: 'blur(10px)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+          animation: 'lv-offline-in 0.3s cubic-bezier(0.22,1,0.36,1)',
+        }}
+      >
+        <RefreshCw size={13} strokeWidth={2.5} />
+        Not syncing — retry
+      </button>
+    )
+  }
 
   if (phase === 'hidden') return null
 
