@@ -1861,7 +1861,7 @@ export default function Home() {
     // Everything else — own events, Google, and all three Canvas sources — opens the
     // detail view. Each of those used to answer a tap with its own toast, which could
     // only ever be a line of text; they all carry a location and often a description,
-    // and those deserve the same layout as an own event. Editing, hiding, recolouring
+    // and those deserve the same layout as an own event. Editing, hiding, recoloring
     // and the Canvas deep link are all reachable from in there.
     setDetailEvent(info.event)
   }, [todos])

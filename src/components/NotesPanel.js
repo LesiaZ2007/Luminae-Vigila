@@ -313,7 +313,7 @@ function NoteRow({ note, active, trashed, exiting, onClick, onToggleStar, onRest
               <span key={t} style={{
                 padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 800,
                 lineHeight: 1.5, whiteSpace: 'nowrap',
-                // Tinted with the note's own colour so the row reads as one unit.
+                // Tinted with the note's own color so the row reads as one unit.
                 background: `${note.color}1f`,
                 color: note.color,
                 border: `1px solid ${note.color}3d`,
