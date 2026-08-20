@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks, AlertTriangle } from 'lucide-react'
 import { todayStr } from '@/lib/localDate'
+import { describeLocation } from '@/lib/maps'
 
 const DAYS_AHEAD = 14
 
@@ -10,6 +11,34 @@ const DAYS_AHEAD = 14
 // past days it belongs to — the agenda starts at Today, so those days would sit
 // above the fold in reverse-urgency order, which is exactly backwards.
 const OVERDUE_KEY = '__overdue__'
+
+/**
+ * The location line on an agenda row, as a map link when it is somewhere you can
+ * actually walk to.
+ *
+ * `stopPropagation` matters: the whole row is a click target that opens the item, and
+ * without it tapping the address would open the detail view *and* navigate away.
+ */
+function AgendaLocation({ location }) {
+  const desc = describeLocation(location)
+  if (desc.kind === 'empty') return null
+
+  const style = { display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.72rem', color: 'var(--text-3)' }
+
+  if (desc.kind !== 'place') {
+    return <span style={style}><MapPin size={9} />{desc.text}</span>
+  }
+
+  return (
+    <a href={desc.url} target="_blank" rel="noopener noreferrer"
+       onClick={e => e.stopPropagation()}
+       title="Open in Google Maps"
+       style={{ ...style, color: 'var(--blue)', textDecoration: 'none' }}>
+      <MapPin size={9} />
+      <span style={{ textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 2 }}>{desc.text}</span>
+    </a>
+  )
+}
 
 /** '3 days ago' / 'Yesterday' — how late something is, in words. */
 function overdueLabel(dateStr) {
@@ -107,7 +136,9 @@ export default function AgendaView({
           ? (ev.extendedProps?.notes || null)
           : formatTimeRange(ev.start, ev.end),
         color: ev.color || catColor,
-        location: ev.extendedProps?.notes || null,
+        // Events carry a real location field now; this used to borrow `notes`, which
+        // meant every note body was labelled with a map pin.
+        location: ev.extendedProps?.location || null,
         raw: ev,
       })
     }
@@ -421,12 +452,7 @@ export default function AgendaView({
                         {item.subtitle}
                       </span>
                     )}
-                    {item.location && (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: '0.72rem', color: 'var(--text-3)' }}>
-                        <MapPin size={9} />
-                        {item.location}
-                      </span>
-                    )}
+                    {item.location && <AgendaLocation location={item.location} />}
                     {item.professor && (
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>
                         Prof. {item.professor}
