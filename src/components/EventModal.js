@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, Trash2, RefreshCw, EyeOff, AlertTriangle, Settings2 } from 'lucide-react'
+import { X, Trash2, RefreshCw, EyeOff, AlertTriangle, Settings2, MapPin } from 'lucide-react'
 import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
 import LinkedNotes     from '@/components/LinkedNotes'
+import { describeLocation } from '@/lib/maps'
 
 // Same palette the calendar's right-click recolour popover offers, so the two
 // entry points can't drift apart.
@@ -61,6 +62,7 @@ function initState(event, initialDate, categories) {
       repeatDays: [s.getDay()],
       repeatUntil: '',
       notes: event.extendedProps?.notes || '',
+      location: event.extendedProps?.location || '',
     }
   }
 
@@ -79,6 +81,7 @@ function initState(event, initialDate, categories) {
     repeatDays: [d.getDay()],
     repeatUntil: '',
     notes: '',
+    location: '',
   }
 }
 
@@ -187,6 +190,10 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
   const [repeatDays,  setRepeatDays]  = useState(init.repeatDays)
   const [repeatUntil, setRepeatUntil] = useState(init.repeatUntil)
   const [notes,        setNotes]        = useState(init.notes)
+  const [location,     setLocation]     = useState(init.location)
+  // Only a real place earns the map shortcut beside the input — "Zoom" or "TBD"
+  // would send the user to a confidently wrong pin. See lib/maps.js.
+  const locationDesc = useMemo(() => describeLocation(location), [location])
   // If editing an event with a custom-time reminder, pre-populate the pickers
   const _existingCustomAt = event?.reminder?.at ? new Date(event.reminder.at) : null
   const [customReminderDate, setCustomReminderDate] = useState(
@@ -292,7 +299,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
       end:      endISO,
       allDay,
       color:    cat.color,
-      extendedProps: { category, notes: notes.trim() || null },
+      extendedProps: { category, notes: notes.trim() || null, location: location.trim() || null },
       reminder: reminderObj,
       recurrence: repeats
         ? { type: repeatType, days: repeatType === 'custom' ? repeatDays : [new Date(date).getDay()], until: repeatUntil }
@@ -631,11 +638,35 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
               </div>
             )}
 
+            {/* Location — its own field rather than a line inside Notes, so the
+                detail view can offer a map for it (see lib/maps.js). */}
+            <div>
+              <label className="field-label">Location <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input type="text" value={location} onChange={e => setLocation(e.target.value)}
+                       placeholder="e.g. Room 204, Tech Hall" className="field" style={{ flex: 1 }} />
+                {locationDesc.kind === 'place' && (
+                  <a href={locationDesc.url} target="_blank" rel="noopener noreferrer"
+                     title="Open in Google Maps"
+                     style={{
+                       display: 'flex', alignItems: 'center', justifyContent: 'center',
+                       padding: '0 12px', borderRadius: 10, flexShrink: 0,
+                       border: '1.5px solid var(--border)', background: 'var(--input-bg)',
+                       color: 'var(--blue)', transition: 'border-color .13s, color .13s',
+                     }}
+                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--blue)'}
+                     onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                    <MapPin size={15} />
+                  </a>
+                )}
+              </div>
+            </div>
+
             {/* Notes */}
             <div>
               <label className="field-label">Notes <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-3)' }}>(optional)</span></label>
               <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                        placeholder="Any details, location, links…" rows={2} className="field" />
+                        placeholder="Any details, links…" rows={2} className="field" />
             </div>
 
             {/* ── Conflict warnings (non-blocking) ── */}
