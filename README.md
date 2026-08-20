@@ -546,6 +546,29 @@ they were getting it wrong in the same two ways.
 - **`TimePicker` is now portaled.** It was `position: absolute` inside the trigger's wrapper, which meant any scrolling ancestor (the note editor's meta bar, modals) clipped it and it could only ever open downward, off the bottom of the screen. It now renders to `document.body` like `DatePicker`. Outside-click detection tests the popover *and* the trigger, so tapping the clock face no longer counts as clicking away
 - Recalculates on scroll (captured on **any** ancestor, not just the window), on resize, and on `visualViewport` resize — which is what actually fires when a mobile keyboard opens
 
+### 🔖 The calendar stays where you left it
+
+Leave the calendar for Notes or Tasks and come back, and it reopens on the same view and the same dates. It used to reset to today in the default view, because the calendar is unmounted whenever you switch tabs (`activeNav === 'calendar' && …`) — so everything it was showing was thrown away. Survives a page reload too.
+
+The **view** and the **date** are remembered on different terms, because they're different kinds of thing:
+
+- **The view never expires.** If you work in month view, you want month view tomorrow as well — that's a preference
+- **The date expires after 6 hours.** It's just where you happened to be looking. Restoring it across a tab switch is the entire point; restoring it when you open the app the next morning would land you on a stale week for no reason. Six hours covers an evening's planning without surviving a night's sleep
+- An explicit jump wins over both — search results and the mini-month pass a target date, and that outranks where you were last
+- In month view the remembered date is the view's `currentStart`, not the first visible cell. Month grids usually open with a few days of the previous month showing, and saving one of those would reopen on the wrong month
+- A blocked or malformed `localStorage` (private mode, embedded webviews) degrades to "no preference" rather than throwing on startup
+
+### 🌅 Focused day — 7am to 10pm
+
+A toolbar button trims the time grid to **7am–10pm** instead of all 24 hours, and flips back. The preference is remembered alongside the view.
+
+The full grid spends a third of its height on hours you're asleep for, which squeezes the part of the day you actually have events in. Focused mode gives those hours the whole viewport — `expandRows` stretches rows to fill the height, so the same events simply get more room rather than being re-laid out.
+
+- The button is labelled with **what it will do**, not what's on — *Focus 7–10* when the full grid is showing, *Full 24 h* when it isn't — so it reads correctly whichever way round it is. Abbreviated to `7–10` / `24h` on mobile
+- Only the time-grid views have a time axis, so it's inert in month view; it still records the preference for when you switch back
+- The preference is saved the moment you toggle rather than on the next navigation. Changing the slot range doesn't renavigate, so FullCalendar has no reason to fire `datesSet`, and waiting for it would lose the setting if you changed tabs straight afterwards
+- Anything starting before 7am or ending after 10pm is outside the visible window in this mode — switch back to the full grid to see it
+
 ### 📆 Mini Month Navigator *(desktop / tablet)*
 - Compact month grid in the sidebar for fast date jumping
 - Click any day to navigate the main calendar to that week
