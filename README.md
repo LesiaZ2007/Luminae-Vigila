@@ -37,6 +37,41 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Recurring event edit scope** — clicking a repeating event asks whether to edit *this occurrence only* or *all events in the series*; choosing "all" reopens the full form pre-populated with the original recurrence config (type, days, end date) and the series start date so every occurrence is regenerated
 - **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
 
+### 👁 Tap an event, get an answer — not a form
+
+Tapping or long-pressing an event opens a **detail view**. Editing is one button away inside it.
+
+Tapping used to drop straight into the edit form, which is the wrong default: most taps are *"what is this / where is it / when does it end"*, not *"change it"*. A form also answers those questions badly — a column of inputs reads as work to do rather than information to take in, and the thing you wanted is one line buried among eight controls.
+
+The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a colour picker — mobile has no right-click, so this is the only way to reach the recolour that desktop gets from the calendar's context menu.
+
+**Imported events get the same treatment.** Google and both Canvas feeds used to answer a tap with a toast, which can only ever be a line of text — yet those are precisely the events carrying a location and a description worth reading. They now open the same view, minus Edit and Delete (they belong to Google and Canvas), plus **Open in Canvas** where a deep link exists. A source badge marks them read-only, and it's suppressed when the heading already says the same thing.
+
+Two details worth knowing:
+
+- **Both event shapes are handled.** A tap from the calendar passes a FullCalendar `EventApi` where `start` is a `Date`; search results and the agenda pass the stored object where it's an ISO string. `normalizeEvent` flattens both so no branch below has to care
+- **All-day events don't render a day early.** FullCalendar stores an all-day end as the *exclusive* next midnight, and a bare `YYYY-MM-DD` parses as UTC midnight — so subtracting a day and reading local components would shift the date for anyone west of UTC. Date-only values are anchored to local noon, which survives the arithmetic in either direction
+
+### 📍 Locations open in Google Maps
+
+Any class or event with a location gets a **map button**. It appears on the event and class detail views, beside the Location input in both edit forms, and on the location line of every agenda row (which is a link, with the row's own click suppressed so tapping the address doesn't also open the event).
+
+Events now have a **real location field** rather than a line buried in Notes — which is also what makes mapping them possible. No migration was needed: events are stored as JSONB.
+
+**The interesting part is when *not* to offer a map.** Locations here are free text from three different sources — you, Google, Canvas — so they include `Room 204, Tech Hall`, `Zoom`, `https://meet.google.com/abc-defg-hij`, and `TBD`. Sending "Zoom" to Google Maps returns the company's head office in San Jose: a confidently wrong pin, which is worse than no button at all. So `lib/maps.js` classifies a string first:
+
+| Kind | Example | What you get |
+| --- | --- | --- |
+| `place` | `Room 204, Tech Hall` | **Open in Google Maps** |
+| `online` | `Zoom`, `Teams`, `meet.google.com/…` | Plain text, and **Join meeting** if a link is in there |
+| `link` | `https://example.com/lecture` | **Open link** |
+| `empty` | `TBD`, `n/a`, `—`, blank | No location row at all |
+
+- Online beats link: `Zoom — https://zoom.us/j/1` is a meeting, so the join link is the useful action, not a map
+- A room-level string still resolves usefully — Maps falls back to the building when it can't pin the room
+- Uses the documented `?api=1&query=` search form, which **hands off to the installed Maps app** on mobile instead of opening the web map in a browser tab
+- `www.example.com` gets the missing scheme added; a street number like `1600 Amphitheatre Parkway` isn't mistaken for a URL
+
 ### 🔵 Google Calendar
 - Connect **multiple Google accounts** and toggle individual calendars on or off
 - Events auto-refresh every 5 minutes

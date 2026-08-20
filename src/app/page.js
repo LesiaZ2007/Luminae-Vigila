@@ -27,6 +27,7 @@ import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mer
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
+import EventDetailModal from '@/components/EventDetailModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
@@ -133,6 +134,9 @@ export default function Home() {
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
+  // The event whose detail view is open. A tap lands here first; Edit hands off to
+  // eventModal. Null when no detail view is showing.
+  const [detailEvent,   setDetailEvent]   = useState(null)
   const [studyPlanPending, setStudyPlanPending] = useState(null) // exam event that just got saved
   const [showTodoModal,   setShowTodoModal]   = useState(false)
   const [editingTodo,     setEditingTodo]     = useState(null)
@@ -1845,90 +1849,6 @@ export default function Home() {
       setActiveNav('todos')
       return
     }
-    // Any event currently marked hidden (shown semi-transparently via "Show hidden")
-    // → offer to unhide it, for ANY source. Without this, clicking a hidden local
-    // event just reopens the edit modal whose eye button only re-hides it, so the
-    // event could never be returned to normal.
-    if (eventPrefs[info.event.id]?.hidden) {
-      const id = String(Date.now())
-      setToasts(p => [...p, {
-        id,
-        eventId: info.event.id,
-        title: info.event.title,
-        subtitle: 'This event is hidden.',
-        actions: [{ label: 'Unhide event', onClick: () => unhideEvent(info.event.id) }],
-      }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
-      return
-    }
-    // Canvas class schedule events — show info toast
-    if (info.event.extendedProps?.source === 'canvas-class') {
-      const { professor, location, courseName } = info.event.extendedProps
-      const parts = [professor && `Prof. ${professor}`, location].filter(Boolean)
-      const id = String(Date.now())
-      setToasts(p => [...p, {
-        id,
-        title: info.event.title,
-        subtitle: parts.join(' · ') || 'Class',
-      }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 8000)
-      return
-    }
-
-    // Canvas calendar events (professor-posted) — show info toast
-    if (info.event.extendedProps?.source === 'canvas-cal') {
-      const { locationName, htmlUrl, description } = info.event.extendedProps
-      const plain = description ? description.replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''
-      const subtitle = [locationName && `📍 ${locationName}`, plain].filter(Boolean).join('\n') || 'Canvas event'
-      const id = String(Date.now())
-      setToasts(p => [...p, {
-        id,
-        title: info.event.title,
-        subtitle: subtitle,
-        actions: htmlUrl ? [{ label: 'Open in Canvas', onClick: () => window.open(htmlUrl, '_blank') }] : [],
-      }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
-      return
-    }
-
-    // Canvas ICS feed events — show info toast (read-only)
-    if (info.event.extendedProps?.source === 'canvas-ics') {
-      const { location, htmlUrl, description } = info.event.extendedProps
-      const plain = description ? description.replace(/<[^>]+>/g, ' ').trim().slice(0, 120) : ''
-      const subtitle = [location && `📍 ${location}`, plain].filter(Boolean).join('\n') || 'Canvas calendar event'
-      const id = String(Date.now())
-      setToasts(p => [...p, {
-        id,
-        title: info.event.title,
-        subtitle: subtitle,
-        actions: htmlUrl ? [{ label: 'Open in Canvas', onClick: () => window.open(htmlUrl, '_blank') }] : [],
-      }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 10000)
-      return
-    }
-
-    // Google Calendar events are read-only – show a brief toast
-    if (info.event.extendedProps?.source === 'google') {
-      const desc = info.event.extendedProps.description
-      const location = info.event.extendedProps.location
-      const subtitle = [desc, location && `Location: ${location}`].filter(Boolean).join('\n') || 'Google Calendar event'
-      const currentColor = eventPrefs[info.event.id]?.color || info.event.backgroundColor || info.event.borderColor || '#4285f4'
-      const id = String(Date.now())
-      setToasts(p => [...p, {
-        id,
-        eventId: info.event.id,
-        title: info.event.title,
-        subtitle: subtitle.slice(0, 180),
-        actions: [
-          { label: 'Color', type: 'color', value: currentColor, onChange: color => setGoogleEventColor(info.event.id, color), dismiss: false },
-          eventPrefs[info.event.id]?.hidden
-            ? { label: 'Unhide event', onClick: () => unhideEvent(info.event.id) }
-            : { label: 'Hide event', variant: 'danger', onClick: () => hideEvent(info.event.id) },
-        ],
-      }])
-      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 12000)
-      return
-    }
     // Custom list due-date markers — navigate to that list
     if (info.event.extendedProps?.type === 'custom-list-due' ||
         info.event.extendedProps?.type === 'custom-list-item-due') {
@@ -1938,8 +1858,13 @@ export default function Home() {
       return
     }
 
-    setEventModal({ open: true, event: info.event, date: null })
-  }, [todos, eventPrefs, hideEvent, unhideEvent, setGoogleEventColor])
+    // Everything else — own events, Google, and all three Canvas sources — opens the
+    // detail view. Each of those used to answer a tap with its own toast, which could
+    // only ever be a line of text; they all carry a location and often a description,
+    // and those deserve the same layout as an own event. Editing, hiding, recolouring
+    // and the Canvas deep link are all reachable from in there.
+    setDetailEvent(info.event)
+  }, [todos])
 
   /* ── Merge todos + Google events → calendar events ── */
   const visibleEvents = useMemo(
@@ -2339,7 +2264,7 @@ export default function Home() {
       setSearchHighlightId(result.item.id)
       const evDate = result.item.start?.slice(0, 10)
       if (evDate) setCalendarTargetDate(evDate)
-      setEventModal({ open: true, event: result.item, date: null })
+      setDetailEvent(result.item)
       return
     }
     if (result.kind === 'google' && result.item) {
@@ -2377,7 +2302,7 @@ export default function Home() {
       setSearchHighlightId(item.id)
       const evDate = item.start?.slice(0, 10)
       if (evDate) setCalendarTargetDate(evDate)
-      setEventModal({ open: true, event: item, date: null })
+      setDetailEvent(item)
     } else if (type === 'task') {
       setActiveNav('todos')
       setEditingTodo(item)
@@ -2852,7 +2777,7 @@ export default function Home() {
                 todoCategories={todoCategories}
                 eventCategories={eventCategories}
                 customLists={customLists}
-                onEventClick={(ev) => setEventModal({ open: true, event: ev, date: null })}
+                onEventClick={(ev) => setDetailEvent(ev)}
                 onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onCanvasClick={(a) => { setEditingCanvas(a); setCanvasTodoModal(true) }}
                 onCustomListClick={(listId) => { setActiveNav('todos'); setActiveListId(listId) }}
@@ -3096,6 +3021,22 @@ export default function Home() {
       )}
 
       {/* ── Modals ── */}
+      {detailEvent && (
+        <EventDetailModal
+          event={detailEvent}
+          categories={eventCategories}
+          colorOverride={eventPrefs[detailEvent.id]?.color ?? null}
+          hidden={!!eventPrefs[detailEvent.id]?.hidden}
+          onEdit={ev => { setDetailEvent(null); setEventModal({ open: true, event: ev, date: null }) }}
+          onDelete={deleteEvent}
+          onHide={hideEvent}
+          onUnhide={unhideEvent}
+          onRecolor={handleRecolorEvent}
+          allNotes={notes}
+          onOpenNote={openNoteById}
+          onClose={() => setDetailEvent(null)}
+        />
+      )}
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
                     categories={eventCategories} onCategoriesChange={setEventCategories}

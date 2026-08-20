@@ -6,11 +6,12 @@
  * throughout the semester — independently of Canvas API connection.
  */
 
-import { useState, useEffect } from 'react'
-import { X, Trash2 } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { X, Trash2, MapPin } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import Select     from '@/components/Select'
+import { describeLocation } from '@/lib/maps'
 
 const DAY_LABELS  = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -28,6 +29,7 @@ export default function ClassScheduleModal({ editClass, onSave, onDelete, onClos
   const [section,        setSection]        = useState(editClass?.section         || '')
   const [professor,      setProfessor]      = useState(editClass?.professor       || '')
   const [location,       setLocation]       = useState(editClass?.location        || '')
+  const locationDesc = useMemo(() => describeLocation(location), [location])
   const [days,           setDays]           = useState(editClass?.days            || [1, 3, 5]) // MWF default
   const [startTime,      setStartTime]      = useState(editClass?.startTime       || '09:00')
   const [endTime,        setEndTime]        = useState(editClass?.endTime         || '09:50')
@@ -153,10 +155,28 @@ export default function ClassScheduleModal({ editClass, onSave, onDelete, onClos
             </div>
           </div>
 
-          {/* Location */}
+          {/* Location — with a shortcut to the map, so a room you have not walked to
+              yet can be checked without leaving the form. Only shown for somewhere
+              actually mappable (see lib/maps.js). */}
           <div>
             <label className="field-label">Location <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-3)' }}>(optional)</span></label>
-            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Room 204, Tech Hall" className="field" />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Room 204, Tech Hall" className="field" style={{ flex: 1 }} />
+              {locationDesc.kind === 'place' && (
+                <a href={locationDesc.url} target="_blank" rel="noopener noreferrer"
+                   title="Open in Google Maps"
+                   style={{
+                     display: 'flex', alignItems: 'center', justifyContent: 'center',
+                     padding: '0 12px', borderRadius: 10, flexShrink: 0,
+                     border: '1.5px solid var(--border)', background: 'var(--input-bg)',
+                     color: 'var(--blue)', transition: 'border-color .13s',
+                   }}
+                   onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--blue)'}
+                   onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                  <MapPin size={15} />
+                </a>
+              )}
+            </div>
           </div>
 
           {/* Canvas Course link (only shown when Canvas is connected) */}
