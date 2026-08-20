@@ -1045,19 +1045,31 @@ export default function Home() {
   }, [])
 
   /* ── Event CRUD ── */
+
+  /**
+   * Stamp an event as just-written.
+   *
+   * The sync merge is last-write-wins on `updatedAt`, and events were the one
+   * collection that never set it — todos, notes and study sessions all did. With no
+   * timestamp on either side the merge fell back to "local wins", so an event edited
+   * on one device lost to the other device's untouched copy *and* got overwritten in
+   * the cloud by it. Every write below goes through here.
+   */
+  const touchEvent = useCallback(e => ({ ...e, updatedAt: new Date().toISOString() }), [])
+
   const saveEvent = useCallback((ev, scope = 'single') => {
     if (scope === 'all') {
       // "Edit all in series": delete every existing instance then re-expand from scratch
       const groupId = ev.recurrenceGroupId
       if (!groupId) return
       const baseEvent = { ...ev, id: groupId }
-      const newExpanded = expandRecurring(baseEvent)
+      const newExpanded = expandRecurring(baseEvent).map(touchEvent)
       setEvents(prev => [
         ...prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== groupId),
         ...newExpanded,
       ])
     } else {
-      const expanded = expandRecurring(ev)
+      const expanded = expandRecurring(ev).map(touchEvent)
       const isNewEvent = !ev.id || !events.some(e => e.id === ev.id)
       if (!isNewEvent) {
         // Moving an exam drags its auto-generated study sessions along, keeping
@@ -1074,7 +1086,7 @@ export default function Home() {
         setEvents(prev => prev.map(e => {
           if (e.id === ev.id) return expanded[0]
           if (dayDiff !== 0 && e.extendedProps?.studyPlanOf === ev.id) {
-            return { ...e, start: shiftIsoDays(e.start, dayDiff), end: shiftIsoDays(e.end, dayDiff) }
+            return touchEvent({ ...e, start: shiftIsoDays(e.start, dayDiff), end: shiftIsoDays(e.end, dayDiff) })
           }
           return e
         }))
@@ -1089,7 +1101,7 @@ export default function Home() {
               dismiss: true,
               onClick: () => setEvents(prev => prev.map(e => {
                 const o = originals.find(x => x.id === e.id)
-                return o ? { ...e, start: o.start, end: o.end } : e
+                return o ? touchEvent({ ...e, start: o.start, end: o.end }) : e
               })),
             }],
           )
@@ -1116,7 +1128,7 @@ export default function Home() {
         setStudyPlanPending(expanded[0] ?? { ...ev, id: ev.id || String(Date.now()) })
       }
     }
-  }, [events, pushToast])
+  }, [events, pushToast, touchEvent])
 
   const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
     const matches = e => (deleteAll && groupId)

@@ -86,6 +86,34 @@ describe('mergeWithTombstones — the resurrection bug', () => {
     expect(merged[0].title).toBe('local')
   })
 
+  // The bug this pair pins down: an event edited on the laptop uploaded fine, but the
+  // phone's untouched copy carried no updatedAt, won the merge as "local", and got
+  // pushed back over the edit. Only one side having a stamp means that side is the one
+  // that was touched.
+  it('a stamped cloud edit beats an unstamped local copy', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 'a', title: 'edited on laptop', updatedAt: '2026-08-19T10:00:00.000Z' }],
+      [{ id: 'a', title: 'stale on phone' }],
+    )
+    expect(merged[0].title).toBe('edited on laptop')
+  })
+
+  it('a stamped local edit still beats an unstamped cloud copy', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 'a', title: 'stale in cloud' }],
+      [{ id: 'a', title: 'edited here', updatedAt: '2026-08-19T10:00:00.000Z' }],
+    )
+    expect(merged[0].title).toBe('edited here')
+  })
+
+  it('an unstamped cloud row does not resurrect a stamped local tombstone', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 'a', title: 'still here in cloud' }],
+      [softDelete({ id: 'a' }, '2026-08-19T10:00:00.000Z')],
+    )
+    expect(isDeleted(merged[0])).toBe(true)
+  })
+
   it('skips entries without an id instead of keying them as undefined', () => {
     const merged = mergeWithTombstones([{ title: 'no id' }], [{ id: 'a' }])
     expect(merged.map(m => m.id)).toEqual(['a'])
