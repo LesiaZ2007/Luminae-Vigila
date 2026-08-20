@@ -234,6 +234,22 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
 - **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.
 
+### 💸 Sync writes only what changed
+
+Neon bills for **compute time**, and the sync was spending a lot of it saying nothing.
+
+`POST /api/sync` answers every array it receives with `DELETE FROM <table> WHERE user_id = …` followed by one `INSERT` per row. The client sent all nine collections on every save — so **renaming one todo deleted and reinserted every event, note, custom list and category the account owned.** Hundreds of row writes to record a change to one.
+
+The handler already ignores any key missing from the body, so the fix was entirely client-side: [`lib/syncDelta.js`](src/lib/syncDelta.js) fingerprints each collection with `JSON.stringify`, and the push sends only the ones that no longer match the last push the server *accepted*.
+
+- **Accepted, not attempted.** The fingerprint is recorded on `res.ok` only. Optimistically recording it would make a failed push permanent — that collection would look unchanged from then on and never retry
+- **Order counts as a change.** Task order is stored as array position and is user-visible, so a reorder is a real edit. Stringify comparison also errs toward sending, which is the safe direction: a missed change is data loss, an extra send is only cost
+- **The initial merge still sends everything** — it's the first thing the server sees that session. Its fingerprint is recorded so the next push is a delta
+- An unserialisable value is treated as always-changed rather than silently dropped from every future push
+- A re-render that touched no data now sends **nothing**; it used to cost a full rewrite of all nine tables
+
+**Idle back-off on the pull side.** A left-open tab asked the database the same question every 2 minutes forever. Since the bill is compute *time*, the cost of an idle tab was an endpoint that never got to sleep. The poll now doubles its gap each time a pull finds nothing new, up to **10 minutes**, and snaps back to 2 minutes the moment a pull finds something or you refocus the tab — so an active phone-then-laptop handoff is as responsive as before. It's a self-rescheduling timeout rather than a fixed interval, which is what lets the gap grow.
+
 ### 🔐 Sign In *(optional)*
 - **Local-first by default** — events and tasks live in your browser's local storage, no account needed
 - **Sign in with Google** to sync your identity across devices
