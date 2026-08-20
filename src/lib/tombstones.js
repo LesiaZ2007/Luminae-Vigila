@@ -71,6 +71,14 @@ export function purgeTombstones(items, now = Date.now()) {
  * When neither side carries a timestamp we fall back to local — that preserves
  * offline edits on legacy rows written before updatedAt was stamped. A tombstone
  * always carries one (see softDelete), so a delete never loses to a legacy row.
+ *
+ * When exactly one side carries a timestamp, that side wins regardless of which
+ * side it is. Every mutation stamps `updatedAt`, so a stamped row is one that was
+ * touched and an unstamped row is one that never was — the stamp is the newer
+ * information. Falling back to local here instead is what caused edits to vanish
+ * between devices: an event edited on a laptop uploaded fine, but the phone's
+ * untouched copy of it had no timestamp, won the merge as "local", and was pushed
+ * straight back over the top of the edit.
  */
 export function mergeWithTombstones(cloudArr, localArr) {
   const out = new Map((cloudArr ?? []).filter(x => x?.id).map(x => [x.id, x]))
@@ -82,9 +90,13 @@ export function mergeWithTombstones(cloudArr, localArr) {
 
     const localT = Date.parse(item.updatedAt ?? '')
     const cloudT = Date.parse(existing.updatedAt ?? '')
+    const localHas = !Number.isNaN(localT)
+    const cloudHas = !Number.isNaN(cloudT)
 
-    if (!Number.isNaN(localT) && !Number.isNaN(cloudT)) {
+    if (localHas && cloudHas) {
       out.set(item.id, localT >= cloudT ? item : existing)
+    } else if (localHas !== cloudHas) {
+      out.set(item.id, localHas ? item : existing)
     } else if (isDeleted(existing) || isDeleted(item)) {
       // One side is a tombstone but timestamps are unusable — prefer the delete.
       // Wrongly resurrecting something the user removed is the worse failure.

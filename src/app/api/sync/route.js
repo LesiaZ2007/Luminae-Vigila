@@ -28,6 +28,25 @@ import sql                   from '@/lib/db'
  * none. A fresh database still self-heals, which was the point of the pattern.
  */
 const REAP_EVERY_MS = 60 * 60 * 1000 // 1 hour
+
+/**
+ * Give a row an `updatedAt` inside its JSONB if it has none.
+ *
+ * The sync merge is last-write-wins on `updatedAt`, and a row without one is
+ * unresolvable — the merge has to fall back to a guess. Events predating the client
+ * stamping that field are all in that state, so they stay ambiguous forever unless
+ * something writes a timestamp once.
+ *
+ * This deliberately does *not* read the row's `updated_at` column, even though one
+ * exists. POST replaces every row on every sync, so that column means "time of the
+ * last full sync", not "time this event was edited" — an unrelated push from another
+ * device would refresh it and let a stale copy outrank a real edit. Stamping at
+ * insert instead freezes a value that then round-trips through the client unchanged,
+ * so only an actual edit moves it.
+ */
+function withFallbackTimestamp(item, nowIso) {
+  return item.updatedAt ? item : { ...item, updatedAt: nowIso }
+}
 let lastReapAt = 0
 
 function ensureSyncTables() {
@@ -122,12 +141,14 @@ export async function POST(request) {
   // transaction. If anything fails mid-way, the entire write is rolled back — no
   // partial data wipes. Only categories present in the request body are included.
   const queries = []
+  const nowIso  = new Date().toISOString()
 
   if (Array.isArray(events)) {
     queries.push(sql`DELETE FROM events WHERE user_id = ${userId}`)
     for (const ev of events) {
       if (!ev?.id) continue
-      queries.push(sql`INSERT INTO events (id, user_id, data) VALUES (${ev.id}, ${userId}, ${JSON.stringify(ev)})`)
+      const row = withFallbackTimestamp(ev, nowIso)
+      queries.push(sql`INSERT INTO events (id, user_id, data) VALUES (${ev.id}, ${userId}, ${JSON.stringify(row)})`)
     }
   }
 
@@ -135,7 +156,8 @@ export async function POST(request) {
     queries.push(sql`DELETE FROM todos WHERE user_id = ${userId}`)
     for (const td of todos) {
       if (!td?.id) continue
-      queries.push(sql`INSERT INTO todos (id, user_id, data) VALUES (${td.id}, ${userId}, ${JSON.stringify(td)})`)
+      const row = withFallbackTimestamp(td, nowIso)
+      queries.push(sql`INSERT INTO todos (id, user_id, data) VALUES (${td.id}, ${userId}, ${JSON.stringify(row)})`)
     }
   }
 
