@@ -24,6 +24,7 @@ import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
+import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
@@ -89,6 +90,13 @@ export const DEFAULT_EVENT_CATEGORIES = [
    handoff feeling immediate. */
 const AUTO_SYNC_ACTIVE_MS    = 2 * 60 * 1000  // poll while visible
 const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus triggers one
+
+/* Ceiling for the idle back-off below. A left-open tab that nobody is editing on
+   another device asked the database the same question every 2 minutes forever, and
+   Neon charges for compute time, not for queries — so the cost of an idle tab was a
+   compute endpoint that never got to sleep. Ten minutes is still well inside "I picked
+   my phone up in class and my laptop is open at home". */
+const AUTO_SYNC_IDLE_MAX_MS  = 10 * 60 * 1000
 
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
@@ -282,6 +290,14 @@ export default function Home() {
   const hasMergedCloud  = useRef(false)   // true only after initial cloud pull SUCCEEDS
   const mergeStarted    = useRef(false)   // an attempt is in flight right now
   const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+  /* Fingerprint of the last push the server accepted, so the next one can send only
+     what actually changed. POST /api/sync answers every array it receives with a
+     DELETE of that table followed by one INSERT per row, so sending all nine
+     collections every time meant renaming one todo rewrote every event and note the
+     account owned — hundreds of row writes to record one change, all of it Neon
+     compute we pay for. Declared up here because the initial merge's push-back seeds
+     it, and that runs earlier in the file. See lib/syncDelta.js. */
+  const lastPushedRef   = useRef(null)
   const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
 
   // True once the initial merge has failed enough times to be worth admitting to.
@@ -469,21 +485,28 @@ export default function Home() {
         const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
         const newTodos  = mergedTodos.filter(t => !cloudTodoIds.has(t.id)).length
 
+        // The one push that legitimately sends everything: the merged result is the
+        // first thing the server has seen this session. Its fingerprint is recorded so
+        // the debounced push that follows sends only what changes *after* this.
+        const mergedPayload = {
+          events:         mergedEvents,
+          todos:          mergedTodos,
+          todoCategories: mergedCats,
+          eventCategories: mergedEvCats,
+          classSchedule:  mergedClasses,
+          eventPrefs:     mergedPrefs,
+          studySessions:  mergedSessions,
+          customLists:    mergedLists,
+          notes:          mergedNotes,
+        }
+        const mergedFingerprint = fingerprint(mergedPayload)
+
         fetch('/api/sync', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            events:         mergedEvents,
-            todos:          mergedTodos,
-            todoCategories: mergedCats,
-            eventCategories: mergedEvCats,
-            classSchedule:  mergedClasses,
-            eventPrefs:     mergedPrefs,
-            studySessions:  mergedSessions,
-            customLists:    mergedLists,
-            notes:          mergedNotes,
-          }),
-        }).then(() => {
+          body: JSON.stringify(mergedPayload),
+        }).then((res) => {
+          if (res.ok) lastPushedRef.current = mergedFingerprint
           if (newEvents + newTodos > 0) {
             pushToast(
               'Synced to your account',
@@ -554,33 +577,51 @@ export default function Home() {
     try { await fetch('/api/google/mirror', { method: 'POST' }) } catch {}
   }, [currentUser])
 
+  /** Push whatever changed since the last accepted push. Returns a promise. */
+  const pushChanges = useCallback(() => {
+    const { body, sent, isEmpty } = buildSyncDelta({
+      events:         eventsRaw,
+      todos:          todosRaw,
+      todoCategories,
+      eventCategories,
+      classSchedule:  canvasClasses,
+      eventPrefs,
+      studySessions,
+      customLists:    customListsRaw,
+      notes,
+    }, lastPushedRef.current)
+
+    // Nothing to say. An effect can re-run for reasons that never touched the data
+    // (a re-render, a dependency identity change), and those used to cost a full
+    // rewrite of every table.
+    if (isEmpty) return Promise.resolve(false)
+
+    return fetch('/api/sync', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(res => {
+      // Only remember it once the server has taken it. Recording the fingerprint
+      // optimistically would make a failed push permanent: the collection would look
+      // unchanged from then on and never be retried.
+      if (res.ok) lastPushedRef.current = sent
+      return res.ok
+    })
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
-  // Pushes the full local state to the DB 2 seconds after any change.
+  // Pushes whatever changed 2 seconds after any change.
   // Only runs after the initial merge is complete (hasMergedCloud guard).
   useEffect(() => {
     if (!currentUser || !hasMergedCloud.current) return
     clearTimeout(syncTimerRef.current)
     syncTimerRef.current = setTimeout(() => {
-      fetch('/api/sync', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          events:         eventsRaw,
-          todos:          todosRaw,
-          todoCategories,
-          eventCategories,
-          classSchedule:  canvasClasses,
-          eventPrefs,
-          studySessions,
-          customLists:    customListsRaw,
-          notes,
-        }),
-      })
+      pushChanges()
         // Mirror out to Google afterwards, never before: the mirror reads the app's
         // data from the database, so running it first would publish the previous
         // state. Rate-limited and fire-and-forget — a glance surface being a few
         // minutes stale is fine, and a Google outage must not affect saving.
-        .then(() => maybeMirrorToGoogle())
+        .then(pushed => { if (pushed) maybeMirrorToGoogle() })
         .catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
@@ -591,12 +632,8 @@ export default function Home() {
   // online, rather than waiting for the next state change to wake the debounce.
   const flushSyncNow = useCallback(() => {
     if (!currentUser || !hasMergedCloud.current) return
-    fetch('/api/sync', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ events: eventsRaw, todos: todosRaw, todoCategories, eventCategories, classSchedule: canvasClasses, eventPrefs, studySessions, customLists: customListsRaw, notes }),
-    }).catch(() => {})
-  }, [currentUser, eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+    pushChanges().catch(() => {})
+  }, [currentUser, pushChanges])
 
   /* ── Background auto-sync ─────────────────────────────────────────────────
      The debounced effect above only *pushes*. Without a periodic pull, edits
@@ -611,18 +648,22 @@ export default function Home() {
      Deliberately quiet — no toast. A background sync the user didn't ask for
      shouldn't interrupt them; the manual refresh in Settings still confirms. */
   const autoSyncInFlight = useRef(false)
+  /* Raw text of the last cloud payload, used only to tell a pull that changed
+     something from one that did not. */
+  const lastCloudTextRef = useRef(null)
 
   const autoSync = useCallback(async () => {
-    if (!currentUser || !hasMergedCloud.current) return
-    if (autoSyncInFlight.current) return                       // don't stack runs
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (!currentUser || !hasMergedCloud.current) return false
+    if (autoSyncInFlight.current) return false                 // don't stack runs
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false
 
     autoSyncInFlight.current = true
     try {
       const res = await fetch('/api/sync')
-      if (!res.ok) return
-      const cloud = await res.json()
-      if (!cloud) return
+      if (!res.ok) return false
+      const text  = await res.text()
+      const cloud = text ? JSON.parse(text) : null
+      if (!cloud) return false
 
       setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
       setTodos(local  => purgeTombstones(mergeWithTombstones(cloud.todos,  local)))
@@ -641,8 +682,17 @@ export default function Home() {
         return merged.length > 0 ? merged : local
       })
       setEventPrefs(local => ({ ...(cloud.eventPrefs ?? {}), ...local }))
+
+      /* Did that pull actually bring anything? Compared as the raw response text
+         rather than per-collection: this only decides how soon to ask again, so a
+         cheap whole-payload comparison is the right precision. Drives the back-off
+         in the polling effect. */
+      const changed = text !== lastCloudTextRef.current
+      lastCloudTextRef.current = text
+      return changed
     } catch {
       // Offline or a transient failure — the next tick tries again.
+      return false
     } finally {
       autoSyncInFlight.current = false
     }
@@ -655,12 +705,27 @@ export default function Home() {
     // nothing to refresh and polling it just burns battery and DB requests —
     // the visibilitychange handler below covers the moment it matters, which is
     // when you come back to it.
+    /* A self-rescheduling timeout rather than a fixed interval, so the gap can grow
+       while nothing is changing. Every pull that finds something resets it to the
+       base rate, so an active handoff stays as responsive as it was. */
     let id = null
-    const startPolling = () => { if (!id) id = setInterval(autoSync, AUTO_SYNC_ACTIVE_MS) }
-    const stopPolling  = () => { if (id) { clearInterval(id); id = null } }
+    let delay = AUTO_SYNC_ACTIVE_MS
+
+    const tick = async () => {
+      const changed = await autoSync()
+      delay = changed
+        ? AUTO_SYNC_ACTIVE_MS
+        : Math.min(delay * 2, AUTO_SYNC_IDLE_MAX_MS)
+      if (id !== null) id = setTimeout(tick, delay)
+    }
+
+    const startPolling = () => { if (id === null) id = setTimeout(tick, delay) }
+    const stopPolling  = () => { if (id !== null) { clearTimeout(id); id = null } }
 
     let lastSync = Date.now()
-    const syncNow = () => { lastSync = Date.now(); autoSync() }
+    /* An explicit catch-up means the user is back and probably expects to see the
+       other device's edits, so the back-off starts over. */
+    const syncNow = () => { lastSync = Date.now(); delay = AUTO_SYNC_ACTIVE_MS; autoSync() }
 
     function onVisibilityChange() {
       if (document.visibilityState === 'visible') {
