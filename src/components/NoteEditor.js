@@ -390,7 +390,7 @@ export default function NoteEditor({
         <EditorContent editor={editor} />
       </div>
 
-      {/* ── Meta bar: colour, tags, reminder, link, save state ─────────── */}
+      {/* ── Meta bar: color, tags, reminder, link, save state ─────────── */}
       <div style={{
         flexShrink: 0, borderTop: '1px solid var(--border)',
         padding: isMobile ? '8px 12px' : '9px 16px',
@@ -428,11 +428,11 @@ export default function NoteEditor({
           />
         </div>
 
-        {/* Colour swatches + actions */}
+        {/* Color swatches + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 4 }}>
             {NOTE_COLORS.map(c => (
-              <button key={c} type="button" title="Note colour"
+              <button key={c} type="button" title="Note color"
                       onClick={() => onChange({ color: c })}
                       style={{
                         width: 15, height: 15, borderRadius: '50%', background: c, padding: 0,
