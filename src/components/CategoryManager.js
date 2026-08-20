@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * CategoryManager — add / rename / recolour / delete categories.
+ * CategoryManager — add / rename / recolor / delete categories.
  *
  * Used for both kinds of category:
  *   • Task categories  (todoCategories)  — tag a to-do

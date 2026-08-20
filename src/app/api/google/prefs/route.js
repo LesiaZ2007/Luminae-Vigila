@@ -1,5 +1,5 @@
 /**
- * GET  /api/google/prefs — this user's per-calendar visibility and colour choices.
+ * GET  /api/google/prefs — this user's per-calendar visibility and color choices.
  * PUT  /api/google/prefs — replace them.
  *
  * ## Keyed by Google account *email*, not by account id

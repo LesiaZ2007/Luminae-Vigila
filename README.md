@@ -39,11 +39,13 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 👁 Tap an event, get an answer — not a form
 
-Tapping or long-pressing an event opens a **detail view**. Editing is one button away inside it.
+Tapping or long-pressing an event opens a **detail view**, on every device. Editing is one button away inside it.
+
+On mobile a tap used to only lift the event to the front of its overlap column — opening the edit form on a stray tap was worse than opening nothing, so reading a buried event was all a tap could safely do. The detail view answers *"what is this"* better than a raised block did, so the tap now goes there and the raise mechanism is gone. Long-press still works and still buzzes: a block squeezed into a narrow overlap column is easier to long-press than to tap cleanly.
 
 Tapping used to drop straight into the edit form, which is the wrong default: most taps are *"what is this / where is it / when does it end"*, not *"change it"*. A form also answers those questions badly — a column of inputs reads as work to do rather than information to take in, and the thing you wanted is one line buried among eight controls.
 
-The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a colour picker — mobile has no right-click, so this is the only way to reach the recolour that desktop gets from the calendar's context menu.
+The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a color picker — mobile has no right-click, so this is the only way to reach the recolor that desktop gets from the calendar's context menu.
 
 **Imported events get the same treatment.** Google and both Canvas feeds used to answer a tap with a toast, which can only ever be a line of text — yet those are precisely the events carrying a location and a description worth reading. They now open the same view, minus Edit and Delete (they belong to Google and Canvas), plus **Open in Canvas** where a deep link exists. A source badge marks them read-only, and it's suppressed when the heading already says the same thing.
 
@@ -54,7 +56,7 @@ Two details worth knowing:
 
 ### 📍 Locations open in Google Maps
 
-Any class or event with a location gets a **map button**. It appears on the event and class detail views, beside the Location input in both edit forms, and on the location line of every agenda row (which is a link, with the row's own click suppressed so tapping the address doesn't also open the event).
+Any class or event with a location gets a **map button**, sitting on the same line as the address — the two belong together, and a full-width button underneath pushed everything after it down for something one tap wide. It reads `Maps` on screen to fit beside the text, while the full "Open in Google Maps" stays as its tooltip and accessible name. It appears on the event and class detail views, beside the Location input in both edit forms, and on the location line of every agenda row (which is a link, with the row's own click suppressed so tapping the address doesn't also open the event).
 
 Events now have a **real location field** rather than a line buried in Notes — which is also what makes mapping them possible. No migration was needed: events are stored as JSONB.
 
@@ -83,7 +85,7 @@ Events now have a **real location field** rather than a line buried in Notes —
 Two problems with one shared root cause: preferences were keyed to an account id that
 changes, and never left the browser.
 
-**Hidden calendars now follow the account, not the browser.** Visibility and colour
+**Hidden calendars now follow the account, not the browser.** Visibility and color
 choices live in `google_calendar_prefs`, keyed by **Google account email**. Previously
 they were `localStorage` only, keyed by the account's UUID — and disconnecting an
 account deletes its row, so re-adding the same account minted a *new* UUID and every
@@ -314,14 +316,14 @@ Lightweight standalone checklists that live alongside your regular To-Do tasks �
 A full rich-text notepad, in the same place as everything else. Press `W` anywhere in the app to start writing.
 
 - **Dedicated Notes tab** — sits between To-Do and Search in the sidebar and mobile bottom nav. Two panes on desktop (note list left, editor right); on mobile the list fills the tab and selecting a note pushes the editor over it, with an **All notes** back button.
-- **Rich text via Tiptap** — bold, italic, underline, strikethrough, **multi-colour highlight**, H1/H2, bullet lists, numbered lists, checkbox lists, blockquotes, inline code, and undo/redo. The toolbar is custom-built with the app's own CSS variables, so notes match luminaeVigila in every accent theme and in dark mode.
+- **Rich text via Tiptap** — bold, italic, underline, strikethrough, **multi-color highlight**, H1/H2, bullet lists, numbered lists, checkbox lists, blockquotes, inline code, and undo/redo. The toolbar is custom-built with the app's own CSS variables, so notes match luminaeVigila in every accent theme and in dark mode.
 - **Markdown shortcuts while typing** — `**bold**`, `*italic*`, `` `code` ``, `# heading`, `> quote`, `- ` bullet, `1. ` numbered, `[] ` checkbox, and `==highlight==` all convert as you type. You never have to reach for the toolbar.
 - **Highlight palette** — six pastel swatches (yellow, green, blue, pink, orange, purple) chosen to stay readable in both light and dark themes, plus a "remove highlight" option. Click the highlighter to open the swatch popover. The popover renders through a `createPortal` layer anchored to the button's viewport rect, because the toolbar scrolls horizontally (`overflow-x: auto`) and would otherwise clip it. Closes on outside click or Escape.
 - **Titles** — type an explicit title, or leave it blank and the first line of the body becomes the title automatically.
 - **Star and pin** — starring marks a favourite (filterable via the **Starred** tab); pinning sorts a note to the very top. They're independent. Sort order is pinned → starred → most recently updated.
-- **Tags** — add free-form tags per note; tag chips appear above the list and filter it on click. Tags are case-insensitively de-duplicated. Each note's own tags also render as pills on its row in the list (first 3, then a `+N` counter), tinted with that note's accent colour.
+- **Tags** — add free-form tags per note; tag chips appear above the list and filter it on click. Tags are case-insensitively de-duplicated. Each note's own tags also render as pills on its row in the list (first 3, then a `+N` counter), tinted with that note's accent color.
 - **Motion** — rows slide in on creation and when filtering, and collapse horizontally on delete so removal reads as removal rather than a jump cut (the parent's delete is held ~200 ms so there's something left to animate). The panel and editor fade in on open, and the editor is keyed on note id so the fade replays per note. All of it is disabled under `prefers-reduced-motion`.
-- **Per-note colour** — eight accent swatches (same palette as Custom Lists) tint the note's spine in the list and the bar beside its title.
+- **Per-note color** — eight accent swatches (same palette as Custom Lists) tint the note's spine in the list and the bar beside its title.
 - **Reminders** — set an absolute date + time on any note using the app's styled `<DatePicker>` / `<TimePicker>`. Reminders fire as an in-app toast while the tab is open **and** as a Web Push notification when the app is closed, via the existing `/api/push/reminders` cron (de-duplicated through the `sent_reminders` table like event and task reminders). The push body is a plain-text snippet of the note.
 - **Images** — **paste** a screenshot straight into the body (Ctrl/Cmd+V), **drag and drop** a file onto the editor, or use the 🖼 toolbar button (the button is there for mobile, where neither of the other two is comfortable). Multiple files at once are uploaded in the order you picked them, and a spinner in the toolbar tracks them.
   - **Resized in the browser first.** Longest edge is capped at 1600 px and the result is re-encoded to WebP (JPEG where WebP isn't supported) at quality 0.85. A 4 MB phone photo lands at 150–400 KB. Images already under 320 KB pass through untouched rather than being re-compressed for nothing, and **GIFs are never re-encoded** because a canvas round-trip would flatten the animation away.
@@ -560,11 +562,12 @@ The **view** and the **date** are remembered on different terms, because they're
 
 ### 🌅 Focused day — 7am to 10pm
 
-A toolbar button trims the time grid to **7am–10pm** instead of all 24 hours, and flips back. The preference is remembered alongside the view.
+A toolbar button on desktop trims the time grid to **7am–10pm** instead of all 24 hours, and flips back. The preference is remembered alongside the view.
 
 The full grid spends a third of its height on hours you're asleep for, which squeezes the part of the day you actually have events in. Focused mode gives those hours the whole viewport — `expandRows` stretches rows to fill the height, so the same events simply get more room rather than being re-laid out.
 
-- The button is labelled with **what it will do**, not what's on — *Focus 7–10* when the full grid is showing, *Full 24 h* when it isn't — so it reads correctly whichever way round it is. Abbreviated to `7–10` / `24h` on mobile
+- The button is labelled with **what it will do**, not what's on — *Focus 7–10* when the full grid is showing, *Full 24 h* when it isn't — so it reads correctly whichever way round it is
+- **Desktop only.** On mobile the toolbar is already three view buttons wide in a phone-width row, and a fourth made it a cramped strip of abbreviations. A preference set on desktop still applies if the same browser is used, but `localStorage` is per-device, so phones stay on the full grid
 - Only the time-grid views have a time axis, so it's inert in month view; it still records the preference for when you switch back
 - The preference is saved the moment you toggle rather than on the next navigation. Changing the slot range doesn't renavigate, so FullCalendar has no reason to fire `datesSet`, and waiting for it would lose the setting if you changed tabs straight afterwards
 - Anything starting before 7am or ending after 10pm is outside the visible window in this mode — switch back to the full grid to see it
@@ -661,7 +664,7 @@ The accent is applied via a `data-accent` attribute on `<html>` and saved to `lo
 Switching appearance eases the whole app from one palette to the other over 320 ms instead of snapping. Light, **System**, and Dark sit in the same segmented control in Settings.
 
 - **Why it needed doing at all** — the theme is a swap of CSS custom properties on `<html>`, and custom properties are not animatable. Every surface, border, and label repainted in a single frame, which reads as a flash rather than a mode change. Dark mode inverts nearly the entire viewport, so it is the one palette change big enough for that to hurt
-- **The transition is temporary, not permanent** — a standing `transition` on background and text colour would animate the first paint after hydration (the app would fade in from unstyled on every load) and would put a 320 ms tail on every ordinary hover and focus change for the rest of the session. Instead a `theme-transition` class goes onto `<html>` for the duration of the switch and comes straight back off
+- **The transition is temporary, not permanent** — a standing `transition` on background and text color would animate the first paint after hydration (the app would fade in from unstyled on every load) and would put a 320 ms tail on every ordinary hover and focus change for the rest of the session. Instead a `theme-transition` class goes onto `<html>` for the duration of the switch and comes straight back off
 - **`!important`, deliberately** — for those few hundred milliseconds the rule has to beat the per-component `transition` declarations scattered through the app. It is scoped to a class that only exists mid-switch, so nothing else pays for it
 - **Only cheap properties animate** — `background-color`, `background-image`, `border-color`, `color`, `fill`, `stroke`. `box-shadow` and `transform` are left out on purpose: the calendar grid can hold thousands of nodes, and animating shadow across all of them at once is the one thing that would drop frames
 - **`prefers-reduced-motion` gets the instant swap** — a full-page cross-fade is precisely the large-area movement that setting exists to suppress. The theme still changes; it just changes immediately
@@ -1120,7 +1123,7 @@ Ranked by effect, since only the first one really moves compute-hours:
 | Streak ledger | Browser `localStorage` (`lv-streak`) |
 | Digest opt-in pref (canonical) | Neon DB — `users.digest_enabled` (per account, read via `GET /api/push/digest-pref`) |
 | Google Calendar tokens | Neon DB, per user |
-| Google calendar show/hide + colours | Neon DB — `google_calendar_prefs`, keyed by **email** so they survive a reconnect and follow you across devices. `localStorage` (`lv-google-prefs`) is a read cache |
+| Google calendar show/hide + colors | Neon DB — `google_calendar_prefs`, keyed by **email** so they survive a reconnect and follow you across devices. `localStorage` (`lv-google-prefs`) is a read cache |
 | Canvas credentials | Neon DB, per user |
 | Push subscriptions | Neon DB, per user + device |
 | User accounts | Neon DB — created on first sign-in |

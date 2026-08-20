@@ -13,12 +13,12 @@
  * Canvas events used to answer a tap with a toast — fine for a line of text, but they
  * carry locations and descriptions that deserve the same layout as an own event. The
  * read-only ones simply have no Edit button, and their source-specific actions (open
- * in Canvas, recolour, hide) live in the same footer as everything else.
+ * in Canvas, recolor, hide) live in the same footer as everything else.
  *
  * Props:
  *   event         — FullCalendar EventApi *or* a plain stored event object
- *   categories    — event categories, for the coloured category chip
- *   colorOverride — per-event colour from eventPrefs, if the user set one
+ *   categories    — event categories, for the colored category chip
+ *   colorOverride — per-event color from eventPrefs, if the user set one
  *   hidden        — whether this event is currently hidden
  *   onEdit, onDelete, onClose
  *   onHide, onUnhide, onRecolor — omit to leave the action out
@@ -252,17 +252,24 @@ export default function EventDetailModal({
             </div>
           )}
 
-          {/* Where — the map action is the point of this block */}
+          {/* Where — the action sits on the same line as the address rather than
+              under it. The two belong together, and a full-width button below pushed
+              everything after it down for something that is one tap wide. The address
+              takes the remaining width and wraps; the button never shrinks. */}
           {loc.kind !== 'empty' && (
             <div>
               <Label icon={loc.kind === 'online' ? Video : MapPin}>Where</Label>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: 8 }}>{loc.text}</div>
-              {loc.kind === 'place' && (
-                <ActionLink href={loc.url} accent={accent} icon={MapPin} label="Open in Google Maps" />
-              )}
-              {loc.kind !== 'place' && loc.url && (
-                <ActionLink href={loc.url} accent={accent} icon={Video} label="Join meeting" />
-              )}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: '0.85rem', color: 'var(--text)', overflowWrap: 'anywhere' }}>
+                  {loc.text}
+                </div>
+                {loc.kind === 'place' && (
+                  <InlineAction href={loc.url} accent={accent} icon={MapPin} label="Open in Google Maps" short="Maps" />
+                )}
+                {loc.kind !== 'place' && loc.url && (
+                  <InlineAction href={loc.url} accent={accent} icon={Video} label="Join meeting" short="Join" />
+                )}
+              </div>
             </div>
           )}
 
@@ -315,12 +322,12 @@ export default function EventDetailModal({
           {/* Canvas deep link */}
           {ev.htmlUrl && <ActionLink href={ev.htmlUrl} accent={accent} icon={ExternalLink} label="Open in Canvas" />}
 
-          {/* Colour — mirrors the calendar's right-click recolour, which mobile can't reach */}
+          {/* Color — mirrors the calendar's right-click recolor, which mobile can't reach */}
           {onRecolor && (
             <div>
-              <Label icon={Pencil}>Colour</Label>
+              <Label icon={Pencil}>Color</Label>
               <input type="color" value={toHexInput(colorOverride || ev.color)} onChange={e => onRecolor(ev.id, e.target.value)}
-                     aria-label="Event colour"
+                     aria-label="Event color"
                      style={{ width: 46, height: 28, padding: 0, border: '1px solid var(--border)', borderRadius: 7, background: 'none', cursor: 'pointer' }} />
             </div>
           )}
@@ -355,6 +362,31 @@ export default function EventDetailModal({
 /** `<input type="color">` only accepts #rrggbb, so anything else has to fall back. */
 function toHexInput(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '#3a6fa8'
+}
+
+/**
+ * Compact tinted link that sits beside the text it belongs to.
+ *
+ * `short` is the visible label; the full `label` stays in the accessible name and the
+ * tooltip, so "Maps" on screen still reads as "Open in Google Maps" to a screen reader
+ * and on hover.
+ */
+function InlineAction({ href, accent, icon: Icon, label, short }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+       title={label} aria-label={label}
+       style={{
+         display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+         padding: '5px 10px', borderRadius: 8,
+         border: `1px solid ${solid(accent)}55`, background: `${solid(accent)}11`,
+         color: solid(accent), fontWeight: 700, fontSize: '0.75rem',
+         textDecoration: 'none', transition: 'background .13s, border-color .13s',
+       }}
+       onMouseEnter={e => { e.currentTarget.style.background = `${solid(accent)}22`; e.currentTarget.style.borderColor = solid(accent) }}
+       onMouseLeave={e => { e.currentTarget.style.background = `${solid(accent)}11`; e.currentTarget.style.borderColor = `${solid(accent)}55` }}>
+      <Icon size={12} /> {short}
+    </a>
+  )
 }
 
 /** Full-width tinted link — the shape used for "Open in Canvas" elsewhere. */

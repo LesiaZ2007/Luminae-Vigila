@@ -52,7 +52,7 @@ export function SkeletonGroup({ label = 'Loading…', children, style }) {
   )
 }
 
-/** Rows that mirror the note list: colour spine, title, preview, tag pills. */
+/** Rows that mirror the note list: color spine, title, preview, tag pills. */
 export function NoteListSkeleton({ rows = 6 }) {
   return (
     <SkeletonGroup label="Loading notes" style={{ padding: '0 10px' }}>
