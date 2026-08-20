@@ -7,6 +7,7 @@ import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
+import { loadCalendarPrefs, saveCalendarPrefs, slotRange, toYMDLocal } from '@/lib/calendarView'
 
 /**
  * How overlapping timed events are laid out.
@@ -47,7 +48,18 @@ export default function WeeklyCalendar({
   const viewAnimTimer    = useRef(null)
   const [navAnim,        setNavAnim]       = useState(null) // 'exit-left' | 'exit-right' | 'enter-left' | 'enter-right' | null
   const [viewAnim,       setViewAnim]      = useState(null) // 'exit' | 'enter' | null
-  const [currentView,    setCurrentView]   = useState(isMobile ? 'timeGridDay' : 'timeGridWeek')
+  // Read once, at mount, before the first render — the calendar is unmounted whenever
+  // you leave the tab, so this is what makes coming back land where you left off.
+  // Falls back to the per-device default when nothing has been stored yet.
+  const savedPrefs = useRef(null)
+  if (savedPrefs.current === null) savedPrefs.current = loadCalendarPrefs()
+  const initialView = savedPrefs.current.view ?? (isMobile ? 'timeGridDay' : 'timeGridWeek')
+
+  const [currentView,    setCurrentView]   = useState(initialView)
+  // Trims the time grid to a school day (7am–10pm) instead of all 24 hours, so an
+  // ordinary day's events fill the height rather than sharing it with eight empty
+  // overnight hours. Only affects the timeGrid views; month view has no time axis.
+  const [focused,        setFocused]       = useState(savedPrefs.current.focused ?? false)
   const [colorPopover,   setColorPopover]  = useState(null) // { eventId, x, y }
   // Mobile only: the event brought to the front by a tap. Tapping is for
   // *reading* a buried event; editing is a long-press (see below).
@@ -60,6 +72,17 @@ export default function WeeklyCalendar({
     if (!api) return
     api.gotoDate(targetDate)
   }, [targetDate])
+
+  // Restore the remembered date. Runs after mount because FullCalendar has no
+  // "initialDate unless told otherwise" — initialDate would fight the targetDate prop
+  // that search results and the mini-month use to jump the calendar somewhere.
+  // Skipped when a target was passed in: that is an explicit "go here" and outranks
+  // where the user happened to be last.
+  useEffect(() => {
+    const remembered = savedPrefs.current?.date
+    if (!remembered || targetDate) return
+    calendarRef.current?.getApi()?.gotoDate(remembered)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When isMobile first resolves to true (SSR defaults to desktop), switch to day view
   useEffect(() => {
@@ -309,6 +332,26 @@ export default function WeeklyCalendar({
   }, [currentView])
 
   /**
+   * Flip between the full 24-hour grid and the focused 7am–10pm one.
+   *
+   * Persisted immediately rather than waiting for the next `datesSet`: changing the
+   * slot range does not renavigate, so FullCalendar has no reason to fire that event
+   * and the preference would be lost if the user switched tabs straight afterwards.
+   */
+  const toggleFocus = useCallback(() => {
+    setFocused(prev => {
+      const next = !prev
+      const api = calendarRef.current?.getApi()
+      saveCalendarPrefs({
+        view:    api?.view?.type ?? currentView,
+        date:    toYMDLocal(api?.view?.currentStart ?? new Date()),
+        focused: next,
+      })
+      return next
+    })
+  }, [currentView])
+
+  /**
    * Jump to the day view for a specific date.
    *
    * Used by month-cell clicks and by the clickable day headers (navLinks).
@@ -465,6 +508,10 @@ export default function WeeklyCalendar({
     setRaisedEventId(null)
     setCurrentView(info.view.type)
     onViewChange?.(info.view.type)
+    // `currentStart` rather than the visible range's start: in month view the grid
+    // usually opens with a few days of the previous month, and saving those would
+    // reopen on the wrong month.
+    saveCalendarPrefs({ view: info.view.type, date: toYMDLocal(info.view.currentStart), focused })
   }
 
   const containerClass = [
@@ -540,11 +587,11 @@ export default function WeeklyCalendar({
           <FullCalendar
             ref={calendarRef}
             plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-            initialView={isMobile ? 'timeGridDay' : 'timeGridWeek'}
+            initialView={initialView}
             headerToolbar={{
               left:   'prev,next today',
               center: 'title',
-              right:  'viewMonth,viewWeek,viewDay',
+              right:  'focusRange viewMonth,viewWeek,viewDay',
             }}
             buttonText={{ today: 'today' }}
             views={{
@@ -563,6 +610,12 @@ export default function WeeklyCalendar({
               viewMonth: { text: isMobile ? 'M' : 'Month',  click: () => switchView('dayGridMonth')  },
               viewWeek:  { text: isMobile ? 'W' : 'Week',   click: () => switchView('timeGridWeek')  },
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
+              // Labelled with what it will do rather than what is on, so it reads the
+              // same whichever way round it is.
+              focusRange: {
+                text:  focused ? (isMobile ? '24h' : 'Full 24 h') : (isMobile ? '7–10' : 'Focus 7–10'),
+                click: () => toggleFocus(),
+              },
             }}
             events={events}
             /* false → colliding events sit fully side by side (Google style).
@@ -613,8 +666,8 @@ export default function WeeklyCalendar({
                 Tasks
               </div>
             )}
-            slotMinTime="00:00:00"
-            slotMaxTime="24:00:00"
+            slotMinTime={slotRange(focused).min}
+            slotMaxTime={slotRange(focused).max}
             slotDuration="00:30:00"
             slotLabelInterval="01:00:00"
             slotLabelFormat={isMobile
