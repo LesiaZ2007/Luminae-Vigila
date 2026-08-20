@@ -662,7 +662,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
         alignItems: 'center', justifyContent: 'center', gap: 10,
         background: 'var(--surface)', color: 'var(--text)',
         fontFamily: 'var(--font-sans), system-ui, sans-serif',
-        // No app chrome to fall back on, so the phase colour does the signalling.
+        // No app chrome to fall back on, so the phase color does the signalling.
         borderTop: `3px solid ${accent}`,
       }}>
         <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: accent }}>

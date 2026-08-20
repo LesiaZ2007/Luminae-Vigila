@@ -82,6 +82,19 @@ describe('EventDetailModal', () => {
     expect(link).toHaveAttribute('href', expect.stringContaining('Tech%20Hall'))
   })
 
+  it('keeps the map action beside the address, compact but still fully named', () => {
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} />)
+    const link = screen.getByRole('link', { name: /open in google maps/i })
+
+    // Shown as "Maps" so it fits on the same line as the address, while the full
+    // label stays the accessible name and the tooltip.
+    expect(link).toHaveTextContent('Maps')
+    expect(link).toHaveAttribute('title', 'Open in Google Maps')
+
+    // Same flex row as the address, rather than stacked underneath it.
+    expect(link.parentElement).toBe(screen.getByText('Room 204, Tech Hall').parentElement)
+  })
+
   it('offers a join link, not a map, for an online meeting', () => {
     render(<EventDetailModal
       event={ownEvent({ extendedProps: { category: 'class', location: 'Zoom https://zoom.us/j/9' } })}

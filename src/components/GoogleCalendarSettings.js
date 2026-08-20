@@ -143,7 +143,7 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
 
           // Seed prefs with calendar color/summary metadata.
           // For known calendars: only update the summary; preserve the
-          // user's enabled toggle and any custom colour they've set.
+          // user's enabled toggle and any custom color they've set.
           // For brand-new calendars: seed with API defaults.
           setPrefs(p => {
             const accPref  = p[acc.id] ?? { enabled: true, calendars: {} }
@@ -611,7 +611,7 @@ function Toggle({ enabled, onChange, disabled = false }) {
 }
 
 /* ──────────────────────────────────────────────────────────
-   Google logo (four-colour 'G')
+   Google logo (four-color 'G')
 ────────────────────────────────────────────────────────── */
 export function GoogleLogo({ size = 20 }) {
   return (

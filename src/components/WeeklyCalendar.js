@@ -61,9 +61,6 @@ export default function WeeklyCalendar({
   // overnight hours. Only affects the timeGrid views; month view has no time axis.
   const [focused,        setFocused]       = useState(savedPrefs.current.focused ?? false)
   const [colorPopover,   setColorPopover]  = useState(null) // { eventId, x, y }
-  // Mobile only: the event brought to the front by a tap. Tapping is for
-  // *reading* a buried event; editing is a long-press (see below).
-  const [raisedEventId,  setRaisedEventId]  = useState(null)
   const longPressedRef   = useRef(false)   // suppresses the click that follows a long-press
 
   useEffect(() => {
@@ -164,7 +161,7 @@ export default function WeeklyCalendar({
 
     const el = info.el
 
-    // ── Desktop: right-click to recolour (user events only) ────────────────
+    // ── Desktop: right-click to recolor (user events only) ────────────────
     function onContextMenu(e) {
       e.preventDefault()
       e.stopPropagation()
@@ -174,9 +171,10 @@ export default function WeeklyCalendar({
       el.addEventListener('contextmenu', onContextMenu)
     }
 
-    // ── Mobile: long-press opens the editor ────────────────────────────────
-    // A tap only brings the event to the front (see the eventClick handler), so
-    // reading a buried event never risks opening a form you didn't want.
+    // ── Mobile: long-press opens the detail view ───────────────────────────
+    // Same destination as a tap. Kept because a long-press on a block squeezed into a
+    // narrow overlap column is easier to land than a tap on it, and because the haptic
+    // confirms the press registered.
     let touchTimer = null
     let touchMoved = false
 
@@ -243,27 +241,6 @@ export default function WeeklyCalendar({
   /* Bring the tapped event to the front. Done by toggling a class on the
      harness rather than inline styles, so FullCalendar re-rendering the event
      (which it does often) can't silently drop it — the effect re-applies. */
-  useEffect(() => {
-    const root = calendarRef.current?.getApi()?.el
-    if (!root) return
-    root.querySelectorAll('.lv-event-raised')
-      .forEach(h => h.classList.remove('lv-event-raised'))
-    if (!raisedEventId) return
-    const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(raisedEventId) : raisedEventId
-    root.querySelector(`.fc-timegrid-event-harness[data-event-id="${sel}"]`)
-      ?.classList.add('lv-event-raised')
-  }, [raisedEventId, events])
-
-  /* Tapping anywhere else drops the event back down, so the raised state never
-     gets stuck once you've finished reading it. */
-  useEffect(() => {
-    if (!raisedEventId) return
-    function onDocPointerDown(e) {
-      if (!e.target.closest?.('.fc-timegrid-event-harness')) setRaisedEventId(null)
-    }
-    document.addEventListener('pointerdown', onDocPointerDown)
-    return () => document.removeEventListener('pointerdown', onDocPointerDown)
-  }, [raisedEventId])
 
   const navigate = useCallback((dir) => {
     const api = calendarRef.current?.getApi()
@@ -505,7 +482,6 @@ export default function WeeklyCalendar({
 
   // Also wire the FullCalendar toolbar prev/next buttons through our animated navigate
   function handleDatesSet(info) {
-    setRaisedEventId(null)
     setCurrentView(info.view.type)
     onViewChange?.(info.view.type)
     // `currentStart` rather than the visible range's start: in month view the grid
@@ -591,7 +567,10 @@ export default function WeeklyCalendar({
             headerToolbar={{
               left:   'prev,next today',
               center: 'title',
-              right:  'focusRange viewMonth,viewWeek,viewDay',
+              // The focus toggle is desktop-only. On mobile the toolbar is already
+              // three view buttons wide in a phone-width row, and a fourth turned it
+              // into a cramped strip of abbreviations.
+              right:  isMobile ? 'viewMonth,viewWeek,viewDay' : 'focusRange viewMonth,viewWeek,viewDay',
             }}
             buttonText={{ today: 'today' }}
             views={{
@@ -611,9 +590,9 @@ export default function WeeklyCalendar({
               viewWeek:  { text: isMobile ? 'W' : 'Week',   click: () => switchView('timeGridWeek')  },
               viewDay:   { text: isMobile ? 'D' : 'Day',    click: () => switchView('timeGridDay')   },
               // Labelled with what it will do rather than what is on, so it reads the
-              // same whichever way round it is.
+              // same whichever way round it is. Desktop only — see headerToolbar.
               focusRange: {
-                text:  focused ? (isMobile ? '24h' : 'Full 24 h') : (isMobile ? '7–10' : 'Focus 7–10'),
+                text:  focused ? 'Full 24 h' : 'Focus 7–10',
                 click: () => toggleFocus(),
               },
             }}
@@ -632,15 +611,13 @@ export default function WeeklyCalendar({
             }}
             eventClick={(info) => {
               if (swipedRef.current) return
-              // The long-press already opened the editor; ignore the click that
+              // The long-press already opened the detail view; ignore the click that
               // browsers fire afterwards.
               if (longPressedRef.current) { longPressedRef.current = false; return }
-              if (isMobile) {
-                // Tap = bring to front so an overlapped event can be read.
-                // Tapping the raised one again puts it back.
-                setRaisedEventId(cur => (cur === info.event.id ? null : info.event.id))
-                return
-              }
+              // Mobile taps used to only lift the event to the front, because opening
+              // the edit form on a stray tap was worse than not opening anything. The
+              // detail view is a better answer to "what is this" than a raised block
+              // was, so a tap now does the same thing on every device.
               onEventClick?.(info)
             }}
             /* Day headers (week view) and day numbers (month view) become

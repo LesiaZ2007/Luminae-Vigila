@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Google calendar visibility/colour preferences, on both sides of the wire.
+ * Google calendar visibility/color preferences, on both sides of the wire.
  *
  * Components address these by **account id**, because that is what the accounts list
  * and the sync request are keyed by. The server stores them by **email**, because that

@@ -9,7 +9,7 @@ import CategoryManager from '@/components/CategoryManager'
 import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
 
-// Same palette the calendar's right-click recolour popover offers, so the two
+// Same palette the calendar's right-click recolor popover offers, so the two
 // entry points can't drift apart.
 const RECOLOR_SWATCHES = [
   '#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6',
@@ -156,9 +156,9 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
 }
 
 export default function EventModal({ event, initialDate, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
-  // Per-event colour override, stored outside the event itself in eventPrefs.
+  // Per-event color override, stored outside the event itself in eventPrefs.
   // Surfaced here because on mobile there's no right-click to reach the
-  // calendar's recolour popover.
+  // calendar's recolor popover.
   onRecolor, colorOverride,
   // Reverse view of note.linkedTo — see LinkedNotes.
   // `allNotes` rather than `notes` — an event already has a notes text field.
@@ -459,7 +459,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
                 <label className="field-label">Category</label>
                 {onCategoriesChange && (
                   <button type="button" onClick={() => setShowCatMgr(true)}
-                          title="Add, rename, recolour, or remove categories"
+                          title="Add, rename, recolor, or remove categories"
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
                           onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
                           onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
@@ -486,17 +486,17 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
               </div>
             </div>
 
-            {/* Colour — overrides the category colour for this one event */}
+            {/* Color — overrides the category color for this one event */}
             {isEdit && onRecolor && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label className="field-label">Colour</label>
+                  <label className="field-label">Color</label>
                   {colorOverride && (
                     <button type="button" onClick={() => onRecolor(event.id, null)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
                             onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
                             onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
-                      Use category colour
+                      Use category color
                     </button>
                   )}
                 </div>
@@ -505,7 +505,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
                     const active = (colorOverride ?? cat.color).toLowerCase() === c.toLowerCase()
                     return (
                       <button key={c} type="button" onClick={() => onRecolor(event.id, c)}
-                              aria-label={`Colour this event ${c}`}
+                              aria-label={`Color this event ${c}`}
                               style={{
                                 width: 26, height: 26, borderRadius: '50%', background: c, padding: 0,
                                 border: active ? '2.5px solid var(--text)' : '2px solid transparent',
