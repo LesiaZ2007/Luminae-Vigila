@@ -531,6 +531,16 @@ dropping a column is unrecoverable and buys nothing.
 - iOS Safari requires the app to be added to the Home Screen (iOS 16.4+). Android Chrome works in-browser with no install.
 - **Upgrade existing install:** run the `sent_reminders` `CREATE TABLE` block from `schema.sql` in the Neon SQL Editor (the endpoint also self-heals via `CREATE TABLE IF NOT EXISTS`).
 
+### 🔴 Current-time line stays readable on any event
+
+The now-indicator is a thin red line with a dot at the left edge, drawn above events.
+
+It used to be a soft red at 0.9 opacity, which disappeared into red and pink events. Choosing a different hue can't fix that — the event palette covers nearly the whole wheel (red, rose, amber, violet, teal), so no single colour contrasts with all of them. The separation comes from **luminance** instead: a contrasting glow behind a saturated core, which reads against a dark event and a light one alike. Red stays because it's the universal "now" convention, and the glow flips dark in dark mode where the surfaces beneath it are dark.
+
+The glow is **blurred and spread, not offset**. Hard `0 -1px` / `0 1px` shadows did separate the line, but two opaque edges either side of a 2px core read as three stacked lines — a visible outline rather than a line that quietly stays readable. With the blur carrying the contrast the core is back down to 1.5px, and the dot dropped the second red ring it had, which on an 8px circle just looked furry.
+
+`z-index` is asserted rather than inherited, so the line can never be painted underneath an event harness.
+
 ### 🎨 Event Recolor
 - Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
 - Select from 10 preset swatches — change applies immediately and persists across sessions

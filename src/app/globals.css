@@ -742,42 +742,45 @@ select option {
    no hue that contrasts with all of them. A soft red at 0.9 opacity vanished into the
    red and pink events in particular.
 
-   So the contrast comes from a light halo either side of a saturated core rather than
-   from the hue: whatever is underneath, one of the two edges reads against it. Red is
-   kept because it is the universal "now" convention. `--lv-now-halo` flips to a dark
-   halo in dark mode, where the surfaces it sits on are dark.
+   So the separation comes from luminance rather than hue — a contrasting glow behind a
+   saturated core, which reads against a dark event and a light one alike. Red is kept
+   because it is the universal "now" convention, and `--lv-now-halo` flips dark in dark
+   mode where the surfaces underneath are dark.
+
+   The glow is *blurred and spread*, not offset. Hard `0 -1px` / `0 1px` shadows did
+   separate the line, but two opaque edges against a 2px core read as three stacked
+   lines — a visible outline rather than a single line that happens to stay readable.
+   A blur does the same work as a soft falloff you stop noticing.
 
    z-index is asserted rather than inherited so the line is never painted underneath an
    event harness. */
-:root { --lv-now-halo: rgba(255,255,255,.92); }
-.dark { --lv-now-halo: rgba(0,0,0,.78); }
+:root { --lv-now-halo: rgba(255,255,255,.85); }
+.dark { --lv-now-halo: rgba(2,8,23,.8); }
 
 .fc .fc-timegrid-now-indicator-arrow { display: none !important; }
 .fc .fc-timegrid-now-indicator-container { z-index: 6; }
 .fc .fc-timegrid-now-indicator-line {
   border-color: #ef4444;
-  border-width: 2px;
+  /* Thinner than the 2px it needed while the halo was doing the work with hard
+     edges — the blur carries it now, and a fine line looks better. */
+  border-width: 1.5px;
   opacity: 1;
   position: relative;
   z-index: 6;
-  box-shadow:
-    0 -1px 0 var(--lv-now-halo),
-    0  1px 0 var(--lv-now-halo);
+  box-shadow: 0 0 4px 1px var(--lv-now-halo);
 }
 .fc .fc-timegrid-now-indicator-line::before {
   content: '';
   position: absolute;
-  left: -5px;
-  top: -5px;
-  width: 10px;
-  height: 10px;
+  left: -4px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #ef4444;
-  /* Inner ring separates the dot from the event under it; outer glow keeps the
-     soft look the dot had before. */
-  box-shadow:
-    0 0 0 2px var(--lv-now-halo),
-    0 0 0 4px rgba(239, 68, 68, 0.28);
+  /* Same soft glow as the line. The dot had a second red ring outside the halo, but
+     stacking two rings on an 8px dot just made it look furry. */
+  box-shadow: 0 0 4px 1px var(--lv-now-halo);
 }
 .fc .fc-timegrid-axis { background: var(--surface); }
 .fc .fc-daygrid-event { border-radius: 5px; font-size: 0.74rem; font-weight: 600; }
