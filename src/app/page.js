@@ -26,6 +26,7 @@ import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDispl
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance } from '@/lib/classInstances'
+import { mergeCategories, classCategories } from '@/lib/classCategories'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
@@ -277,6 +278,15 @@ export default function Home() {
      back on the next sync. See lib/tombstones.js. */
   const [canvasClassesRaw,   setCanvasClasses]      = useState([])
   const canvasClasses = useMemo(() => visible(canvasClassesRaw), [canvasClassesRaw])
+
+  /* Task categories as the pickers see them: the user's own, plus one per class on the
+     schedule. Derived rather than stored, so renaming a class renames its category and
+     removing a class removes it — no second copy to keep in step. `todoCategories`
+     stays the stored list, because that is what the category manager edits. */
+  const todoCategoryOptions = useMemo(
+    () => mergeCategories(todoCategories, classCategories(canvasClasses)),
+    [todoCategories, canvasClasses],
+  )
   const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
   const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
@@ -3196,7 +3206,7 @@ export default function Home() {
         />
       )}
       {showTodoModal && (
-        <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategories}
+        <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategoryOptions}
                       allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
                       initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes}
                       onAdd={addTodo} onEdit={updateTodo}

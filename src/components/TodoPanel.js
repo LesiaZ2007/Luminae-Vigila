@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye, GripVertical } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
+import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId } from '@/lib/classCategories'
 
 import Confetti from '@/components/Confetti'
 
@@ -84,6 +85,15 @@ export default function TodoPanel({
   onEditCanvas,
   onHideCanvas,
 }) {
+  /* What the picker, the filter chips and the rows all read. `todoCategories` stays
+     the *stored* list — it is what CategoryManager edits, and a derived class category
+     must never end up in there: it is computed from the schedule, so "renaming" or
+     "deleting" one would either do nothing or write a stale copy that then drifts. */
+  const allCategories = useMemo(
+    () => mergeCategories(todoCategories, deriveClassCategories(canvasClasses)),
+    [todoCategories, canvasClasses],
+  )
+
   const [filter,           setFilter]           = useState('upcoming')
   const [activeCategories, setActiveCategories] = useState([]) // empty = all
   const [showCatMgr,       setShowCatMgr]       = useState(false)
@@ -155,7 +165,7 @@ export default function TodoPanel({
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {filtered.map(todo => (
                     <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
-                              todoCategories={todoCategories} todayStr={todayStr}
+                              todoCategories={allCategories} todayStr={todayStr}
                               onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                               onToggleSubtask={onToggleSubtask}
                               isMobile={isMobile} />
@@ -164,7 +174,7 @@ export default function TodoPanel({
             ) : (
               /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
               <DraggableList
-                todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
+                todos={filtered} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
                 todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                 canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
                 onToggleCanvas={onToggleCanvas}
@@ -216,9 +226,9 @@ export default function TodoPanel({
     </div>
   )
 
-  const categoryChips = todoCategories.length > 0 && (
+  const categoryChips = allCategories.length > 0 && (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-      {todoCategories.map(cat => {
+      {allCategories.map(cat => {
         const active = activeCategories.includes(cat.id)
         return (
           <button key={cat.id} onClick={() => setActiveCategories(prev =>
@@ -300,14 +310,14 @@ export default function TodoPanel({
                   <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {filtered.map(todo => (
                       <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
-                                todoCategories={todoCategories} todayStr={todayStr}
+                                todoCategories={allCategories} todayStr={todayStr}
                                 onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                                 isMobile={isMobile} />
                     ))}
                   </ul>
                 ) : (
                   <DraggableList
-                    todos={filtered} events={events} todoCategories={todoCategories} canvasClasses={canvasClasses}
+                    todos={filtered} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
                     todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                     canvasAssignments={[]}
                     onToggleCanvas={onToggleCanvas}
@@ -544,7 +554,14 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
 
   const cat        = todoCategories.find(c => c.id === todo.category)
   const linkedEv   = todo.linkedEventId ? events.find(e => e.id === todo.linkedEventId) : null
-  const linkedClass = todo.linkedClassId ? canvasClasses.find(c => c.id === todo.linkedClassId) : null
+  const linkedClassRaw = todo.linkedClassId ? canvasClasses.find(c => c.id === todo.linkedClassId) : null
+  /* A task filed under a class category already says so, in that category's own colour.
+     Showing the class chip as well would print the course name twice on one row. The
+     chip stays for the older shape, where a task has an ordinary category *and* a
+     class link. */
+  const linkedClass = linkedClassRaw && classIdFromCategoryId(todo.category) === linkedClassRaw.id
+    ? null
+    : linkedClassRaw
   const effDate  = effectiveDate(todo, events)
   const isOverdue = effDate && effDate < todayStr && !todo.completed
   const isToday   = effDate === todayStr

@@ -402,6 +402,22 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
 - **Turn into a task or event** — promote a note (or just the text you've selected inside it) into a real task or calendar event. Opens the relevant editor prefilled rather than creating silently, since a task wants a due date and an event wants a time. The note is linked to whatever gets created.
 - **Share into a note (Android)** — luminaeVigila appears in the system share sheet. Highlight text anywhere, Share → luminaeVigila, and it arrives as a new note tagged `shared`. A "New note" home-screen shortcut starts one directly.
 
+### 🎓 Your classes are task categories
+
+Every class on your schedule shows up as a task category, so a task can be filed under **Physics 101** the same way it can be filed under **Personal**. That means the category filter chips, the grouped view, and the row colors all work by class with no extra concept to learn.
+
+Tasks already had a category *and* a separate optional link to a class, and neither answered *"show me everything for Physics"* on its own — the category was too coarse, and the class link was only a chip on the row, not something the list could filter or group by.
+
+**They are derived, never stored.** A class category is computed from the schedule on every render, which is what keeps it correct for free: rename a class and its category renames, disable one and it leaves the picker. Copying classes into `todoCategories` would mean two records of one fact, drifting apart the moment either changed, and syncing the copy for nothing.
+
+- The stored side is unchanged — a task filed under a class keeps `class:<id>` in its ordinary `category` field, so filtering, grouping and coloring need no special case
+- The category id is **namespaced** (`class:`) so a class id can never collide with a category you made
+- **Disabled classes are left out.** They are already hidden from the calendar, and offering to file new work under a class you switched off is noise
+- **The category manager still edits only your own categories.** A derived one must never reach it: "renaming" it would either do nothing or write a stale copy that then drifts out of step with the schedule
+- **A task filed under a class no longer shows the class chip twice.** The category already names the course in its own color; the chip stays for the older shape, where a task has an ordinary category *and* a class link
+- **A deleted or disabled class leaves its tasks intact.** They point at a category that no longer resolves, so the row simply renders without a category chip — the same thing an unrecognised stored category has always done, rather than an error
+- If you hand-made a category whose id starts with `class:`, yours wins rather than being silently shadowed
+
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
 - Order is persisted in a `sortOrder` field on each todo — survives refreshes and cloud sync
