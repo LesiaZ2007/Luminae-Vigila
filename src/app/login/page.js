@@ -33,6 +33,8 @@ const ERROR_MESSAGES = {
     'Google had a problem on their end. Waiting a moment and trying again usually works.',
   temporarily_unavailable:
     'Google sign-in is temporarily unavailable. Please try again shortly.',
+  db_quota:
+    'Signing in is unavailable because the app’s database has used up its plan allowance for this billing period. Everything already on this device keeps working offline — only syncing and signing in need the database.',
   db_unavailable:'Sign-in requires a database connection that isn\'t configured yet. You can still use the app locally.',
 }
 
