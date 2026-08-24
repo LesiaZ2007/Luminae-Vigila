@@ -15,6 +15,7 @@ import { makeOAuth2Client }  from '@/lib/googleAuth'
 import { upsertAccount, getAccounts } from '@/lib/googleTokenStore'
 import { findOrCreateUser }  from '@/lib/auth'
 import { createSession, getSession } from '@/lib/session'
+import { classifyDbError }        from '@/lib/dbErrors'
 
 /** Tiny HTML page that postMessages to the opener then closes itself. */
 function popupHtml(script) {
@@ -105,11 +106,8 @@ export async function GET(request) {
 
   } catch (err) {
     console.error('Google OAuth callback error:', err)
-    // Give a friendlier error key when the DB simply isn't configured yet
-    const isDbError = err.message?.includes('DATABASE_URL') || err.message?.includes('database') || err.code === 'ECONNREFUSED'
     if (isLogin) {
-      const errorKey = isDbError ? 'db_unavailable' : encodeURIComponent(err.message)
-      return Response.redirect(new URL(`/login?error=${errorKey}`, request.url))
+      return Response.redirect(new URL(`/login?error=${classifyDbError(err)}`, request.url))
     }
     return popupHtml(
       `window.opener?.postMessage({type:'gc_error',error:${JSON.stringify(err.message)}},'*');window.close();`,

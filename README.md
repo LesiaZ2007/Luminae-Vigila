@@ -250,6 +250,21 @@ The handler already ignores any key missing from the body, so the fix was entire
 
 **Idle back-off on the pull side.** A left-open tab asked the database the same question every 2 minutes forever. Since the bill is compute *time*, the cost of an idle tab was an endpoint that never got to sleep. The poll now doubles its gap each time a pull finds nothing new, up to **10 minutes**, and snaps back to 2 minutes the moment a pull finds something or you refocus the tab — so an active phone-then-laptop handoff is as responsive as before. It's a self-rescheduling timeout rather than a fixed interval, which is what lets the gap grow.
 
+### 🚫 When the database is out of allowance
+
+Neon answers with **HTTP 402** once a project has spent its plan allowance for the billing period. The app is local-first, so almost everything keeps working — but **signing in cannot**, because issuing a session means writing a user row.
+
+That combination makes the outage present strangely: anyone already holding a 30-day session cookie notices nothing at all, while a device signing in fresh fails. It reads as *"sign-in is broken on my phone"* rather than *"the database is off"*, and sends you looking at OAuth config, redirect URIs, and PWA containers — none of which are wrong.
+
+So a 402 is now named. [`lib/dbErrors.js`](src/lib/dbErrors.js) classifies it as `db_quota`, separately from `db_unavailable` (unconfigured or unreachable), because the two have completely different fixes: one is a plan or a billing date, the other is an environment variable. The login page says the allowance is spent and that on-device data still works offline.
+
+- The status is not always attached to the error — the serverless driver sometimes only carries a message — so the wording is matched too (`payment required`, `quota`, `exceeded`, `suspended`)
+- `402` is matched **word-bounded**, so a connection id of `4021` or a `1402ms` timing is not mistaken for it
+- Quota wins over the generic answer when both could match, since `database quota exceeded` contains `database` as well
+- Anything still unrecognised is passed through URL-encoded and printed on the login page verbatim, so it stays reportable rather than being flattened into a guess
+
+**Everything else that needs the database fails quietly at the same time** — cross-device sync, and the push crons, whose jobs all query it. If notifications stopped and fresh sign-ins fail together, suspect the allowance before the cron configuration.
+
 ### 🔐 Sign In *(optional)*
 - **Local-first by default** — events and tasks live in your browser's local storage, no account needed
 - **Sign in with Google** to sync your identity across devices
