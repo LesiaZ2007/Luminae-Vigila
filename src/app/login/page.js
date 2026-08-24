@@ -3,9 +3,36 @@
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Suspense } from 'react'
 
+/**
+ * What each failure means, in the reader's terms.
+ *
+ * The fallback below used to read "the server may not be fully configured yet", which
+ * is a confident guess and usually the wrong one: it sends you to check environment
+ * variables when the cause is normally the browser context or the Google project.
+ * Anything unrecognised now says so plainly and prints the raw key, which is the part
+ * worth quoting in a report.
+ *
+ * Google's two most common mobile failures usually never reach this page: it rejects
+ * `redirect_uri_mismatch` and `disallowed_useragent` before redirecting back, so it
+ * shows its own error screen instead of ours. They are mapped anyway, because a few
+ * flows do hand them back and a plausible-but-wrong message is worse than none.
+ */
 const ERROR_MESSAGES = {
   no_code:       'Google sign-in was cancelled. Please try again.',
   access_denied: 'Access was denied. Please try again and allow the requested permissions.',
+
+  redirect_uri_mismatch:
+    'This address is not registered with the app’s Google project. If you opened the app from a home-screen shortcut or an older link, open the app’s normal web address and sign in there.',
+  disallowed_useragent:
+    'Google will not accept a sign-in from inside an in-app browser. Open the page in Chrome or Safari and sign in there.',
+  invalid_client:
+    'The app’s Google credentials were rejected. That is a configuration problem, not something fixable from here.',
+  invalid_request:
+    'Google rejected the sign-in request as malformed. Try again from the app’s normal web address.',
+  server_error:
+    'Google had a problem on their end. Waiting a moment and trying again usually works.',
+  temporarily_unavailable:
+    'Google sign-in is temporarily unavailable. Please try again shortly.',
   db_unavailable:'Sign-in requires a database connection that isn\'t configured yet. You can still use the app locally.',
 }
 
@@ -14,9 +41,13 @@ function LoginContent() {
   const router   = useRouter()
   const next     = params.get('next') ?? '/'
   const errorKey = params.get('error')
+  const known    = errorKey ? ERROR_MESSAGES[errorKey] : null
   const errorMsg = errorKey
-    ? (ERROR_MESSAGES[errorKey] ?? 'Something went wrong — the server may not be fully configured yet. You can still use the app without signing in.')
+    ? (known ?? 'Google sign-in failed, and the app does not recognise the reason it gave. You can still use the app without signing in.')
     : null
+  // Only when we could not explain it: the raw key is the one detail worth quoting,
+  // and hiding it costs a round trip of guessing.
+  const errorDetail = errorKey && !known ? errorKey : null
 
   const loginUrl = `/api/auth/google?next=${encodeURIComponent(next)}`
 
@@ -73,6 +104,11 @@ function LoginContent() {
             lineHeight: 1.5,
           }}>
             {errorMsg}
+            {errorDetail && (
+              <div style={{ marginTop: 6, fontSize: '0.72rem', opacity: 0.75, wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace' }}>
+                {errorDetail}
+              </div>
+            )}
           </div>
         )}
 
