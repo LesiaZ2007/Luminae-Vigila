@@ -28,9 +28,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   X, Pencil, Trash2, MapPin, ExternalLink, Clock, CalendarDays, Bell,
-  Repeat, AlignLeft, EyeOff, Eye, Link2, Video,
+  Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus,
 } from 'lucide-react'
 import { describeLocation } from '@/lib/maps'
+import { toYMDLocal }       from '@/lib/calendarView'
 
 const SOURCE_LABELS = {
   google:         'Google Calendar',
@@ -104,6 +105,8 @@ export function normalizeEvent(event) {
     // render remote markup inside the app.
     description: ext.description ? String(ext.description).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : null,
     professor:   ext.professor ?? null,
+    classId:     ext.classId ?? null,
+    isExtra:     !!ext.isExtra,
     courseName:  ext.courseName ?? null,
     htmlUrl:     ext.htmlUrl ?? null,
     reminder:    event.reminder ?? null,
@@ -167,6 +170,9 @@ export default function EventDetailModal({
   event, categories = [], colorOverride, hidden = false,
   onEdit, onDelete, onClose, onHide, onUnhide, onRecolor,
   allNotes = [], onOpenNote,
+  // Class schedule meetings only: call off this one occurrence, or drop a one-off
+  // that was added. Omit either to leave the action out.
+  onCancelMeeting, onRemoveMeeting,
 }) {
   const [closing, setClosing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -190,6 +196,10 @@ export default function EventDetailModal({
   const when     = whenLabel(ev)
   const repeat   = recurrenceLabel(ev.recurrence)
   const linked   = (allNotes ?? []).filter(n => !n.trashedAt && n.linkedTo?.type === 'event' && n.linkedTo.id === ev.id)
+
+  const isClassMeeting = ev.source === 'canvas-class' && !!ev.classId && !!ev.start
+  // The calendar day this occurrence falls on, which is what an exception is keyed by.
+  const meetingDate    = ev.start ? toYMDLocal(ev.start) : null
 
   const sourceLabel = SOURCE_LABELS[ev.source] ?? 'Read-only'
   const heading     = ev.courseName || cat?.label || (readOnly ? sourceLabel : 'Event')
@@ -236,6 +246,12 @@ export default function EventDetailModal({
           {hidden && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>
               <EyeOff size={12} /> Hidden from the calendar
+            </div>
+          )}
+
+          {ev.isExtra && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>
+              <CalendarPlus size={12} /> One-off meeting, not part of the usual schedule
             </div>
           )}
 
@@ -344,6 +360,21 @@ export default function EventDetailModal({
           {hidden
             ? onUnhide && <FooterButton icon={Eye}    label="Unhide" onClick={() => { onUnhide(ev.id); handleClose() }} />
             : onHide   && <FooterButton icon={EyeOff} label="Hide"   onClick={() => { onHide(ev.id);   handleClose() }} />}
+
+          {/* A class meeting is one occurrence of a recurring pattern, so neither Edit
+              nor Delete fits: both would rewrite the whole term. Calling off this one
+              date leaves the pattern alone and is reversible from the class settings. */}
+          {isClassMeeting && (
+            ev.isExtra
+              ? onRemoveMeeting && (
+                  <FooterButton icon={Trash2} label="Remove this meeting" danger
+                                onClick={() => { onRemoveMeeting(ev.classId, meetingDate); handleClose() }} />
+                )
+              : onCancelMeeting && (
+                  <FooterButton icon={CalendarX} label="Cancel this class"
+                                onClick={() => { onCancelMeeting(ev.classId, meetingDate); handleClose() }} />
+                )
+          )}
 
           {!readOnly && onDelete && (
             confirmDelete ? (
