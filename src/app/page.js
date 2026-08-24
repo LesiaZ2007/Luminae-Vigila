@@ -27,6 +27,7 @@ import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mer
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
+import { toYMDLocal } from '@/lib/calendarView'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
@@ -3178,6 +3179,12 @@ export default function Home() {
           onOpenNote={openNoteById}
           onCancelMeeting={cancelClassMeeting}
           onRemoveMeeting={removeClassMeeting}
+          /* Seeded with the day being looked at, so "new event" from an event on
+             Thursday starts on Thursday rather than today. */
+          onNewEvent={start => {
+            setDetailEvent(null)
+            setEventModal({ open: true, event: null, date: start ? toYMDLocal(start) : null })
+          }}
           onClose={() => setDetailEvent(null)}
         />
       )}
