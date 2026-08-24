@@ -173,6 +173,9 @@ export default function EventDetailModal({
   // Class schedule meetings only: call off this one occurrence, or drop a one-off
   // that was added. Omit either to leave the action out.
   onCancelMeeting, onRemoveMeeting,
+  // Start a fresh event from here. Offered alongside Edit because the two are easy to
+  // confuse once a popup is already open on top of an existing event.
+  onNewEvent,
 }) {
   const [closing, setClosing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -353,8 +356,15 @@ export default function EventDetailModal({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 18px 16px', flexWrap: 'wrap' }}>
           {!readOnly && onEdit && (
             <button onClick={() => { onEdit(event); onClose() }} className="btn-primary" style={{ flex: 1, minWidth: 120 }}>
-              <Pencil size={14} /> Edit
+              <Pencil size={14} /> Edit this event
             </button>
+          )}
+
+          {/* Explicitly "a different event", so there is never a doubt about which of
+              the two a button does while a popup is open on top of an existing one. */}
+          {onNewEvent && (
+            <FooterButton icon={CalendarPlus} label="New event"
+                          onClick={() => { onNewEvent(ev.start ?? null); handleClose() }} />
           )}
 
           {hidden

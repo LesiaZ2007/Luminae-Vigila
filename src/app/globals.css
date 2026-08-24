@@ -758,7 +758,20 @@ select option {
 .dark { --lv-now-halo: rgba(2,8,23,.8); }
 
 .fc .fc-timegrid-now-indicator-arrow { display: none !important; }
-.fc .fc-timegrid-now-indicator-container { z-index: 6; }
+/* The container is a full-column overlay — FullCalendar gives it left/right/top/
+   bottom: 0 — so it must never take a click. Raising its z-index to get the line above
+   events laid that transparent sheet over the whole day: every click landed on it
+   instead of on an event, FullCalendar read it as a click on empty time, and tapping
+   an event opened the "new event" form instead of the event itself.
+
+   pointer-events: none rather than lowering the z-index, because the line does need to
+   paint above events to stay legible. Nothing in here is interactive, so there is
+   nothing to lose by making the overlay transparent to input. */
+.fc .fc-timegrid-now-indicator-container,
+.fc .fc-timegrid-now-indicator-line,
+.fc .fc-timegrid-now-indicator-line::before {
+  pointer-events: none;
+}
 .fc .fc-timegrid-now-indicator-line {
   border-color: #ef4444;
   /* Thinner than the 2px it needed while the halo was doing the work with hard
