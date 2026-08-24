@@ -39,7 +39,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
 
 ### 👁 Tap an event, get an answer — not a form
 
-Tapping or long-pressing an event opens a **detail view**, on every device. Editing is one button away inside it.
+Tapping or long-pressing an event opens a **detail view**, on every device. Its footer offers **Edit this event** and **New event** side by side — the two are easy to confuse once a popup is already open on top of an existing event, so both are named explicitly rather than left to inference. **New event** starts on the day you were looking at, not today.
 
 On mobile a tap used to only lift the event to the front of its overlap column — opening the edit form on a stray tap was worse than opening nothing, so reading a buried event was all a tap could safely do. The detail view answers *"what is this"* better than a raised block did, so the tap now goes there and the raise mechanism is gone. Long-press still works and still buzzes: a block squeezed into a narrow overlap column is easier to long-press than to tap cleanly.
 
@@ -53,6 +53,8 @@ Two details worth knowing:
 
 - **Both event shapes are handled.** A tap from the calendar passes a FullCalendar `EventApi` where `start` is a `Date`; search results and the agenda pass the stored object where it's an ISO string. `normalizeEvent` flattens both so no branch below has to care
 - **All-day events don't render a day early.** FullCalendar stores an all-day end as the *exclusive* next midnight, and a bare `YYYY-MM-DD` parses as UTC midnight — so subtracting a day and reading local components would shift the date for anyone west of UTC. Date-only values are anchored to local noon, which survives the arithmetic in either direction
+
+**A note on a bug this replaced.** For a while, clicking an event opened the *new event* form instead. The cause was the now-indicator: FullCalendar gives its container `left/right/top/bottom: 0`, making it a full-column overlay, and raising that container's `z-index` to keep the red line legible on top of events laid a transparent sheet over the entire day. Every click landed on the sheet, FullCalendar read it as a click on empty time, and the create form opened. The fix is `pointer-events: none` on the overlay rather than lowering the z-index, because the line genuinely does need to paint above events — and nothing in there is interactive, so there is nothing to lose by making it transparent to input.
 
 ### 📍 Locations open in Google Maps
 
