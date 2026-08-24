@@ -224,6 +224,32 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - Mobile-responsive stacked layout; matches the existing Courses tab visual style
 - Empty state shown when no graded assignments exist yet
 
+### 🚫 Cancel one class, or add a one-off
+
+A class schedule entry describes the normal week — MWF at 9:00 until the end of term. Reality has holidays, a professor who cancels, and the occasional extra review session. Editing the schedule itself is the wrong tool for those: it rewrites every meeting to fix one, and there is nowhere to say *"not this Tuesday"*.
+
+- **Cancel a single class** — tap that meeting on the calendar and choose **Cancel this class** in the detail view. The rest of the term is untouched
+- **Add a one-off** — open the class from Settings and use the row at the bottom of the form: pick a date and times, then **Add meeting**. It appears on the calendar tagged *"One-off meeting, not part of the usual schedule"*, and its detail view offers **Remove this meeting** rather than Cancel
+- **Undo either** — the class form lists every cancelled date and every extra, each with a Restore or Remove beside it. Nothing is destroyed, so a mis-tap costs one tap back
+
+Exceptions live *alongside* the recurrence rather than inside it, on the class entry's own `exceptions` field (JSONB, so no migration):
+
+```
+exceptions: {
+  cancelled: ['2026-08-25'],                        // no meeting that day
+  added:     [{ date, startTime, endTime, ... }],   // an extra meeting
+}
+```
+
+Keeping the pattern intact is what makes a cancelled date still meaningful if the class time later changes, and it is why Restore is always available.
+
+- **An extra is allowed on a cancelled date.** That combination is how *"moved to a different time this week"* is expressed, and it falls out of the model rather than needing a third concept
+- **Adding twice on one date replaces rather than stacks.** A second add is far more likely a correction than a genuine double session
+- **Editing a class cannot silently un-cancel a holiday.** The form rebuilds the entry from its inputs, so anything without an input — `exceptions` — would have been dropped on save. `saveCanvasClass` carries it across
+- **Exceptions apply immediately, not on Save.** They are edits to the stored class, not to the form's draft; mixing the two would mean a cancellation vanished if you closed the form without saving. The form is handed the live record so the list stays current
+- Dates are local `YYYY-MM-DD` throughout — a class meeting happens on a calendar day, and anchoring to an instant would move that day across a timezone boundary
+- Stored exceptions are re-validated on read rather than trusted, so a malformed entry is ignored instead of crashing the calendar
+
 ### 📆 Class Schedule *(no Canvas required)*
 - Add recurring class meetings manually — days of week, time, room, semester dates
 - Classes appear as color-coded repeating events on the calendar
