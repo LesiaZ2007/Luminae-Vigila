@@ -269,7 +269,13 @@ export default function Home() {
 
   // ── Canvas state ──
   const [canvasAssignments,  setCanvasAssignments]  = useState([])
-  const [canvasClasses,      setCanvasClasses]      = useState([])
+  /* Raw vs visible, the same split events and todos use. The raw array keeps
+     tombstones so a delete can reach other devices; everything on screen reads the
+     visible one. Without this a deleted class was simply absent locally, which the
+     merge cannot tell apart from a class created on another device — so it came
+     back on the next sync. See lib/tombstones.js. */
+  const [canvasClassesRaw,   setCanvasClasses]      = useState([])
+  const canvasClasses = useMemo(() => visible(canvasClassesRaw), [canvasClassesRaw])
   const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
   const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
@@ -457,7 +463,13 @@ export default function Home() {
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
         const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
         const mergedEvCats    = mergedEvCatsRaw.length > 0 ? mergedEvCatsRaw : DEFAULT_EVENT_CATEGORIES
-        const mergedClasses  = mergeById(cloud.classSchedule,  localClasses)
+        /* mergeWithTombstones rather than mergeById: this is the same merge the
+           background pull at autoSync already uses for classes, and the two
+           disagreeing meant a class could arrive on a later poll but not on the
+           sign-in that should have fetched it. mergeById prefers local whenever
+           timestamps are missing, which is every class written before the stamp
+           above existed. */
+        const mergedClasses  = purgeTombstones(mergeWithTombstones(cloud.classSchedule, localClasses))
         const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
         const mergedSessions = mergeById(cloud.studySessions,  localSessions)
         const mergedLists    = purgeTombstones(mergeCustomLists(cloud.customLists ?? [], localLists))
@@ -584,7 +596,7 @@ export default function Home() {
       todos:          todosRaw,
       todoCategories,
       eventCategories,
-      classSchedule:  canvasClasses,
+      classSchedule:  canvasClassesRaw,
       eventPrefs,
       studySessions,
       customLists:    customListsRaw,
@@ -607,7 +619,7 @@ export default function Home() {
       if (res.ok) lastPushedRef.current = sent
       return res.ok
     })
-  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes])
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes])
 
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
   // Pushes whatever changed 2 seconds after any change.
@@ -625,7 +637,7 @@ export default function Home() {
         .catch(() => {})
     }, 2000)
     return () => clearTimeout(syncTimerRef.current)
-  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClasses, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Immediately push the current state to the cloud (bypasses the debounce).
   // Used on reconnect so pending offline edits upload the moment we're back
@@ -670,7 +682,7 @@ export default function Home() {
       setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
       setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
       setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
-      setCanvasClasses(local => mergeWithTombstones(cloud.classSchedule, local))
+      setCanvasClasses(local => purgeTombstones(mergeWithTombstones(cloud.classSchedule, local)))
       // Categories: an empty cloud array means "not synced yet", not "the user
       // deleted every category" — falling through to local avoids wiping them.
       setTodoCategories(local => {
@@ -891,7 +903,7 @@ export default function Home() {
       const cce = localStorage.getItem('lv-canvas-cal-events')
       const cie = localStorage.getItem('lv-canvas-ics-events')
       if (ca)  setCanvasAssignments(JSON.parse(ca))
-      if (cc)  setCanvasClasses(JSON.parse(cc))
+      if (cc)  setCanvasClasses(purgeTombstones(JSON.parse(cc)))
       if (cce) setCanvasCalEvents(JSON.parse(cce))
       if (cie) setCanvasIcsEvents(JSON.parse(cie))
     } catch (_) {}
@@ -907,7 +919,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem('lv-notes',          JSON.stringify(notes))          }, [notes])
   // Canvas
   useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
-  useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClasses))     }, [canvasClasses])
+  useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClassesRaw))  }, [canvasClassesRaw])
   useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
   useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
 
@@ -1849,15 +1861,23 @@ export default function Home() {
   }, [])
 
   /* ── Class schedule CRUD ── */
+  /* Stamped for the same reason events are: the sync merge resolves by `updatedAt`,
+     and a class that never carries one is unresolvable — the merge falls back to a
+     guess, and the guess is "keep local". So a class edited on the laptop lost to
+     whatever the phone already had, and never arrived. Classes were missed when events
+     were fixed; the two paths behave the same way now. */
   const saveCanvasClass = useCallback((entry) => {
+    const stamped = { ...entry, updatedAt: new Date().toISOString() }
     setCanvasClasses(prev => {
-      const idx = prev.findIndex(c => c.id === entry.id)
-      return idx >= 0 ? prev.map(c => c.id === entry.id ? entry : c) : [...prev, entry]
+      const idx = prev.findIndex(c => c.id === stamped.id)
+      return idx >= 0 ? prev.map(c => c.id === stamped.id ? stamped : c) : [...prev, stamped]
     })
   }, [])
 
   const deleteCanvasClass = useCallback((id) => {
-    setCanvasClasses(prev => prev.filter(c => c.id !== id))
+    // Tombstone rather than drop: an absent row reads as "created on another device"
+    // to the merge, so a hard delete came back on the next sync.
+    setCanvasClasses(prev => prev.map(c => (c.id === id ? softDelete(c) : c)))
   }, [])
 
   /* ── Expand class schedule entries into calendar events ── */
