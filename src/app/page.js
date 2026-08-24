@@ -25,6 +25,7 @@ import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/cus
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
+import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance } from '@/lib/classInstances'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
@@ -1867,11 +1868,39 @@ export default function Home() {
      whatever the phone already had, and never arrived. Classes were missed when events
      were fixed; the two paths behave the same way now. */
   const saveCanvasClass = useCallback((entry) => {
-    const stamped = { ...entry, updatedAt: new Date().toISOString() }
     setCanvasClasses(prev => {
-      const idx = prev.findIndex(c => c.id === stamped.id)
-      return idx >= 0 ? prev.map(c => c.id === stamped.id ? stamped : c) : [...prev, stamped]
+      const existing = prev.find(c => c.id === entry.id)
+      // The edit form rebuilds the entry from its fields, so anything it does not have
+      // an input for would be dropped on save. `exceptions` is exactly that: cancelled
+      // dates and one-off meetings are managed elsewhere, and editing the room number
+      // must not quietly un-cancel a holiday.
+      const stamped = {
+        ...entry,
+        exceptions: entry.exceptions ?? existing?.exceptions,
+        updatedAt:  new Date().toISOString(),
+      }
+      return existing ? prev.map(c => (c.id === stamped.id ? stamped : c)) : [...prev, stamped]
     })
+  }, [])
+
+  /* One-off changes to a recurring class — a holiday, a cancelled lecture, an extra
+     review session. These edit the class entry's `exceptions`, never its pattern, so
+     the normal week stays intact and every change is reversible. See
+     lib/classInstances.js. */
+  const cancelClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? cancelInstance(c, dateStr) : c)))
+  }, [])
+
+  const restoreClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? restoreInstance(c, dateStr) : c)))
+  }, [])
+
+  const addClassMeeting = useCallback((classId, entry) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? addInstance(c, entry) : c)))
+  }, [])
+
+  const removeClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? removeInstance(c, dateStr) : c)))
   }, [])
 
   const deleteCanvasClass = useCallback((id) => {
@@ -1904,9 +1933,27 @@ export default function Home() {
             until: cls.semesterEnd,
           },
         }
-        return expandRecurring(baseEvent).map(ev => ({
+        const meetings = expandRecurring(baseEvent).map(ev => ({
           ...ev,
           id: `canvascls_${cls.id}_${ev.id.split('-r-')[1] ?? 'base'}`,
+        }))
+
+        /* Cancelled dates drop out, one-off meetings get added. An extra carries the
+           same shape as a regular meeting so the calendar and the detail view need no
+           special case — only `isExtra`, which decides whether the detail view offers
+           "cancel this meeting" or "remove this meeting". */
+        return applyExceptions(cls, meetings, extra => ({
+          ...baseEvent,
+          id:    `canvasclsx_${cls.id}_${extra.date}`,
+          start: `${extra.date}T${extra.startTime}:00`,
+          end:   `${extra.date}T${extra.endTime}:00`,
+          recurrence: null,
+          extendedProps: {
+            ...baseEvent.extendedProps,
+            location: extra.location ?? cls.location,
+            notes:    extra.note ?? null,
+            isExtra:  true,
+          },
         }))
       })
   }, [canvasClasses])
@@ -3119,6 +3166,8 @@ export default function Home() {
           onRecolor={handleRecolorEvent}
           allNotes={notes}
           onOpenNote={openNoteById}
+          onCancelMeeting={cancelClassMeeting}
+          onRemoveMeeting={removeClassMeeting}
           onClose={() => setDetailEvent(null)}
         />
       )}
@@ -3194,9 +3243,15 @@ export default function Home() {
 
       {showClassModal && (
         <ClassScheduleModal
-          editClass={editingClass}
+          /* The live record, not the snapshot taken when the modal opened: exceptions
+             are applied to state immediately, and a stale prop would show the list
+             unchanged until the form was reopened. */
+          editClass={editingClass ? (canvasClasses.find(c => c.id === editingClass.id) ?? editingClass) : null}
           onSave={saveCanvasClass}
           onDelete={deleteCanvasClass}
+          onRestoreMeeting={restoreClassMeeting}
+          onRemoveMeeting={removeClassMeeting}
+          onAddMeeting={addClassMeeting}
           onClose={() => { setShowClassModal(false); setEditingClass(null) }}
         />
       )}
