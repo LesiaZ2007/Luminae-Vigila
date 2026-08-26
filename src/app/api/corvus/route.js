@@ -1,4 +1,5 @@
 import { getSession } from '@/lib/session'
+import { describeCategories, resolveCategory } from '@/lib/corvusCategories'
 import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -49,7 +50,15 @@ function checkRateLimit(key) {
   return true
 }
 
-const TOOLS = [
+/**
+ * Built per request rather than once at module load, because the task tool has to name
+ * the categories that actually exist — including one per class on the schedule, which
+ * differs per user and changes whenever they edit it. It used to advertise a hardcoded
+ * 'academic, personal, work, health', so Corvus could not file a task under a category
+ * you made, or tag one with a class.
+ */
+function buildTools(todoCategories = []) {
+  return [
   {
     type: 'function',
     function: {
@@ -61,7 +70,7 @@ const TOOLS = [
           title:         { type: 'string', description: 'Task title' },
           dueDate:       { type: 'string', description: 'First due date YYYY-MM-DD' },
           priority:      { type: 'string', enum: ['low', 'medium', 'high'] },
-          category:      { type: 'string', description: 'One of: academic, personal, work, health' },
+          category:      { type: 'string', description: describeCategories(todoCategories) },
           linkedEventId: { type: 'string', description: 'ID of a calendar event this task is linked to' },
           notes:         { type: 'string' },
           repeatType:    { type: 'string', description: 'Recurrence: daily, weekly, or custom' },
@@ -168,7 +177,8 @@ const TOOLS = [
       },
     },
   },
-]
+  ]
+}
 
 // Convert our internal (Anthropic-style) messages → OpenAI/Groq format
 function toGroqMessages(messages) {
@@ -204,16 +214,31 @@ function toGroqMessages(messages) {
 }
 
 // Convert Groq response message → our internal (Anthropic-style) content array
-function fromGroqMessage(msg) {
+function fromGroqMessage(msg, todoCategories = []) {
   const content = []
   if (msg.content) content.push({ type: 'text', text: msg.content })
   for (const tc of (msg.tool_calls || [])) {
-    content.push({
-      type:  'tool_use',
-      id:    tc.id,
-      name:  tc.function.name,
-      input: JSON.parse(tc.function.arguments || '{}'),
-    })
+    let input = {}
+    try {
+      input = JSON.parse(tc.function.arguments || '{}')
+    } catch {
+      // A truncated or malformed tool call should lose that one call, not the whole
+      // reply — the model still said something worth showing.
+      continue
+    }
+
+    /* Check the category against the ones that exist. A model handed a list of ids
+       will occasionally return a label, a near-miss, or something invented, and an id
+       that resolves to nothing renders as a task with no category — a silent wrong
+       answer. Unresolvable means no category, which reads as "it didn't pick one" on
+       the preview card the user confirms. */
+    if (typeof input.category === 'string') {
+      const resolved = resolveCategory(input.category, todoCategories)
+      if (resolved) input.category = resolved
+      else delete input.category
+    }
+
+    content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input })
   }
   return content
 }
@@ -233,7 +258,7 @@ export async function POST(request) {
     )
   }
 
-  const { messages = [], events = [], todos = [], canvasAssignments = [], timezone = 'UTC' } = await request.json()
+  const { messages = [], events = [], todos = [], canvasAssignments = [], todoCategories = [], timezone = 'UTC' } = await request.json()
 
   const now     = new Date()
   const tz      = timezone
@@ -365,6 +390,12 @@ BEHAVIOR RULES:
    - [EVENT] items → call them "event" (e.g. "your dentist appointment")
    - Never call a [EVENT] a "class", and never call a [CLASS] a generic "event".
    - When summarizing someone's day/plan, clearly separate classes from one-off events.
+   - Each class on the schedule is also a task CATEGORY. When a task clearly belongs to
+     one of their courses, file it under that class's category rather than a generic
+     one — "read chapter 4 for Physics" belongs to the Physics category, not "academic".
+     The exact category ids are listed in the preview_task tool's category parameter.
+     If you are not sure which course a task belongs to, leave the category out and say
+     so rather than guessing.
 
 10. TIME ESTIMATION — when a user asks how long a task, assignment, or project will take:
     - Give a realistic estimate based on: task type (reading, problem sets, essay, coding, studying), course level (intro vs upper-div), and any context they provide.
@@ -385,12 +416,12 @@ BEHAVIOR RULES:
     const response = await groq.chat.completions.create({
       model:       CORVUS_MODEL,
       messages:    [{ role: 'system', content: systemPrompt }, ...groqMessages],
-      tools:       TOOLS,
+      tools:       buildTools(todoCategories),
       tool_choice: 'auto',
       max_tokens:  600,
     })
 
-    const content = fromGroqMessage(response.choices[0].message)
+    const content = fromGroqMessage(response.choices[0].message, todoCategories)
     return Response.json({ content })
   } catch (err) {
     console.error('Corvus Groq error:', err)

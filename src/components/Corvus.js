@@ -522,6 +522,12 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
           .sort((a, b) => new Date(a.start) - new Date(b.start))
           .slice(0, 30),
         todos: todos.filter(t => !t.completed).slice(0, 20),
+        /* The category list Corvus is allowed to choose from, including one per class
+           on the schedule. Without it the task tool advertised a hardcoded
+           'academic, personal, work, health', so it could neither use a category you
+           made nor tag a task with a class. Ids and labels only — nothing else about a
+           category is any use to the model. */
+        todoCategories: (todoCategories ?? []).map(c => ({ id: c.id, label: c.label })),
         canvasAssignments: canvasAssignments.filter(a => !a.done && !a.hidden).slice(0, 30),
       }),
     })
