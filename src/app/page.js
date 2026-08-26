@@ -2966,7 +2966,7 @@ export default function Home() {
               canvasClassEvents={canvasClassEvents}
               todos={todos}
               canvasAssignments={canvasAssignments}
-              todoCategories={todoCategories}
+              todoCategories={todoCategoryOptions}
               eventCategories={eventCategories}
               onAddTodo={addTodo}
               onSaveEvent={saveEvent}
@@ -3443,7 +3443,7 @@ export default function Home() {
             <Corvus
               events={events} canvasClassEvents={canvasClassEvents} todos={todos}
               canvasAssignments={canvasAssignments}
-              todoCategories={todoCategories} eventCategories={eventCategories}
+              todoCategories={todoCategoryOptions} eventCategories={eventCategories}
               onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
               compact={true}

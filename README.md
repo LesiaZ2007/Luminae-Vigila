@@ -339,6 +339,19 @@ with reminders."
   tool calls, and several models accept a `tools` array and then describe the call in prose
   instead of making it
 
+### 🪶 Corvus can file tasks under a class
+
+Ask Corvus for *"a task to read chapter 4 for Physics"* and it files it under the **Physics 101** category, not a generic "academic".
+
+It could not before, and the reason was blunt: the task tool advertised its category parameter as `'One of: academic, personal, work, health'` — the four defaults, hardcoded at module load. Corvus had never been told that categories you created existed, let alone the ones derived from your class schedule. The tool schema is now built per request from the real list.
+
+- **Class ids are paired with course names** in the tool description — `class:cls_17…  (Physics 101)`. The id alone is opaque and tells the model nothing; the pairing is what lets "for Physics" land on the right category
+- **What comes back is checked, not trusted.** A model handed a list of ids will sometimes return a label, a near-miss like `class:Physics 101`, or something invented. Exact id, then label, then prefix-plus-name are each tried
+- **An unresolvable category is dropped rather than guessed at.** You confirm every task on a preview card first, and no category reads as *"it didn't pick one"* while a wrong one reads as a decision you have to notice and undo
+- A malformed tool call loses that one call instead of the whole reply — the model usually said something worth reading alongside it
+- Corvus is told to leave the category out and say so when it can't tell which course a task belongs to, rather than picking the closest-sounding one
+- Only ids and labels are sent. Nothing else about a category is any use to the model, and the request is already carrying events, tasks and assignments
+
 ### 🔍 Search
 - Search across events, tasks, Canvas assignments, notes, and custom-list items with scope and status filters
 - Results grouped by type — Canvas assignments, tasks, and events in a split layout
