@@ -6,6 +6,7 @@ import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucid
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
+import { isClassCategoryId, classIdFromCategoryId } from '@/lib/classCategories'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
@@ -26,8 +27,12 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const isEdit   = !!editTodo
   const isCanvas = !!(editTodo?.canvasId)
 
+  // The two halves of the category picker. `todoCategories` already arrives merged.
+  const ownCategories     = todoCategories.filter(c => !isClassCategoryId(c.id))
+  const classCategoryChips = todoCategories.filter(c => isClassCategoryId(c.id))
+
   const [title,         setTitle]         = useState(editTodo?.title || initialTitle || '')
-  const [category,      setCategory]      = useState(editTodo?.category || todoCategories[0]?.id || '')
+  const [category,      setCategory]      = useState(editTodo?.category || ownCategories[0]?.id || '')
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
   const [notes,         setNotes]         = useState(editTodo?.notes || initialNotes || '')
@@ -41,8 +46,6 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   )
   const [linkedEventId, setLinkedEventId] = useState(editTodo?.linkedEventId || '')
   const [showDoBefore,  setShowDoBefore]  = useState(!!editTodo?.linkedEventId)
-  const [linkedClassId, setLinkedClassId] = useState(editTodo?.linkedClassId  || '')
-  const [showClassLink, setShowClassLink] = useState(!!editTodo?.linkedClassId)
   const [repeats,       setRepeats]       = useState(!!editTodo?.recurrence)
   const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
   const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
@@ -89,7 +92,11 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
       notes:         notes.trim() || null,
       reminder:      reminderObj,
       linkedEventId: showDoBefore ? linkedEventId : null,
-      linkedClassId: showClassLink ? linkedClassId : null,
+      /* There used to be a separate "Link to a class" picker here, which asked the same
+         question the category picker now asks — a task could claim one class by
+         category and a different one by link. The category is the answer; the field is
+         kept in step with it so the older tasks that only have the link still work. */
+      linkedClassId: classIdFromCategoryId(category) ?? editTodo?.linkedClassId ?? null,
       recurrence:    (!isCanvas && repeats) ? {
         type:  repeatType,
         days:  repeatType === 'custom' ? repeatDays : [],
@@ -167,19 +174,42 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                    style={isCanvas ? { color: 'var(--text-2)', cursor: 'default' } : {}} />
           </div>
 
-          {/* Category — hidden for canvas assignments */}
+          {/* Category — hidden for canvas assignments.
+              Your own categories and your classes are both categories, but they are not
+              the same kind of thing: one is a bucket you named, the other is a course
+              with meetings on the calendar. Run together in a single wrap of chips they
+              read as one arbitrary list, so they are separated by a rule. */}
           {!isCanvas && todoCategories.length > 0 && (
             <div>
               <label className="field-label">Category</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {todoCategories.map(cat => (
-                  <button key={cat.id} type="button" onClick={() => setCategory(cat.id)}
-                          style={chipStyle(category === cat.id, cat.color)}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: cat.color }} />
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
+              {ownCategories.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {ownCategories.map(cat => (
+                    <button key={cat.id} type="button" onClick={() => setCategory(cat.id)}
+                            style={chipStyle(category === cat.id, cat.color)}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: cat.color }} />
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {classCategoryChips.length > 0 && (<>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: ownCategories.length ? '12px 0 8px' : '0 0 8px' }}>
+                  <span style={{ fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-3)', flexShrink: 0 }}>
+                    Your classes
+                  </span>
+                  <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {classCategoryChips.map(cat => (
+                    <button key={cat.id} type="button" onClick={() => setCategory(cat.id)}
+                            style={chipStyle(category === cat.id, cat.color)}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: cat.color }} />
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </>)}
             </div>
           )}
 
@@ -308,43 +338,6 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
               </div>
             )}
           </div>
-
-          {/* Link to class (only shown when class schedule has entries) */}
-          {canvasClasses.length > 0 && (
-            <div>
-              <button type="button"
-                      onClick={() => { setShowClassLink(v => !v); if (showClassLink) setLinkedClassId('') }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.875rem', fontWeight: 600, color: showClassLink ? 'var(--blue)' : 'var(--text-3)', transition: 'color .15s', padding: 0 }}>
-                <BookOpen size={14} />
-                {showClassLink ? 'Linked to class' : 'Link to a class'}
-              </button>
-              {showClassLink && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {canvasClasses.filter(c => c.enabled !== false).map(cls => (
-                      <button key={cls.id} type="button"
-                              onClick={() => setLinkedClassId(cls.id)}
-                              style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 6,
-                                padding: '6px 12px', borderRadius: 999,
-                                fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
-                                fontFamily: 'inherit', transition: 'all .13s',
-                                border: linkedClassId === cls.id ? `1.5px solid ${cls.color}` : '1.5px solid transparent',
-                                background: linkedClassId === cls.id ? cls.color + '22' : 'var(--surface2)',
-                                color: linkedClassId === cls.id ? cls.color : 'var(--text-2)',
-                              }}>
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: cls.color, flexShrink: 0 }} />
-                        {cls.courseName}
-                      </button>
-                    ))}
-                  </div>
-                  {showClassLink && !linkedClassId && (
-                    <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-3)' }}>Select a class above.</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Notes */}
           <div>
