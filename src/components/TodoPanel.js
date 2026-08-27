@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye, GripVertical } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
-import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId } from '@/lib/classCategories'
+import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId, isClassCategoryId as isClassCategory } from '@/lib/classCategories'
 
 import Confetti from '@/components/Confetti'
 
@@ -228,10 +228,18 @@ export default function TodoPanel({
 
   const categoryChips = allCategories.length > 0 && (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: fullPage ? '10px 24px' : '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-      {allCategories.map(cat => {
+      {allCategories.map((cat, i) => {
         const active = activeCategories.includes(cat.id)
+        /* A hairline where your own categories end and your classes begin. The list is
+           already ordered that way, so one rule at the boundary is enough — a heading
+           would cost a whole line in a bar that is meant to stay out of the way. */
+        const startsClasses = isClassCategory(cat.id) && !isClassCategory(allCategories[i - 1]?.id)
         return (
-          <button key={cat.id} onClick={() => setActiveCategories(prev =>
+          <Fragment key={cat.id}>
+          {startsClasses && i > 0 && (
+            <span aria-hidden style={{ width: 1, alignSelf: 'stretch', margin: '1px 4px', background: 'var(--border)', flexShrink: 0 }} />
+          )}
+          <button onClick={() => setActiveCategories(prev =>
             prev.includes(cat.id) ? prev.filter(id => id !== cat.id) : [...prev, cat.id]
           )}
                   style={{
@@ -245,6 +253,7 @@ export default function TodoPanel({
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
             {cat.label}
           </button>
+          </Fragment>
         )
       })}
     </div>
