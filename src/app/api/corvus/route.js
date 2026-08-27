@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/session'
-import { describeCategories, resolveCategory } from '@/lib/corvusCategories'
+import { categoriesContext, describeCategories, resolveCategory } from '@/lib/corvusCategories'
 import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -73,6 +73,7 @@ function buildTools(todoCategories = []) {
           category:      { type: 'string', description: describeCategories(todoCategories) },
           linkedEventId: { type: 'string', description: 'ID of a calendar event this task is linked to' },
           notes:         { type: 'string' },
+          subtasks:      { type: 'array', items: { type: 'string' }, description: 'Steps to break this task into, in order — each a short imperative phrase ("Draft the outline"). Use when the user asks for steps or a breakdown, or when the task is plainly multi-step. Maximum 20; leave out entirely for a simple one-step task.' },
           repeatType:    { type: 'string', description: 'Recurrence: daily, weekly, or custom' },
           repeatDays:    { type: 'array', items: { type: 'integer' }, description: 'For custom only: day numbers 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat' },
           repeatUntil:   { type: 'string', description: 'Repeat end date YYYY-MM-DD (optional for tasks)' },
@@ -140,8 +141,9 @@ function buildTools(todoCategories = []) {
           title:    { type: 'string' },
           dueDate:  { type: 'string', description: 'YYYY-MM-DD' },
           priority: { type: 'string', enum: ['low', 'medium', 'high'] },
-          category: { type: 'string' },
+          category: { type: 'string', description: describeCategories(todoCategories) },
           notes:    { type: 'string' },
+          subtasks: { type: 'array', items: { type: 'string' }, description: 'Replace the task’s steps with these, in order. Only send this when the user asks to change the breakdown — omitting it leaves existing subtasks alone. Maximum 20.' },
           reminderMinutesBefore: { type: 'integer', description: 'Set a push reminder this many minutes before the due date (midnight). 1440 = one day before. Pass 0 to remove an existing reminder.' },
           reminderAt:            { type: 'string', description: 'Set a push reminder at this exact local time, YYYY-MM-DDTHH:MM. Takes precedence over reminderMinutesBefore.' },
         },
@@ -214,6 +216,33 @@ function toGroqMessages(messages) {
 }
 
 // Convert Groq response message → our internal (Anthropic-style) content array
+/** The tools whose `category` means a *task* category. See fromGroqMessage. */
+const TASK_TOOLS = new Set(['preview_task', 'edit_task'])
+
+/** Same ceiling the task form enforces, so Corvus cannot create a task the UI won't edit. */
+const MAX_SUBTASKS = 20
+
+/**
+ * Titles only, trimmed, deduplicated, capped.
+ *
+ * The schema asks for strings but models sometimes send `{title: '…'}` objects, so
+ * both are accepted. An array that survives with nothing in it is dropped rather than
+ * passed on as `[]`, which for edit_task would mean "delete every existing step".
+ */
+function cleanSubtasks(value) {
+  if (!Array.isArray(value)) return null
+  const seen = new Set()
+  const titles = []
+  for (const item of value) {
+    const title = String(typeof item === 'string' ? item : item?.title ?? '').trim()
+    if (!title || seen.has(title.toLowerCase())) continue
+    seen.add(title.toLowerCase())
+    titles.push(title)
+    if (titles.length === MAX_SUBTASKS) break
+  }
+  return titles.length ? titles : null
+}
+
 function fromGroqMessage(msg, todoCategories = []) {
   const content = []
   if (msg.content) content.push({ type: 'text', text: msg.content })
@@ -231,11 +260,21 @@ function fromGroqMessage(msg, todoCategories = []) {
        will occasionally return a label, a near-miss, or something invented, and an id
        that resolves to nothing renders as a task with no category — a silent wrong
        answer. Unresolvable means no category, which reads as "it didn't pick one" on
-       the preview card the user confirms. */
-    if (typeof input.category === 'string') {
+       the preview card the user confirms.
+
+       Task tools only. Events have their own fixed category list (class, exam,
+       personal, …) which shares the parameter name but not the values, so checking
+       one against the other would throw away every valid event category. */
+    if (TASK_TOOLS.has(tc.function.name) && typeof input.category === 'string') {
       const resolved = resolveCategory(input.category, todoCategories)
       if (resolved) input.category = resolved
       else delete input.category
+    }
+
+    if ('subtasks' in input) {
+      const cleaned = cleanSubtasks(input.subtasks)
+      if (cleaned) input.subtasks = cleaned
+      else delete input.subtasks
     }
 
     content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input })
@@ -316,6 +355,8 @@ ${todosCtx}
 CANVAS ASSIGNMENTS (synced from Canvas LMS — read-only, due within 30 days):
 ${canvasCtx}
 
+${categoriesContext(todoCategories)}
+
 PERSONALITY:
 - Warm, direct, and a little witty. You're like a smart study buddy, not a corporate chatbot.
 - Keep replies short (1–2 sentences max) unless you're asking a follow-up question.
@@ -393,9 +434,21 @@ BEHAVIOR RULES:
    - Each class on the schedule is also a task CATEGORY. When a task clearly belongs to
      one of their courses, file it under that class's category rather than a generic
      one — "read chapter 4 for Physics" belongs to the Physics category, not "academic".
-     The exact category ids are listed in the preview_task tool's category parameter.
-     If you are not sure which course a task belongs to, leave the category out and say
-     so rather than guessing.
+     The courses and their exact category ids are listed under THE STUDENT'S CLASSES
+     above; use those ids verbatim. Match loosely on the course name — "chem", "Chem
+     101" and "chemistry" all mean the Chemistry class if there is exactly one.
+     If you are not sure which course a task belongs to, or the task is not coursework
+     at all, leave the category out and say so rather than guessing.
+   - You can answer questions about the class list directly from THE STUDENT'S CLASSES
+     — that is their full schedule, not just the classes meeting in the days shown.
+
+9b. SUBTASKS — a task can carry an ordered checklist of steps.
+   - Pass a subtasks list when the user asks for steps, a breakdown, or a plan for one piece
+     of work ("break down my essay", "add a task to study for the final with steps").
+   - Each is a short imperative phrase, in the order they should be done. Aim for 3–6
+     unless the user asks for more; 20 is the hard maximum.
+   - One task with steps, not several tasks. Separate errands stay separate tasks.
+   - Do not invent steps for a task that is plainly a single action.
 
 10. TIME ESTIMATION — when a user asks how long a task, assignment, or project will take:
     - Give a realistic estimate based on: task type (reading, problem sets, essay, coding, studying), course level (intro vs upper-div), and any context they provide.
