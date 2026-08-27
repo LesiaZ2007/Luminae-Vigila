@@ -352,6 +352,36 @@ It could not before, and the reason was blunt: the task tool advertised its cate
 - Corvus is told to leave the category out and say so when it can't tell which course a task belongs to, rather than picking the closest-sounding one
 - Only ids and labels are sent. Nothing else about a category is any use to the model, and the request is already carrying events, tasks and assignments
 
+Two things were still missing after that first pass, and both showed up the moment the feature met real use.
+
+**Corvus could not see the class list at all.** The category ids lived only inside a nested JSON-schema parameter description, which a model really only consults once it has already decided to call the task tool. So *"what classes am I taking?"* got nothing, and the roster could not inform the conversation that leads up to a task. Your classes are now named in the system prompt itself, listed separately from the categories you made — one is a bucket you named, the other is a course with meetings on the calendar, and running them together read as one arbitrary list. An empty schedule says so explicitly: silence would read as *"the classes were omitted"*, which invites the model to invent one.
+
+**`edit_task` still advertised a bare `category: string`** with no list at all, so Corvus could file a *new* task under a class but never move an existing one.
+
+Fixed alongside them, from the same first pass: checking the returned category against the *task* category list was being applied to `preview_event` and `edit_event` too. Events have their own fixed list — `class`, `exam`, `personal`, … — which shares the parameter name but none of the values, so every valid event category was being thrown away and silently replaced with whichever one happened to be first. Only the task tools are checked now.
+
+### 🪶 Corvus can break a task into steps
+
+*"Add a task to study for the Chem final, with steps"* now produces one task carrying an ordered checklist, rather than five loose tasks or one with the steps buried in the notes.
+
+Tasks have had subtasks for a long time — the form builds them, the list renders and ticks them off. Corvus simply had no parameter for them, so it could describe a breakdown in prose but not create one.
+
+- **The steps are shown in full on the preview card**, not counted. The whole point of confirming a breakdown is reading it; *"5 steps"* tells you nothing about whether they are the right five
+- **Titles come back, records are minted here** — `{id, title, completed}`, the same shape the task form produces, so a Corvus-made checklist is indistinguishable from a hand-made one once saved
+- **On an edit, absent means "leave them alone"** — only an explicit list replaces what is there, so asking Corvus to rename a task cannot quietly wipe its checklist
+- Titles are trimmed, deduplicated and capped at 20 — the same ceiling the form enforces, so Corvus cannot create a task the form then refuses to edit
+- Corvus is told not to invent steps for a task that is plainly a single action
+
+### 📚 One place to say which class a task is for
+
+A task could be filed under a class **category** and, separately, carry a **"Link to a class"** — two controls in the same form asking the same question, which meant a task could claim Physics by one and Chemistry by the other.
+
+The category is the answer, because it is the one that does something: the list filters, groups and colours by category. The link only ever printed a chip. So the separate picker is gone, and `linkedClassId` is kept in step with the category on save, which is what keeps the older tasks that only have the link working exactly as before. Nothing stored was rewritten.
+
+Your own categories and your classes are also now **separated by a rule** rather than run together in one wrap of chips — in the task form under a *Your classes* heading, and in the filter bar as a hairline at the boundary.
+
+One related fix: when Corvus could not tell which category a task belonged to, the app fell back to *the first category in the list*. That invented an answer the model had deliberately declined to give — and now that classes are categories, the first one can be a course, so an unrelated errand could land under Chemistry. No category is the honest outcome, and the task row already handles it.
+
 ### 🔍 Search
 - Search across events, tasks, Canvas assignments, notes, and custom-list items with scope and status filters
 - Results grouped by type — Canvas assignments, tasks, and events in a split layout

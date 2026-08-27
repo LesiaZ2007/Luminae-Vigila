@@ -30,6 +30,25 @@ function reminderToToolData(reminder) {
   return { reminderMinutesBefore: Math.round(reminder.ms / 60_000), reminderAt: null }
 }
 
+/**
+ * Corvus sends subtask titles; the task list stores `{id, title, completed}` records.
+ * Ids are minted here, matching the shape the task form produces, so a Corvus-made
+ * checklist is indistinguishable from a hand-made one once saved.
+ */
+function toSubtaskRecords(subtasks) {
+  return (subtasks ?? []).map((st, i) => (
+    // Already a record — it came back from the task form via "Edit details", where the
+    // user may have ticked one off. Re-minting it would discard that.
+    st && typeof st === 'object' && st.id
+      ? st
+      : {
+          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
+          title: String(typeof st === 'string' ? st : st?.title ?? ''),
+          completed: false,
+        }
+  )).filter(st => st.title.trim())
+}
+
 /** Label for the preview cards, or '' when this item has no reminder. */
 function previewReminderText(data, isTask) {
   return describeReminder(reminderFromToolData(data, isTask))
@@ -231,10 +250,35 @@ function DetailRow({ label, value, dot }) {
   )
 }
 
+/**
+ * The steps on a preview card.
+ *
+ * Shown in full rather than counted: the whole point of confirming a breakdown is
+ * reading it, and "5 steps" tells you nothing about whether they are the right five.
+ */
+function PreviewSteps({ subtasks }) {
+  if (!subtasks?.length) return null
+  return (
+    <div>
+      <div style={{ fontSize: '0.67rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)', marginBottom: 5 }}>
+        Steps · {subtasks.length}
+      </div>
+      <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {subtasks.map((st, i) => (
+          <li key={i} style={{ fontSize: '0.84rem', color: 'var(--text-2)', lineHeight: 1.35 }}>
+            {typeof st === 'string' ? st : st?.title}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 // ── Full-width preview panel (right column, non-compact mode) ─────────────
-function PreviewPanel({ pending, events, eventCategories, onConfirm, onCancel, onEditDetails }) {
+function PreviewPanel({ pending, events, eventCategories, todoCategories = [], onConfirm, onCancel, onEditDetails }) {
   const { name, data } = pending
   const isTask = name === 'preview_task'
+  const taskCat = isTask ? (todoCategories || []).find(c => c.id === data.category) : null
   const cat    = !isTask && (eventCategories || []).find(c => c.id === data.category)
   const accent = isTask ? '#10b981' : (cat?.color || '#3a6fa8')
   const linked = data.linkedEventId ? events.find(e => e.id === data.linkedEventId) : null
@@ -260,8 +304,13 @@ function PreviewPanel({ pending, events, eventCategories, onConfirm, onCancel, o
           {isTask ? (<>
             {data.dueDate  && <DetailRow label="Due date" value={formatDate(data.dueDate)} />}
             {data.priority && <DetailRow label="Priority" value={data.priority === 'high' ? '🔴  High' : data.priority === 'medium' ? '🟡  Medium' : '🟢  Low'} />}
-            {data.category && <DetailRow label="Category" value={data.category.charAt(0).toUpperCase() + data.category.slice(1)} />}
+            {/* The stored id is `class:cls_1724…` for a class, which is no use on a card
+                you are being asked to approve — show the course name and its colour. */}
+            {data.category && <DetailRow label="Category"
+              value={taskCat?.label ?? data.category.charAt(0).toUpperCase() + data.category.slice(1)}
+              dot={taskCat?.color} />}
             {linked        && <DetailRow label="Linked to" value={linked.title} />}
+            <PreviewSteps subtasks={data.subtasks} />
           </>) : (<>
             <DetailRow label="Date"  value={formatDate(data.start)} />
             {formatTime(data.start) && <DetailRow label="Time" value={
@@ -327,10 +376,11 @@ function PreviewPanel({ pending, events, eventCategories, onConfirm, onCancel, o
 }
 
 // ── Inline preview card (compact mode) ───────────────────────────────────
-function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel, onEditDetails }) {
+function InlinePreviewCard({ item, eventCategories, todoCategories = [], events, onConfirm, onCancel, onEditDetails }) {
   const isTask = item.type === 'preview_task'
   const d      = item.data
-  const cat    = !isTask && (eventCategories || []).find(c => c.id === d.category)
+  const cat     = !isTask && (eventCategories || []).find(c => c.id === d.category)
+  const taskCat = isTask ? (todoCategories || []).find(c => c.id === d.category) : null
   const accent = isTask ? '#10b981' : (cat?.color || '#3a6fa8')
   const linked = d.linkedEventId ? (events || []).find(e => e.id === d.linkedEventId) : null
   const isPending = item.state === 'pending'
@@ -350,6 +400,19 @@ function InlinePreviewCard({ item, eventCategories, events, onConfirm, onCancel,
           {d.dueDate  && <span style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>Due {formatDate(d.dueDate)}</span>}
           {d.priority && d.priority !== 'medium' && <span style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>{d.priority === 'high' ? '🔴' : '🟡'} {d.priority}</span>}
           {linked     && <span style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>↳ {linked.title}</span>}
+          {/* Which class it landed under is the thing most worth checking before you
+              tap Add, so it belongs on the small card too. */}
+          {taskCat && (
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: taskCat.color || 'var(--text-3)', flexShrink: 0 }} />
+              {taskCat.label}
+            </span>
+          )}
+          {d.subtasks?.length > 0 && (
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>
+              {d.subtasks.length} step{d.subtasks.length === 1 ? '' : 's'}: {d.subtasks.map(s => typeof s === 'string' ? s : s?.title).join(' · ')}
+            </span>
+          )}
         </>) : (<>
           <span style={{ fontSize: '0.74rem', color: 'var(--text-2)' }}>{formatDate(d.start)}{formatTime(d.start) ? ` · ${formatTime(d.start)}` : ''}</span>
         </>)}
@@ -601,6 +664,9 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
         // The reminder args are their own vocabulary, not todo fields — spreading them
         // raw would write reminderMinutesBefore onto the task and set no reminder.
         const { taskId, reminderMinutesBefore, reminderAt, ...changes } = inp
+        // Subtasks arrive as plain titles; the list stores records. Absent means
+        // "leave them alone" — only an explicit array replaces what is there.
+        if (changes.subtasks) changes.subtasks = toSubtaskRecords(changes.subtasks)
         const updated = { ...t, ...changes }
         if (hasReminderArg(inp)) updated.reminder = reminderFromToolData(inp, true)
         onUpdateTodo(updated)
@@ -652,8 +718,13 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       } : null
       onAddTodo({
         title: data.title, dueDate: data.dueDate || '', priority: data.priority || 'medium',
-        category: data.category || todoCategories[0]?.id || 'academic',
+        /* No category means Corvus could not tell which one — falling back to the first
+           in the list used to invent an answer, and now that classes are categories the
+           first one can be a course, so it would file unrelated work under a class.
+           Uncategorised is the honest outcome and the task row already handles it. */
+        category: data.category || '',
         linkedEventId: data.linkedEventId || '', notes: data.notes || '',
+        subtasks: toSubtaskRecords(data.subtasks),
         recurrence,
         reminder: reminderFromToolData(data, true),
       })
@@ -908,7 +979,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
                 return (
                   <div key={i} style={{ display: 'flex', justifyContent: 'flex-start' }}>
                     <InlinePreviewCard
-                      item={item} eventCategories={eventCategories} events={events}
+                      item={item} eventCategories={eventCategories} todoCategories={todoCategories || []} events={events}
                       onConfirm={item.state === 'pending' ? handleConfirm : undefined}
                       onCancel={item.state === 'pending' ? handleCancel : undefined}
                       onEditDetails={item.state === 'pending' ? () => setEditingPreview(true) : undefined}
@@ -988,7 +1059,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       {/* ── Side preview panel (full mode only) ── */}
       {showSidePanel && (
         <PreviewPanel
-          pending={pending} events={events} eventCategories={eventCategories}
+          pending={pending} events={events} eventCategories={eventCategories} todoCategories={todoCategories || []}
           onConfirm={handleConfirm} onCancel={handleCancel}
           onEditDetails={() => setEditingPreview(true)}
         />
@@ -1006,7 +1077,8 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
         ) : (
           <AddTodoModal
             events={events} todoCategories={todoCategories || []}
-            editTodo={{ ...pending.data, id: 'corvus-preview' }}
+            /* The form renders subtask records, not the bare titles Corvus sends. */
+            editTodo={{ ...pending.data, subtasks: toSubtaskRecords(pending.data.subtasks), id: 'corvus-preview' }}
             onAdd={() => {}} onEdit={handleEditTodoSave}
             onClose={() => setEditingPreview(false)}
           />
