@@ -226,13 +226,14 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - Mobile-responsive stacked layout; matches the existing Courses tab visual style
 - Empty state shown when no graded assignments exist yet
 
-### 🚫 Cancel one class, or add a one-off
+### 🚫 Cancel one class, add a one-off, or make one an exam
 
 A class schedule entry describes the normal week — MWF at 9:00 until the end of term. Reality has holidays, a professor who cancels, and the occasional extra review session. Editing the schedule itself is the wrong tool for those: it rewrites every meeting to fix one, and there is nowhere to say *"not this Tuesday"*.
 
 - **Cancel a single class** — tap that meeting on the calendar and choose **Cancel this class** in the detail view. The rest of the term is untouched
 - **Add a one-off** — open the class from Settings and use the row at the bottom of the form: pick a date and times, then **Add meeting**. It appears on the calendar tagged *"One-off meeting, not part of the usual schedule"*, and its detail view offers **Remove this meeting** rather than Cancel
-- **Undo either** — the class form lists every cancelled date and every extra, each with a Restore or Remove beside it. Nothing is destroyed, so a mis-tap costs one tap back
+- **Make one period an exam** — tap that meeting and choose **Make this an exam**. It turns red on the calendar, keeps its place in the week, and the rest of the term stays an ordinary class
+- **Undo any of them** — the class form lists every cancelled date, every extra and every exam, each with a Restore, Remove or Undo beside it. Nothing is destroyed, so a mis-tap costs one tap back
 
 Exceptions live *alongside* the recurrence rather than inside it, on the class entry's own `exceptions` field (JSONB, so no migration):
 
@@ -240,6 +241,7 @@ Exceptions live *alongside* the recurrence rather than inside it, on the class e
 exceptions: {
   cancelled: ['2026-08-25'],                        // no meeting that day
   added:     [{ date, startTime, endTime, ... }],   // an extra meeting
+  exams:     [{ date, title, startTime, ... }],     // that day is an exam
 }
 ```
 
@@ -251,6 +253,19 @@ Keeping the pattern intact is what makes a cancelled date still meaningful if th
 - **Exceptions apply immediately, not on Save.** They are edits to the stored class, not to the form's draft; mixing the two would mean a cancellation vanished if you closed the form without saving. The form is handed the live record so the list stays current
 - Dates are local `YYYY-MM-DD` throughout — a class meeting happens on a calendar day, and anchoring to an instant would move that day across a timezone boundary
 - Stored exceptions are re-validated on read rather than trusted, so a malformed entry is ignored instead of crashing the calendar
+
+#### Why an exam is a transform, not an event
+
+A midterm happens *in* the class period — same room, usually the same hour. Describing it as a separate calendar event would mean cancelling the period and rebuilding most of it by hand, and the two could then drift apart. So an exam rewrites the meeting in place, keeping its id, and everything anchored to that occurrence still resolves.
+
+- **Every field but the date is optional, and an omitted one means "same as the normal period".** The common path is to check the title and press the button. It also means the exam keeps following the class: move the period to 10:00 next month and an exam that never named a time moves with it
+- **The form sends unchanged fields as absent, not as a copy.** Storing `09:00` because that is what the class happens to run at today would silently pin the exam to a time you never chose
+- **Marking a cancelled date as an exam un-cancels it.** An exam is a meeting; leaving the date cancelled would file the exam and then show nothing on the calendar
+- **An exam whose meeting no longer exists is carried, not discarded.** Cancel the date afterwards and the exam is still there when you restore it
+- **An extra can be the exam.** A review session that turns out to be the exam itself is the same edit, so the transform runs over one-offs too
+- **It offers a study plan afterwards**, exactly as a hand-made exam event does — an exam you have just put on the calendar is the moment you are most likely to want study time for it
+- The exam red overrides the course colour on purpose. A midterm has to stand out from the fifteen ordinary meetings around it, which is the whole point of marking it
+- The block also carries `category: 'exam'`, so everything that already keys off that category treats it as one
 
 ### 📆 Class Schedule *(no Canvas required)*
 - Add recurring class meetings manually — days of week, time, room, semester dates
