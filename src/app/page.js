@@ -25,7 +25,7 @@ import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/cus
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
-import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance } from '@/lib/classInstances'
+import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
 import { toYMDLocal } from '@/lib/calendarView'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
@@ -33,6 +33,7 @@ import { PENDING_SHARE_KEY } from '@/app/share/page'
 import EventModal from '@/components/EventModal'
 import EventDetailModal from '@/components/EventDetailModal'
 import StudyPlanModal    from '@/components/StudyPlanModal'
+import ExamBlockModal    from '@/components/ExamBlockModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
@@ -108,6 +109,14 @@ const DEFAULT_TODO_CATS = [
   { id: 'health',   label: 'Health',   color: '#ef4444' },
 ]
 
+/** "14:05" from whatever shape an occurrence's start/end arrived in. */
+function hhmmLocal(value) {
+  if (!value) return ''
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 export default function Home() {
   const { theme, setTheme } = useTheme()
 
@@ -149,6 +158,8 @@ export default function Home() {
   // eventModal. Null when no detail view is showing.
   const [detailEvent,   setDetailEvent]   = useState(null)
   const [studyPlanPending, setStudyPlanPending] = useState(null) // exam event that just got saved
+  // The class period being turned into an exam: { classId, dateStr, occurrence }.
+  const [examDraft,        setExamDraft]        = useState(null)
   const [showTodoModal,   setShowTodoModal]   = useState(false)
   const [editingTodo,     setEditingTodo]     = useState(null)
   const [initialTodoDate, setInitialTodoDate] = useState(null)
@@ -1914,6 +1925,14 @@ export default function Home() {
     setCanvasClasses(prev => prev.map(c => (c.id === classId ? removeInstance(c, dateStr) : c)))
   }, [])
 
+  const markClassExam = useCallback((classId, entry) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? setExamInstance(c, entry) : c)))
+  }, [])
+
+  const clearClassExam = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? clearExamInstance(c, dateStr) : c)))
+  }, [])
+
   const deleteCanvasClass = useCallback((id) => {
     // Tombstone rather than drop: an absent row reads as "created on another device"
     // to the merge, so a hard delete came back on the next sync.
@@ -1965,7 +1984,29 @@ export default function Home() {
             notes:    extra.note ?? null,
             isExtra:  true,
           },
-        }))
+        }),
+        /* An exam replaces the period in place: same id, so anything anchored to that
+           occurrence still resolves. Times fall back to the meeting's own rather than
+           the class pattern's, which is what makes marking an already-moved one-off as
+           the exam keep its hours. The exam red overrides the course colour — a
+           midterm has to stand out from the fifteen ordinary meetings around it. */
+        (meeting, exam) => {
+          const day = exam.date
+          return {
+            ...meeting,
+            title: exam.title || `${cls.courseName} — Exam`,
+            start: exam.startTime ? `${day}T${exam.startTime}:00` : meeting.start,
+            end:   exam.endTime   ? `${day}T${exam.endTime}:00`   : meeting.end,
+            color: EXAM_COLOR,
+            extendedProps: {
+              ...meeting.extendedProps,
+              category: 'exam',
+              location: exam.location ?? meeting.extendedProps.location,
+              notes:    exam.note ?? meeting.extendedProps.notes ?? null,
+              isExam:   true,
+            },
+          }
+        })
       })
   }, [canvasClasses])
 
@@ -3179,6 +3220,11 @@ export default function Home() {
           onOpenNote={openNoteById}
           onCancelMeeting={cancelClassMeeting}
           onRemoveMeeting={removeClassMeeting}
+          onMarkExam={(classId, dateStr, occurrence) => {
+            setDetailEvent(null)
+            setExamDraft({ classId, dateStr, occurrence })
+          }}
+          onClearExam={clearClassExam}
           /* Seeded with the day being looked at, so "new event" from an event on
              Thursday starts on Thursday rather than today. */
           onNewEvent={start => {
@@ -3198,6 +3244,33 @@ export default function Home() {
                     existingEvents={events}
                     canvasClasses={canvasClasses}
                     onClose={() => { setEventModal({ open: false, event: null, date: null }); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
+      )}
+      {examDraft && (
+        <ExamBlockModal
+          meeting={{
+            courseName: examDraft.occurrence.courseName,
+            title:      examDraft.occurrence.title,
+            location:   examDraft.occurrence.location,
+            startTime:  hhmmLocal(examDraft.occurrence.start),
+            endTime:    hhmmLocal(examDraft.occurrence.end),
+            dateLabel:  new Date(examDraft.occurrence.start).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+          }}
+          defaults={examDraft.existing ?? {}}
+          onConfirm={(entry) => {
+            markClassExam(examDraft.classId, { ...entry, date: examDraft.dateStr })
+            pushToast('Marked as an exam', `${examDraft.occurrence.courseName || 'That period'} on ${examDraft.dateStr}`)
+            /* Same offer a hand-made exam event gets. An exam you have just put on the
+               calendar is the moment you are most likely to want study time for it. */
+            setStudyPlanPending({
+              id:    examDraft.occurrence.id,
+              title: entry.title || `${examDraft.occurrence.courseName || 'Class'} — Exam`,
+              start: entry.startTime ? `${examDraft.dateStr}T${entry.startTime}:00` : examDraft.occurrence.start,
+              extendedProps: { category: 'exam' },
+            })
+            setExamDraft(null)
+          }}
+          onClose={() => setExamDraft(null)}
+        />
       )}
       {studyPlanPending && (
         <StudyPlanModal
@@ -3269,6 +3342,7 @@ export default function Home() {
           onRestoreMeeting={restoreClassMeeting}
           onRemoveMeeting={removeClassMeeting}
           onAddMeeting={addClassMeeting}
+          onClearExam={clearClassExam}
           onClose={() => { setShowClassModal(false); setEditingClass(null) }}
         />
       )}

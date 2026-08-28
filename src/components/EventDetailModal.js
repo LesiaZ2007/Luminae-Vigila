@@ -28,10 +28,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   X, Pencil, Trash2, MapPin, ExternalLink, Clock, CalendarDays, Bell,
-  Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus,
+  Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus, GraduationCap,
 } from 'lucide-react'
 import { describeLocation } from '@/lib/maps'
 import { toYMDLocal }       from '@/lib/calendarView'
+import { EXAM_COLOR }       from '@/lib/classInstances'
 
 const SOURCE_LABELS = {
   google:         'Google Calendar',
@@ -107,6 +108,7 @@ export function normalizeEvent(event) {
     professor:   ext.professor ?? null,
     classId:     ext.classId ?? null,
     isExtra:     !!ext.isExtra,
+    isExam:      !!ext.isExam,
     courseName:  ext.courseName ?? null,
     htmlUrl:     ext.htmlUrl ?? null,
     reminder:    event.reminder ?? null,
@@ -173,6 +175,9 @@ export default function EventDetailModal({
   // Class schedule meetings only: call off this one occurrence, or drop a one-off
   // that was added. Omit either to leave the action out.
   onCancelMeeting, onRemoveMeeting,
+  // Class schedule meetings only: turn this one period into an exam block, or turn it
+  // back. Marking opens a form, so the handler receives the whole occurrence.
+  onMarkExam, onClearExam,
   // Start a fresh event from here. Offered alongside Edit because the two are easy to
   // confuse once a popup is already open on top of an existing event.
   onNewEvent,
@@ -255,6 +260,12 @@ export default function EventDetailModal({
           {ev.isExtra && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>
               <CalendarPlus size={12} /> One-off meeting, not part of the usual schedule
+            </div>
+          )}
+
+          {ev.isExam && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: EXAM_COLOR }}>
+              <GraduationCap size={12} /> Exam — this period, not the usual class
             </div>
           )}
 
@@ -374,6 +385,20 @@ export default function EventDetailModal({
           {/* A class meeting is one occurrence of a recurring pattern, so neither Edit
               nor Delete fits: both would rewrite the whole term. Calling off this one
               date leaves the pattern alone and is reversible from the class settings. */}
+          {/* An exam is a property of the period, so it sits with the other one-off
+              changes to it rather than under Edit, which edits the whole term. */}
+          {isClassMeeting && (
+            ev.isExam
+              ? onClearExam && (
+                  <FooterButton icon={GraduationCap} label="Not an exam any more"
+                                onClick={() => { onClearExam(ev.classId, meetingDate); handleClose() }} />
+                )
+              : onMarkExam && (
+                  <FooterButton icon={GraduationCap} label="Make this an exam"
+                                onClick={() => { onMarkExam(ev.classId, meetingDate, ev); handleClose() }} />
+                )
+          )}
+
           {isClassMeeting && (
             ev.isExtra
               ? onRemoveMeeting && (
