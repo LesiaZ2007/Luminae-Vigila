@@ -187,3 +187,43 @@ describe('EventDetailModal', () => {
     expect(onClose).toHaveBeenCalled()
   })
 })
+
+describe('EventDetailModal — exam blocks', () => {
+  afterEach(cleanup)
+
+  function classMeeting(over = {}) {
+    return ownEvent({
+      id: 'canvascls_cls1_3',
+      extendedProps: { source: 'canvas-class', classId: 'cls1', courseName: 'Physics 101', location: 'Room 204', ...over },
+    })
+  }
+
+  it('offers to make a class period an exam', async () => {
+    const onMarkExam = vi.fn()
+    render(<EventDetailModal event={classMeeting()} categories={CATEGORIES}
+                             onMarkExam={onMarkExam} onClose={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: /make this an exam/i }))
+    // The date, not the occurrence id, is what an exception is keyed by.
+    expect(onMarkExam).toHaveBeenCalledWith('cls1', '2026-08-19', expect.objectContaining({ classId: 'cls1' }))
+  })
+
+  it('offers to undo once the period is already an exam', async () => {
+    const onClearExam = vi.fn()
+    render(<EventDetailModal event={classMeeting({ isExam: true })} categories={CATEGORIES}
+                             onMarkExam={() => {}} onClearExam={onClearExam} onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /make this an exam/i })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /not an exam any more/i }))
+    expect(onClearExam).toHaveBeenCalledWith('cls1', '2026-08-19')
+  })
+
+  it('says on the card that this period is an exam', () => {
+    render(<EventDetailModal event={classMeeting({ isExam: true })} categories={CATEGORIES} onClose={() => {}} />)
+    expect(screen.getByText(/not the usual class/i)).toBeTruthy()
+  })
+
+  it('leaves the action out for anything that is not a class meeting', () => {
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES}
+                             onMarkExam={() => {}} onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /make this an exam/i })).toBeNull()
+  })
+})

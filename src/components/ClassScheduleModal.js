@@ -7,12 +7,12 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, Trash2, MapPin, CalendarX, CalendarPlus } from 'lucide-react'
+import { X, Trash2, MapPin, CalendarX, CalendarPlus, GraduationCap } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import Select     from '@/components/Select'
 import { describeLocation } from '@/lib/maps'
-import { getExceptions, isDateStr } from '@/lib/classInstances'
+import { getExceptions, isDateStr, EXAM_COLOR } from '@/lib/classInstances'
 
 const DAY_LABELS  = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -50,7 +50,7 @@ export default function ClassScheduleModal({
   // One-off exceptions, applied immediately rather than on Save: they are edits to the
   // stored class, not to this form's draft, and mixing the two would mean a cancelled
   // holiday vanished if you closed the form without saving.
-  onRestoreMeeting, onRemoveMeeting, onAddMeeting,
+  onRestoreMeeting, onRemoveMeeting, onAddMeeting, onClearExam,
 }) {
   const isEdit = !!editClass
 
@@ -60,7 +60,7 @@ export default function ClassScheduleModal({
   const [location,       setLocation]       = useState(editClass?.location        || '')
   const locationDesc = useMemo(() => describeLocation(location), [location])
 
-  const { cancelled: cancelledDates, added: addedMeetings } = getExceptions(editClass)
+  const { cancelled: cancelledDates, added: addedMeetings, exams: examDates } = getExceptions(editClass)
   const [extraDate,  setExtraDate]  = useState('')
   const [extraStart, setExtraStart] = useState('14:00')
   const [extraEnd,   setExtraEnd]   = useState('15:00')
@@ -301,7 +301,7 @@ export default function ClassScheduleModal({
             <div>
               <label className="field-label">This term&apos;s exceptions <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-3)' }}>(optional)</span></label>
 
-              {cancelledDates.length === 0 && addedMeetings.length === 0 && (
+              {cancelledDates.length === 0 && addedMeetings.length === 0 && examDates.length === 0 && (
                 <p style={{ fontSize: '0.78rem', color: 'var(--text-3)', margin: '0 0 8px', lineHeight: 1.5 }}>
                   No changes to the usual schedule. Cancel a single class by tapping it on the calendar; add a one-off meeting below.
                 </p>
@@ -330,6 +330,22 @@ export default function ClassScheduleModal({
                       </span>
                       <button type="button" onClick={() => onRemoveMeeting?.(editClass.id, a.date)}
                               style={linkBtn}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {examDates.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                  {examDates.map(e => (
+                    <div key={e.date} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+                      <GraduationCap size={13} style={{ color: EXAM_COLOR, flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--text-2)' }}>
+                        {longDate(e.date)} — {e.title || 'exam'}
+                        {e.startTime && e.endTime ? `, ${fmt12(e.startTime)}–${fmt12(e.endTime)}` : ''}
+                      </span>
+                      <button type="button" onClick={() => onClearExam?.(editClass.id, e.date)}
+                              style={linkBtn}>Undo</button>
                     </div>
                   ))}
                 </div>
