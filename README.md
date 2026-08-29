@@ -278,6 +278,26 @@ There used to be two tabs asking almost the same question. **Courses** was a Can
 
 Two tabs called "Courses" and "My Classes", listing overlapping things under different names, is a question the app was asking you rather than answering. So there is **one** tab. It looks different depending on whether Canvas is connected — which is the actual difference — rather than being two places to look.
 
+The tab opens on a **coursework month** — every deadline from every class on one grid — with the class cards a click away.
+
+#### 📅 The calendar is the main spread
+
+The cards answer *"what is the state of Physics?"*. They cannot answer the question that crosses classes — *"what is coming at me, and when?"* — because finding out that three things land on Thursday means opening five cards and holding five lists in your head. So the month grid is what the tab opens on, and **Calendar ⇄ Classes** switches.
+
+- **Exams, Canvas assignments and your own class tasks**, colour-coded by class, each chip clicking through to the detail view it already had — the task editor, the assignment modal, the event detail. It's a *view*, not a fourth place coursework can be edited
+- **Ordinary class meetings are deliberately absent.** A calendar of every lecture is the Calendar tab; here forty recurring meetings would bury the four things that actually have deadlines
+- **The selected day sits under the grid in full**, which is what makes `+2 more` and the phone's dots readable — and it's where a day gets worked rather than glanced at. Tick a task or an assignment off right there. An exam has no checkbox: it isn't something you complete, it happens to you
+- **Overdue is a red dot on the day and a red mark on the chip.** Completed work is never overdue, however old
+- **A count of what's still outstanding in the month on screen** — the number that says whether this month is calm or brutal, which no single cell can
+- **On a phone the cells are too small for text**, so a day collapses to coloured dots and the strip below does the reading
+- Paging to April and clicking a day doesn't snap back to today, and midnight doesn't yank your selected day out from under you — **Today** is a button for when you want it
+- **Month-only, on purpose.** A week view of coursework is what the cards' *This week* filter already is, and a day view of it is the `/today` page. The week filter isn't offered on the calendar: narrowing a month view to one week is less a filter than a lie about the month
+- Hand-rolled rather than a FullCalendar month view. FullCalendar is already in the bundle, but this is a read-only grid of deadlines with its own chip design, overdue treatment and day strip — re-theming a general calendar engine into that shape is more code than drawing seven columns, and it would pull the tab into FullCalendar's styling surface
+
+One subtle thing it gets right: dates are local `YYYY-MM-DD` throughout. `toISOString().slice(0, 10)` — how the mini month navigator does it — yields the **UTC** day, so an 11pm deadline in New York files itself on tomorrow.
+
+#### The class cards
+
 One expandable card per class, holding:
 
 - **When and where it meets** — the day pattern, the hours, the term dates, and the room. A real room links to Google Maps, a Zoom class offers its join link, because the app already knows the difference
@@ -1184,7 +1204,8 @@ src/
 │   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
 │   ├── CustomListPanel.js            # Custom list switcher tabs + checklist body
-│   ├── ClassesPanel.js               # My Classes tab — one card per class, Canvas folded in
+│   ├── ClassesPanel.js               # My Classes tab — coursework month + one card per class
+│   ├── ClassCalendar.js              # The coursework month grid + selected-day strip
 │   ├── ClassRemindersEditor.js       # Per-class reminder rules (tasks / exams)
 │   ├── AssignmentRow.js              # One Canvas assignment, as a row
 │   ├── StudyTimeCard.js              # Focus-timer hours per course, this week vs last
