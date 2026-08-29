@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
@@ -27,6 +27,7 @@ import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mer
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
+import { classReminderCandidates } from '@/lib/classReminders'
 import { toYMDLocal } from '@/lib/calendarView'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
 import { PENDING_SHARE_KEY } from '@/app/share/page'
@@ -44,6 +45,7 @@ import SidebarScheduleSection from '@/components/SidebarScheduleSection'
 import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
 import ClassScheduleModal     from '@/components/ClassScheduleModal'
 import CoursesPanel           from '@/components/CoursesPanel'
+import ClassesPanel           from '@/components/ClassesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
 import ErrorBoundary          from '@/components/ErrorBoundary'
@@ -163,6 +165,9 @@ export default function Home() {
   const [showTodoModal,   setShowTodoModal]   = useState(false)
   const [editingTodo,     setEditingTodo]     = useState(null)
   const [initialTodoDate, setInitialTodoDate] = useState(null)
+  // "Add task" from inside a class card, so the new task arrives already filed under
+  // that class rather than under whichever category happens to be first in the list.
+  const [initialTodoCategory, setInitialTodoCategory] = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
   const [nudgeCluster,  setNudgeCluster]  = useState(null)
@@ -1045,32 +1050,45 @@ export default function Home() {
   useEffect(() => {
     function check() {
       const now = Date.now()
+
+      function fire(key, title, body) {
+        if (shownReminders.current.has(key)) return
+        shownReminders.current.add(key)
+        pushToast(title, body)
+        if (typeof window !== 'undefined' && Notification?.permission === 'granted')
+          new Notification(title, { body })
+        // Background/closed-app delivery is handled server-side by the
+        // /api/push/reminders cron (dedup'd), so we don't fire a push here.
+      }
+
+      // ── Reminders set on the item itself ──
       ;[...events.map(ev => ({ item: ev, key: 'ev-' + ev.id, date: ev.start, title: ev.title })),
         ...todos.map(td => ({ item: td, key: 'td-' + td.id, date: td.dueDate ? td.dueDate + 'T00:00:00' : null, title: td.title })),
         // Notes carry an absolute reminder.at only — no due date to offset from.
         ...notes.filter(n => !n.trashedAt).map(n => ({ item: n, key: 'nt-' + n.id, date: null, title: noteDisplayTitle(n) })),
       ].forEach(({ item, key, date, title }) => {
         if (!item.reminder || item.completed) return
-        if (shownReminders.current.has(key)) return
         const due = date ? new Date(date).getTime() : null
         const at  = item.reminder.at
           ? new Date(item.reminder.at).getTime()
           : due != null ? due - item.reminder.ms : null
         if (at == null) return
-        if (now >= at && now < at + 120_000) {
-          shownReminders.current.add(key)
-          pushToast(`Reminder: ${title}`, item.reminder.label)
-          if (typeof window !== 'undefined' && Notification?.permission === 'granted')
-            new Notification(`Reminder: ${title}`, { body: item.reminder.label })
-          // Background/closed-app delivery is handled server-side by the
-          // /api/push/reminders cron (dedup'd), so we don't fire a push here.
-        }
+        if (now >= at && now < at + 120_000) fire(key, `Reminder: ${title}`, item.reminder.label)
       })
+
+      /* ── Reminders a class implies ──
+         A rule on a class covers everything filed under it, including the Canvas
+         assignments the cron cannot see (Canvas data is never persisted server-side).
+         `classReminderCandidates` skips anything carrying its own reminder, so the
+         loop above and this one can never both fire for the same item. */
+      for (const c of classReminderCandidates({ classes: canvasClasses, todos, assignments: canvasAssignments })) {
+        if (now >= c.at && now < c.at + 120_000) fire(c.key, c.title, c.body)
+      }
     }
     check()
     const id = setInterval(check, 60_000)
     return () => clearInterval(id)
-  }, [events, todos, notes, pushToast])
+  }, [events, todos, notes, canvasClasses, canvasAssignments, pushToast])
 
   /* ── Digest preference ──
      Account-level, so it is read from the server rather than localStorage. The old
@@ -1528,7 +1546,9 @@ export default function Home() {
         .filter(a => a.courseId && a.courseName)
         .map(a => [String(a.courseId), a.courseName])).entries()]
       .map(([id, label]) => ({ type: 'course', id, label })),
-    ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.name ?? c.title ?? 'Class' })),
+    /* `courseName` is the field a class actually has — `name`/`title` never existed on
+       one, so every class in this picker read as the literal word "Class". */
+    ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.courseName ?? 'Class' })),
     ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
   ].filter(o => o.id && o.label), [canvasClasses, events, todos])
@@ -2542,6 +2562,10 @@ export default function Home() {
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
     { id: 'notes',    label: 'Notes',    icon: <NotebookPen size={22}/> },
     { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
+    /* Unconditional, unlike Courses. Classes are typed in by hand and work with
+       Canvas disconnected — hiding the one view of them behind a Canvas token was
+       the gap this tab exists to close. */
+    { id: 'classes',  label: 'My Classes', icon: <GraduationCap size={22}/> },
     ...(canvasConnected
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
@@ -2971,6 +2995,31 @@ export default function Home() {
           </main>
         )}
 
+        {activeNav === 'classes' && (
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+            <ErrorBoundary>
+              <ClassesPanel
+                canvasClasses={canvasClasses}
+                todos={todos}
+                canvasClassEvents={canvasClassEvents}
+                canvasAssignments={canvasAssignments}
+                notes={notes}
+                studySessions={studySessions}
+                onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+                onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+                onSaveClass={saveCanvasClass}
+                onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                onToggleTodo={toggleTodo}
+                onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
+                onEventClick={ev => setDetailEvent(ev)}
+                onOpenNote={openNoteById}
+                onCreateLinkedNote={createLinkedNote}
+                isMobile={isMobile}
+              />
+            </ErrorBoundary>
+          </main>
+        )}
+
         {activeNav === 'courses' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
             <ErrorBoundary>
@@ -3292,7 +3341,8 @@ export default function Home() {
                       onAdd={addTodo} onEdit={updateTodo}
                       editTodo={editingTodo}
                       initialDate={initialTodoDate}
-                      onClose={() => { setShowTodoModal(false); setEditingTodo(null); setInitialTodoDate(null); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
+                      initialCategory={initialTodoCategory}
+                      onClose={() => { setShowTodoModal(false); setEditingTodo(null); setInitialTodoDate(null); setInitialTodoCategory(null); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
       )}
 
       <Toast toasts={toasts} onDismiss={id => setToasts(p => p.filter(t => t.id !== id))} />

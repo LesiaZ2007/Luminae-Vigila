@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS todo_categories (
   PRIMARY KEY (id, user_id)
 );
 
+-- One row per class you are taking, entered by hand — Canvas is optional and only ever
+-- an enrichment (`data.canvasCourseId`). Everything about the class lives in `data`:
+--   { id, courseName, section, professor, location, days[], startTime, endTime,
+--     semesterStart, semesterEnd, color, enabled, canvasCourseId,
+--     exceptions: { cancelled[], added[], exams[] },   -- see lib/classInstances.js
+--     reminders:  { tasks: [{ms,label}], exams: [{ms,label}] } }  -- lib/classReminders.js
+--
+-- `reminders` holds the per-class rules ("remind me 2 days before anything due in
+-- Physics"). Being JSONB, adding it needed no migration — nothing to run here.
 CREATE TABLE IF NOT EXISTS class_schedule (
   id         TEXT        NOT NULL,
   user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
