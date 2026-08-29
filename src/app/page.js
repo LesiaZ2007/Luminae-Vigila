@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
-import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, BookOpen, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
@@ -44,7 +44,6 @@ import SidebarCanvasSection   from '@/components/SidebarCanvasSection'
 import SidebarScheduleSection from '@/components/SidebarScheduleSection'
 import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
 import ClassScheduleModal     from '@/components/ClassScheduleModal'
-import CoursesPanel           from '@/components/CoursesPanel'
 import ClassesPanel           from '@/components/ClassesPanel'
 import ImportExportButton     from '@/components/ImportExportButton'
 import SearchPanel            from '@/components/SearchPanel'
@@ -1925,6 +1924,16 @@ export default function Home() {
     })
   }, [])
 
+  /* "Add meeting times" on a Canvas course that has no schedule entry yet.
+     Opens the ordinary class form as a *draft* — no id, so it saves as a new class —
+     pre-filled with the course's name and its Canvas link, which are the two things
+     already known. Everything else is the form's usual defaults, because Canvas does
+     not know when the class meets; that is the whole reason the entry is being made. */
+  const adoptCanvasCourse = useCallback((entry) => {
+    setEditingClass({ courseName: entry.courseName, canvasCourseId: entry.courseId })
+    setShowClassModal(true)
+  }, [])
+
   /* One-off changes to a recurring class — a holiday, a cancelled lecture, an extra
      review session. These edit the class entry's `exceptions`, never its pattern, so
      the normal week stays intact and every change is reversible. See
@@ -2479,7 +2488,7 @@ export default function Home() {
       return
     }
     if (result.kind === 'canvas') {
-      setActiveNav('courses')
+      setActiveNav('classes')
       return
     }
     if (result.kind === 'todo' && result.item) {
@@ -2562,16 +2571,15 @@ export default function Home() {
     { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
     { id: 'notes',    label: 'Notes',    icon: <NotebookPen size={22}/> },
     { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
-    /* Unconditional, unlike Courses. Classes are typed in by hand and work with
-       Canvas disconnected — hiding the one view of them behind a Canvas token was
-       the gap this tab exists to close. */
-    /* `shortLabel` is what the mobile bar uses. Every tab there is `flex: 1`, so on a
-       narrow phone with Canvas connected each one gets around 40px — "My Classes"
-       would wrap onto the icon. The sidebar has room for the full name. */
+    /* One tab for classes, whether or not Canvas is connected. There used to be two —
+       "Courses" (Canvas assignments, hidden without a token) beside "My Classes"
+       (the schedule entries) — which asked the reader to work out which of two
+       similarly-named lists held the thing they wanted. The panel gains the Canvas
+       chrome when there is a Canvas to talk to; that is the real difference.
+
+       `shortLabel` is what the mobile bar uses: every tab there is `flex: 1`, so on a
+       narrow phone each gets around 45px and "My Classes" would wrap onto its icon. */
     { id: 'classes',  label: 'My Classes', shortLabel: 'Classes', icon: <GraduationCap size={22}/> },
-    ...(canvasConnected
-      ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
-      : []),
     { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
     // Settings tab — mobile only (sidebar handles settings on desktop)
     ...(isMobile ? [{ id: 'settings', label: 'More', icon: <Settings size={22}/> }] : []),
@@ -3001,50 +3009,38 @@ export default function Home() {
         {activeNav === 'classes' && (
           <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
             <ErrorBoundary>
+              {/* Only skeleton the *first* Canvas fetch. On a re-sync the classes are
+                  already on screen, and replacing them with placeholders would be a
+                  downgrade rather than a loading state. */}
+              {cvSyncing && canvasAssignments.length === 0 && canvasClasses.length === 0 ? (
+                <ListSkeleton rows={7} label="Loading classes" padding="20px 28px" />
+              ) : (
               <ClassesPanel
                 canvasClasses={canvasClasses}
                 todos={todos}
                 canvasClassEvents={canvasClassEvents}
                 canvasAssignments={canvasAssignments}
+                courseColors={canvasCalPrefs.courseColors}
                 notes={notes}
                 studySessions={studySessions}
+                canvasConnected={canvasConnected}
+                syncing={cvSyncing}
                 onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
                 onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
                 onSaveClass={saveCanvasClass}
+                onAdoptCourse={adoptCanvasCourse}
                 onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onToggleTodo={toggleTodo}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
                 onEventClick={ev => setDetailEvent(ev)}
                 onOpenNote={openNoteById}
                 onCreateLinkedNote={createLinkedNote}
-                isMobile={isMobile}
-              />
-            </ErrorBoundary>
-          </main>
-        )}
-
-        {activeNav === 'courses' && (
-          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-            <ErrorBoundary>
-              {/* Only skeleton the *first* Canvas fetch. On a re-sync we keep the
-                  existing assignments on screen — replacing real data with
-                  placeholders would be a downgrade, not a loading state. */}
-              {cvSyncing && canvasAssignments.length === 0 ? (
-                <ListSkeleton rows={7} label="Loading Canvas assignments" padding="20px 28px" />
-              ) : (
-              <CoursesPanel
-                notes={notes}
-                onOpenNote={openNoteById}
-                onCreateLinkedNote={createLinkedNote}
-                canvasAssignments={canvasAssignments}
-                courseColors={canvasCalPrefs.courseColors}
-                studySessions={studySessions}
+                onToggleAssignment={toggleCanvasAssignment}
+                onUpdateAssignmentNotes={updateCanvasNotes}
                 onTagSession={updateStudySession}
-                onToggleCanvas={toggleCanvasAssignment}
-                onUpdateCanvasNotes={updateCanvasNotes}
-                onOpenSettings={() => setShowCanvasSettings(true)}
-                onSync={syncCanvas}
-                syncing={cvSyncing}
+                onSyncCanvas={syncCanvas}
+                onOpenCanvasSettings={() => setShowCanvasSettings(true)}
+                isMobile={isMobile}
               />
               )}
             </ErrorBoundary>
@@ -3389,7 +3385,7 @@ export default function Home() {
           /* The live record, not the snapshot taken when the modal opened: exceptions
              are applied to state immediately, and a stale prop would show the list
              unchanged until the form was reopened. */
-          editClass={editingClass ? (canvasClasses.find(c => c.id === editingClass.id) ?? editingClass) : null}
+          editClass={editingClass ? (canvasClasses.find(c => c.id && c.id === editingClass.id) ?? editingClass) : null}
           onSave={saveCanvasClass}
           onDelete={deleteCanvasClass}
           onRestoreMeeting={restoreClassMeeting}

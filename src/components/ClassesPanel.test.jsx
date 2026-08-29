@@ -62,6 +62,12 @@ describe('ClassesPanel — empty state', () => {
     render(<ClassesPanel canvasClasses={[]} onAddClass={vi.fn()} />)
     expect(screen.getByText(/No Canvas\s+account needed/)).toBeInTheDocument()
   })
+
+  it('offers to connect Canvas from the empty state, but does not require it', () => {
+    render(<ClassesPanel canvasClasses={[]} onAddClass={vi.fn()} onOpenCanvasSettings={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /Connect Canvas/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Add class/ })).toBeInTheDocument()
+  })
 })
 
 describe('ClassesPanel — a class card', () => {
@@ -244,12 +250,119 @@ describe('ClassesPanel — reminder rules', () => {
   })
 })
 
+describe('ClassesPanel — Canvas courses with no schedule entry', () => {
+  const assignments = [
+    { id: 'a1', title: 'Essay',      courseId: 7,  courseName: 'History 100', dueAt: '2026-03-05T23:59:00' },
+    { id: 'a2', title: 'Problem set', courseId: 42, courseName: 'Physics 101', dueAt: '2026-03-05T23:59:00' },
+  ]
+
+  /* Folding the Courses tab in must not lose the rows it used to show. A Canvas
+     course nobody typed in as a class still gets a card. */
+  it('still lists a Canvas course that has no class entry', () => {
+    render(
+      <ClassesPanel
+        canvasClasses={[]} todos={[]} canvasClassEvents={[]} notes={[]} studySessions={[]}
+        canvasAssignments={assignments}
+      />,
+    )
+    expect(screen.getByText('History 100')).toBeInTheDocument()
+    expect(screen.getByText('Essay')).toBeInTheDocument()
+  })
+
+  it('does not duplicate a course a class already claims', () => {
+    renderPanel({ canvasClasses: [makeClass({ canvasCourseId: 42 })], canvasAssignments: assignments })
+    // Physics appears once — as the class, not also as a loose Canvas course.
+    expect(screen.getAllByText('Physics 101')).toHaveLength(1)
+    expect(screen.getByText('History 100')).toBeInTheDocument()
+  })
+
+  // Reminder rules live on the schedule entry, so a Canvas-only course has nowhere
+  // to keep one until it becomes a real class.
+  it('offers to give a Canvas course meeting times instead of reminder chips', async () => {
+    const onAdoptCourse = vi.fn()
+    render(
+      <ClassesPanel
+        canvasClasses={[]} todos={[]} canvasClassEvents={[]} notes={[]} studySessions={[]}
+        canvasAssignments={assignments} onAdoptCourse={onAdoptCourse}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /Tasks due/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getAllByRole('button', { name: /Add meeting times/ })[0])
+    expect(onAdoptCourse).toHaveBeenCalledWith(expect.objectContaining({ courseId: 7, courseName: 'History 100' }))
+  })
+})
+
+describe('ClassesPanel — Canvas chrome appears only with Canvas', () => {
+  it('hides sync and settings until Canvas is connected', () => {
+    renderPanel({ onSyncCanvas: vi.fn(), onOpenCanvasSettings: vi.fn() })
+    expect(screen.queryByRole('button', { name: 'Sync Canvas' })).not.toBeInTheDocument()
+  })
+
+  it('shows sync, settings and bulk select once it is', () => {
+    renderPanel({
+      canvasClasses: [makeClass({ canvasCourseId: 42 })],
+      canvasAssignments: [{ id: 'a1', title: 'Problem set', courseId: 42, dueAt: '2026-03-05T23:59:00' }],
+      canvasConnected: true, onSyncCanvas: vi.fn(), onOpenCanvasSettings: vi.fn(),
+    })
+    expect(screen.getByRole('button', { name: 'Sync Canvas' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Canvas settings' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Select' })).toBeInTheDocument()
+  })
+
+  it('marks a batch of assignments done in one go', async () => {
+    const onToggleAssignment = vi.fn()
+    renderPanel({
+      canvasClasses: [makeClass({ canvasCourseId: 42 })],
+      canvasAssignments: [
+        { id: 'a1', title: 'Problem set', courseId: 42, dueAt: '2026-03-05T23:59:00' },
+        { id: 'a2', title: 'Lab 4',       courseId: 42, dueAt: '2026-03-09T23:59:00', submissionState: 'graded' },
+      ],
+      canvasConnected: true, onToggleAssignment,
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Select' }))
+    // In select mode the header reads "Cancel" and every row offers its own "Select".
+    for (const box of screen.getAllByRole('button', { name: 'Select' })) {
+      await userEvent.click(box)
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+    expect(onToggleAssignment).toHaveBeenCalledTimes(1)
+    expect(onToggleAssignment).toHaveBeenCalledWith('a1')
+  })
+})
+
+describe('ClassesPanel — this week', () => {
+  const todos = [
+    { id: 't1', title: 'Due this week', category: 'class:c1', dueDate: '2026-03-04' },
+    { id: 't2', title: 'Due much later', category: 'class:c1', dueDate: '2026-04-20' },
+  ]
+
+  it('shows everything by default', () => {
+    renderPanel({ todos })
+    expect(screen.getByText('Due much later')).toBeInTheDocument()
+  })
+
+  it('narrows the work to the current week when asked', async () => {
+    renderPanel({ todos })
+    await userEvent.click(screen.getByRole('button', { name: 'This week' }))
+    expect(screen.getByText('Due this week')).toBeInTheDocument()
+    expect(screen.queryByText('Due much later')).not.toBeInTheDocument()
+  })
+
+  // Saying "nothing outstanding" when two things are outstanding but not this week
+  // would be a lie the filter told on the class's behalf.
+  it('says what the filter hid rather than claiming the class is clear', async () => {
+    renderPanel({ todos: [{ id: 't2', title: 'Due much later', category: 'class:c1', dueDate: '2026-04-20' }] })
+    await userEvent.click(screen.getByRole('button', { name: 'This week' }))
+    expect(screen.getByText(/Nothing due this week — 1 outstanding overall\./)).toBeInTheDocument()
+  })
+})
+
 describe('ClassesPanel — header summary', () => {
   it('counts the classes you are taking and the work outstanding', () => {
     renderPanel({
       canvasClasses: [makeClass(), makeClass({ id: 'c2', courseName: 'Chem 210', enabled: false })],
       todos: [{ id: 't1', title: 'Lab report', category: 'class:c1', dueDate: '2026-03-04' }],
     })
-    expect(screen.getByText(/1 class · 1 open task/)).toBeInTheDocument()
+    expect(screen.getByText(/1 class · 1 open/)).toBeInTheDocument()
   })
 })
