@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * GpaPanel — GPA / grade-projection card for the Courses tab.
+ * GpaPanel — GPA / grade-projection card, at the top of the My Classes tab.
  *
  * Props:
  *   canvasAssignments  — array from page.js state (fields: id, courseId, courseName,
@@ -19,10 +19,10 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { GraduationCap, ChevronDown, ChevronRight, TrendingUp, RefreshCw, RotateCcw } from 'lucide-react'
-import { getCourseColor } from '@/components/CoursesPanel'
+import { getCourseColor } from '@/lib/courseColors'
 // The scale and the points arithmetic are shared with the Grades rail and the class
 // cards in My Classes — three copies had already begun to disagree. See lib/grades.js.
-import { pctToGrade, gradeColor, courseGradeSummary } from '@/lib/grades'
+import { pctToGrade, gradeColor, courseGradeSummary, neededForTarget } from '@/lib/grades'
 
 const LS_KEY = 'lv-gpa'
 
@@ -62,12 +62,10 @@ function WhatINeedRow({ earnedPts, possiblePts, totalPossible, color }) {
   const neededResult = useMemo(() => {
     const t = parseFloat(targetPct)
     if (isNaN(t) || t < 0 || t > 100) return null
-    if (remaining <= 0) return null
-    // target % means: (earnedPts + needed) / totalPossible * 100 = t
-    const needed = (t / 100) * totalPossible - earnedPts
-    const neededPct = (needed / remaining) * 100
-    return neededPct
-  }, [targetPct, earnedPts, totalPossible, remaining])
+    // Shares lib/grades.js with the per-class summary rather than restating the
+    // arithmetic — this row and that card must not be able to disagree.
+    return neededForTarget({ earnedPts, possiblePts, totalPossible }, t)
+  }, [targetPct, earnedPts, possiblePts, totalPossible])
 
   if (remaining <= 0) return null
 
@@ -301,7 +299,7 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
   }
 
   // Fetch Canvas grades — called when the panel opens or canvasAssignments changes
-  // Uses the same credential flow as the existing GradesPanel in CoursesPanel.js.
+  // Uses the same credential flow the per-class grade summary relies on.
   const fetchRef = useRef(null)
   const fetchCanvasGrades = useCallback(async (courseIds) => {
     if (!courseIds.length) { setCanvasGrades({}); return }

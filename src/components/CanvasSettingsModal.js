@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { X, RefreshCw, ExternalLink, BookOpen } from 'lucide-react'
-import { COURSE_PALETTE, getCourseColor } from '@/components/CoursesPanel'
+import { COURSE_PALETTE, getCourseColor } from '@/lib/courseColors'
 
 // Inline Canvas "C" logo
 export function CanvasLogo({ size = 16 }) {

@@ -202,18 +202,17 @@ readiness it cannot deliver. `POST` in that state returns **403 with
 - **Canvas Calendar Feed (no token needed)** — paste your personal iCal feed URL (Canvas → Calendar → Calendar Feed) to pull assignment due dates and events without an API token; works for any public `.ics` subscription URL too; events appear in Canvas orange on the calendar
 - **Assignments on the calendar** — due dates appear as all-day task markers alongside your own events
 - **Per-course toggles** — enable/disable individual courses; updates apply instantly to the calendar
-- **Courses tab** — appears automatically when Canvas is connected, showing:
-  - Assignments grouped by course with animated progress bars
-  - Due date badges — overdue, due soon, or upcoming
+- **My Classes tab** — the one place classes live, with or without Canvas. Connecting Canvas adds to it rather than opening a second tab:
+  - Assignments grouped by class, with due-date badges — overdue, due soon, or upcoming
   - Submission status chips — Graded / Submitted / Missing
-  - Grade display when scores are available
+  - Grade and projected grade per class when scores are available
   - Mark assignments done independently of Canvas
   - One-click links to open assignments in Canvas
-  - Filter: **Upcoming / All / Done**
+  - Filter: **Everything / This week**
 
 ### 📊 GPA / Grade Projection
 
-A collapsible **GPA / Grades** card appears at the top of the Courses tab whenever Canvas is connected and at least one assignment has been graded.
+A collapsible **GPA / Grades** card appears at the top of the My Classes tab whenever Canvas is connected and at least one assignment has been graded.
 
 - **Canvas grade auto-import** — live official grades are fetched from `/api/canvas/grades` automatically whenever assignments sync (same 15-minute cadence); no separate polling loop added. The official Canvas score overrides the assignment-computed estimate, giving a more accurate GPA.
 - **Manual grade override** — click any percentage to type in your own value. The override is stored separately in `localStorage` under `lv-gpa.overrides` and always wins over the auto-imported value.
@@ -223,7 +222,7 @@ A collapsible **GPA / Grades** card appears at the top of the Courses tab whenev
 - **Credit hours** — editable per course (default 3), persisted to `localStorage` under `lv-gpa`
 - **Credit-weighted projected GPA** — uses whichever grade source is active per course
 - **"What do I need?" helper** — enter a target percentage per course to see the required average score on remaining (ungraded) points
-- Mobile-responsive stacked layout; matches the existing Courses tab visual style
+- Mobile-responsive stacked layout; matches the rest of the My Classes tab
 - Empty state shown when no graded assignments exist yet
 
 ### 🚫 Cancel one class, add a one-off, or make one an exam
@@ -275,26 +274,34 @@ A midterm happens *in* the class period — same room, usually the same hour. De
 
 ### 🎓 My Classes — one page per class
 
-The **Courses** tab has always been a *Canvas* view: it groups Canvas assignments by Canvas course, and the whole tab is hidden unless a token is connected. But the app has had a real class model all along — the schedule entries you type in by hand, which expand into calendar meetings, carry cancellations and exam blocks, and derive the `class:` task categories. Nothing read *those* back. Your schedule was in the sidebar, your coursework in To-Do, your exams on the calendar and your notes in Notes, and nothing answered **"what is the state of Physics?"**
+There used to be two tabs asking almost the same question. **Courses** was a Canvas view: assignments grouped by Canvas course, hidden entirely without a token. **My Classes** was a schedule view: the classes you type in by hand, which expand into calendar meetings, carry cancellations and exam blocks, and derive the `class:` task categories.
 
-**My Classes** is that view, and it is always there — no Canvas account, no personal access token, nothing to connect. One expandable card per class, holding:
+Two tabs called "Courses" and "My Classes", listing overlapping things under different names, is a question the app was asking you rather than answering. So there is **one** tab. It looks different depending on whether Canvas is connected — which is the actual difference — rather than being two places to look.
 
-- **When and where it meets** — the day pattern, the hours, the term dates, and the room as a link that opens in Google Maps
+One expandable card per class, holding:
+
+- **When and where it meets** — the day pattern, the hours, the term dates, and the room. A real room links to Google Maps, a Zoom class offers its join link, because the app already knows the difference
 - **Its coursework** — every task filed under the class, soonest first, with completed ones behind a count. Tick one off in place, or click through to the real editor. **+ Add task** opens the task form already filed under that class
-- **Its Canvas assignments**, when the class is linked to a Canvas course
+- **Its Canvas assignments**, when the class is linked to a Canvas course — with bulk select and mark-done, and the detail view on any row
 - **What's coming up** — the next few meetings with exams among them rather than in a list of their own, because an exam *is* the period
-- **Its notes** — the reverse of a note's "link to", the same way the Courses tab shows them
+- **Its notes** — the reverse of a note's "link to"
 - **Its grade**, when Canvas-linked: what you have earned so far, and what you finish at if the rate holds
 - **Study time** in the last seven days, when Canvas-linked — the Focus Timer tags sessions with a *Canvas* course id, so an unlinked class has nothing to show
 - **Its reminder rules** — see below
 
+With Canvas connected the tab also grows the roll-ups the old Courses tab carried: the **GPA / Grades** card, the **Study Time** card, a **sync** and **Canvas settings** button, and **bulk mark-done**. Without Canvas, none of that renders and the tab is just your classes.
+
 Design notes:
 
-- **The Courses tab is unchanged.** It still does the Canvas-native view, still grouped by Canvas course, still gated on a connection. This sits beside it rather than replacing it — the two answer different questions, and someone with Canvas connected reasonably wants both
+- **A Canvas course with no class entry still gets a card.** This is the one way folding two tabs into one can quietly lose something — a course you never typed in as a class would simply have vanished with the old tab. Instead it appears marked *From Canvas*, showing its assignments and grade, with **Add meeting times** to turn it into a real class. That opens the ordinary class form pre-filled with the name and the Canvas link, since those are the two things already known
+- **A class that claims a Canvas course absorbs it** rather than appearing twice — the link is what says "these are the same thing"
 - **Expandable cards, not a master/detail split.** It matches the panels either side of it and collapses to a phone without needing a second layout. The first card opens so the tab is never a wall of closed rows; the rest stay shut so a six-class term fits on one screen
+- **Everything / This week** filters the *work* — tasks and assignments. Meetings and grades are left alone: "your grade in this class" does not mean "your grade this week". When the filter hides everything, the card says how much is outstanding overall rather than claiming the class is clear
 - **A disabled class is listed, not hidden.** It is still yours, and it still holds its notes and its history — it just sorts below the classes you are actually taking
 - **The task rows are deliberately thinner than the To-Do panel's** — no drag handle, no swipe, no subtask tree. This is a read-and-jump view, and a second full-featured row would be a second row to keep in step
-- One fix fell out of building it: the note-link picker labelled every class with the literal word **"Class"**. It was reading `name`/`title`, fields a class entry has never had — the field is `courseName`
+- On mobile the tab is labelled **Classes**: every tab in the bottom bar is `flex: 1`, so each gets around 45px and the full name would wrap onto its icon
+
+Two fixes fell out of building it. The note-link picker labelled every class with the literal word **"Class"** — it read `name`/`title`, fields a class entry has never had; the field is `courseName`. And the grade arithmetic existed in three places and had begun to disagree: the Grades rail averaged each assignment's *percentage* while the GPA card summed *points*, which weights a 5-point warm-up like a 200-point final. Both now go through [`lib/grades.js`](src/lib/grades.js), which sums points.
 
 #### 🔔 Reminders you set once per class
 
@@ -308,6 +315,7 @@ Design notes:
 - **A disabled or deleted class contributes no rules.** It is already hidden from the calendar and out of the category picker; still being notified about its coursework would be the clearest possible bug
 - **The offset is part of the dedup key**, so two rules on one class are two notifications rather than one that swallows the other, and rescheduling a task fires a fresh reminder exactly as it always has
 - **Malformed stored rules are dropped on read**, not trusted — the same treatment `exceptions` gets, so a bad value can't take down the every-minute cron for everyone else
+- **A Canvas-only card has no chips.** Rules live on the schedule entry, so a Canvas course that was never given meeting times has nowhere to keep one — which is what **Add meeting times** on that card is for
 - Rules live in the class row's existing JSONB alongside `exceptions`, so **there is no migration**
 
 **One honest limitation: a class rule reaches Canvas assignments only while a tab is open.** Canvas assignments are deliberately never persisted server-side — they are live data, refetched rather than stored — so the reminder cron that delivers pushes to a closed app cannot see them. Tasks and exams work closed-app as normal. Filing a Canvas assignment as a task is the workaround, and linking the class to its Canvas course is what makes the rule apply at all.
@@ -565,7 +573,7 @@ Tasks already had a category *and* a separate optional link to a class, and neit
 
 ### ⏱ Study Time Tracking
 
-A collapsible **Study Time** card appears in the Courses tab below the GPA panel once at least one tagged focus session exists.
+A collapsible **Study Time** card appears in the My Classes tab below the GPA panel once at least one tagged focus session exists.
 
 - **Weekly hours per course** — horizontal CSS bars (no chart library) showing this week's focused time broken down by Canvas course; untagged sessions appear as "Untagged"
 - **Total this week** displayed in the header pill; **week-over-week comparison** shown as a colored delta when last-week data exists
@@ -573,7 +581,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - **Past sessions** — an "All sessions" tab lists every completed session, newest first, grouped by day (`Today` / `Yesterday` / `Mon, Aug 3`) with the day's total, what you focused on, the end time, and the duration. Capped at 5 days with a "show earlier" button, so a term of sessions isn't a scroll trap
 - **Retroactive tagging** — a 🏷 button on any past session assigns (or clears) its course. The tag previously came only from whatever was selected in the timer when the session finished, which is easy to forget and was impossible to correct, leaving that time stuck under "Untagged" forever. Edits stamp `updatedAt` so they win the last-write-wins sync merge against a stale copy on another device
 - Sessions now record `endedAt` and `targetTitle`; older rows predate both and simply render without a time or subject line
-- The same list appears in the **Focus Timer**'s expanded "Your week" section — the Courses tab only exists once Canvas is connected, so that copy is the one that's always reachable
+- The same list appears in the **Focus Timer**'s expanded "Your week" section — the Study Time card only appears once Canvas is connected, so that copy is the one that's always reachable
 - Hidden when there are no sessions to show (zero clutter on first launch)
 
 ### 🟠 Canvas — Assignment Notifications
@@ -582,7 +590,7 @@ A collapsible **Study Time** card appears in the Courses tab below the GPA panel
 - First sync seeds the seen-IDs list silently (no false positives on setup)
 
 ### 🟠 Canvas — Bulk Mark Done
-- "Select" button in the Courses header enters selection mode
+- "Select" button in the My Classes header enters selection mode
 - Tap any assignment row or its checkbox to add it to the selection
 - Selected rows highlight with a color tint
 - A sticky bottom bar shows the count and "Mark done" / "Cancel" buttons
@@ -1176,8 +1184,11 @@ src/
 │   ├── WeeklyCalendar.js             # FullCalendar wrapper (all views)
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
 │   ├── CustomListPanel.js            # Custom list switcher tabs + checklist body
-│   ├── CoursesPanel.js               # Canvas courses + assignments tab
-  ├── GpaPanel.js                   # GPA / grade-projection collapsible card (inside Courses tab)
+│   ├── ClassesPanel.js               # My Classes tab — one card per class, Canvas folded in
+│   ├── ClassRemindersEditor.js       # Per-class reminder rules (tasks / exams)
+│   ├── AssignmentRow.js              # One Canvas assignment, as a row
+│   ├── StudyTimeCard.js              # Focus-timer hours per course, this week vs last
+  ├── GpaPanel.js                   # GPA / grade-projection collapsible card (inside My Classes)
 │   ├── SearchPanel.js                # Search UI — events, tasks, Canvas
 │   ├── MiniMonthCalendar.js          # Compact month grid for sidebar (desktop only)
 │   ├── FocusTimer.js                  # Optional Pomodoro focus timer + full-screen zen mode

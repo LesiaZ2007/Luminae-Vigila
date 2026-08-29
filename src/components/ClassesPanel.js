@@ -3,37 +3,50 @@
 /**
  * ClassesPanel — everything about one class, in one place.
  *
- * The Courses tab has always been a *Canvas* view: it groups Canvas assignments by
- * Canvas course, and the whole tab is hidden unless a token is connected. But the app
- * has had a real class model all along — the schedule entries typed in by hand, which
- * expand into calendar meetings, carry cancellations and exam blocks, and derive the
- * `class:<id>` task categories. Nothing read *those* back. Your schedule was in the
- * sidebar, your coursework in To-Do, your exams on the calendar and your notes in
- * Notes, and nothing answered "what is the state of Physics?".
+ * There used to be two tabs asking almost the same question. **Courses** was a Canvas
+ * view: assignments grouped by Canvas course, hidden entirely without a token.
+ * **My Classes** was a schedule view: the classes typed in by hand, which expand into
+ * calendar meetings, carry exam blocks, and derive the `class:` task categories.
  *
- * So this is the class-first view, and it works with Canvas disconnected. When a class
- * *is* linked to a Canvas course, its assignments, grade and study time join the card
- * rather than living in a separate tab — the Canvas link is an enrichment here, not a
- * precondition. The Courses tab is untouched and still does the Canvas-native view.
+ * Two tabs called "Courses" and "My Classes", listing overlapping things under
+ * different names, is a question the app was asking the reader rather than answering.
+ * So there is one tab. It looks different depending on whether Canvas is connected —
+ * which is the actual difference — rather than being two places to look.
  *
- * One card per class, expandable, rather than a master/detail split: it matches the
- * panels next to it, and it collapses to a phone without a second layout.
+ * ## What a card is
+ *
+ * The unit is a class, and a class can arrive two ways:
+ *
+ *   'class'   a schedule entry. Knows when and where it meets, can hold exams and
+ *             reminder rules, and *may* be linked to a Canvas course for assignments.
+ *   'canvas'  a Canvas course with no schedule entry yet. Has assignments and a grade
+ *             and nothing else — no meeting times to show, and nowhere to keep a
+ *             reminder rule, since rules live on the schedule entry.
+ *
+ * A Canvas course is not silently dropped just because it was never typed in — that
+ * would have been the old Courses tab quietly losing rows. It gets a card that offers
+ * to become a real class, which is the one action that makes the rest of it work.
  */
 
 import { useState, useMemo, useEffect } from 'react'
 import {
   GraduationCap, ChevronDown, ChevronRight, Plus, Pencil, MapPin, Clock,
   CalendarDays, AlertCircle, User, Timer, TrendingUp, BookOpen, CircleCheck, Circle,
-  Video, Link2,
+  Video, Link2, RefreshCw, Settings2, CalendarPlus,
 } from 'lucide-react'
 import LinkedNotes           from '@/components/LinkedNotes'
 import ClassRemindersEditor  from '@/components/ClassRemindersEditor'
-import { AssignmentRow, isCompleted } from '@/components/CoursesPanel'
+import AssignmentRow, { isCompleted } from '@/components/AssignmentRow'
+import AssignmentDetailModal from '@/components/AssignmentDetailModal'
+import GpaPanel              from '@/components/GpaPanel'
+import StudyTimeCard         from '@/components/StudyTimeCard'
+import { CanvasLogo }        from '@/components/CanvasSettingsModal'
 import { EXAM_COLOR }        from '@/lib/classInstances'
 import { classIdForTodo }    from '@/lib/classReminders'
 import { classCategoryId }   from '@/lib/classCategories'
 import { courseGradeSummary, gradeColor } from '@/lib/grades'
-import { describeLocation } from '@/lib/maps'
+import { getCourseColor, CANVAS_COLOR }   from '@/lib/courseColors'
+import { describeLocation }  from '@/lib/maps'
 
 /** One icon per `describeLocation` kind — a Zoom class is not a place on a map. */
 const LOCATION_ICONS = { place: MapPin, online: Video, link: Link2 }
@@ -68,13 +81,13 @@ function shortDate(iso) {
     .toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-/** How a due date reads relative to now — the same vocabulary the Courses tab uses. */
+/** How a due date reads relative to now — the vocabulary the assignment rows use. */
 function dueLabel(dateStr) {
   if (!dateStr) return null
   const d    = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`)
   const now  = new Date(); now.setHours(0, 0, 0, 0)
   const days = Math.round((d - now) / 86_400_000)
-  if (days < 0)  return { label: days === -1 ? 'Yesterday' : `${Math.abs(days)}d overdue`, tone: 'late' }
+  if (days < 0)   return { label: days === -1 ? 'Yesterday' : `${Math.abs(days)}d overdue`, tone: 'late' }
   if (days === 0) return { label: 'Today',    tone: 'soon' }
   if (days === 1) return { label: 'Tomorrow', tone: 'soon' }
   if (days <= 7)  return { label: `In ${days} days`, tone: 'plain' }
@@ -99,6 +112,15 @@ function fmtHours(sec) {
   const h = Math.floor(sec / 3600)
   const m = Math.round((sec % 3600) / 60)
   return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+/** Monday–Sunday around now, which is what "this week" means everywhere here. */
+function thisWeekBounds(now) {
+  const d   = new Date(now)
+  const day = d.getDay() // 0=Sun
+  const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7)); mon.setHours(0, 0, 0, 0)
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23, 59, 59, 999)
+  return { start: mon.getTime(), end: sun.getTime() }
 }
 
 /**
@@ -152,6 +174,25 @@ function MetaChip({ icon: Icon, children, href, title }) {
   return href
     ? <a href={href} target="_blank" rel="noopener noreferrer" title={title} style={style}>{inner}</a>
     : <span title={title} style={style}>{inner}</span>
+}
+
+function IconButton({ icon: Icon, label, onClick, active, spinning, disabled }) {
+  return (
+    <button
+      onClick={onClick} title={label} aria-label={label} disabled={disabled}
+      style={{
+        background: active ? `${CANVAS_COLOR}18` : 'none',
+        border: active ? `1px solid ${CANVAS_COLOR}44` : '1px solid transparent',
+        cursor: disabled ? 'wait' : 'pointer', padding: '5px 7px', borderRadius: 7,
+        color: active ? CANVAS_COLOR : 'var(--text-3)', display: 'flex',
+        transition: 'color .13s, background .13s', flexShrink: 0,
+      }}
+      onMouseEnter={e => { if (!disabled && !active) e.currentTarget.style.color = CANVAS_COLOR }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--text-3)' }}
+    >
+      <Icon size={14} style={{ animation: spinning ? 'gc-spin 1s linear infinite' : 'none' }} />
+    </button>
+  )
 }
 
 // ── Task row ──────────────────────────────────────────────────────────────────
@@ -249,13 +290,18 @@ function MeetingRow({ ev, onClick }) {
 // ── One class ─────────────────────────────────────────────────────────────────
 
 function ClassCard({
-  cls, todos, meetings, assignments, notes, studySessions, now,
-  defaultOpen, onEdit, onSaveReminders, onTodoClick, onToggleTodo, onAddTask,
-  onEventClick, onOpenNote, onCreateLinkedNote, isMobile,
+  entry, todos, meetings, assignments, notes, studySessions, now, weekOnly,
+  defaultOpen, onEdit, onSaveReminders, onAdoptCourse, onTodoClick, onToggleTodo, onAddTask,
+  onEventClick, onOpenNote, onCreateLinkedNote, onToggleAssignment, onAssignmentDetail,
+  selectMode, selectedIds, onToggleSelect, isMobile,
 }) {
-  const [open, setOpen]           = useState(defaultOpen)
-  const [showDone, setShowDone]   = useState(false)
-  const color = cls.color || DEFAULT_COLOR
+  const [open, setOpen]         = useState(defaultOpen)
+  const [showDone, setShowDone] = useState(false)
+
+  const isCanvasOnly = entry.kind === 'canvas'
+  const cls   = entry.cls
+  const color = isCanvasOnly ? entry.color : (cls.color || DEFAULT_COLOR)
+  const name  = isCanvasOnly ? entry.courseName : cls.courseName
 
   const openTasks = todos.filter(t => !t.completed)
   const doneTasks = todos.filter(t => t.completed)
@@ -273,6 +319,8 @@ function ClassCard({
   )
   const nextMeeting = upcoming[0] ?? null
 
+  // The grade is computed from every assignment, not from the filtered view — "your
+  // grade in this class" does not mean "your grade this week".
   const grade = useMemo(
     () => (assignments.length ? courseGradeSummary(assignments) : null),
     [assignments],
@@ -280,16 +328,43 @@ function ClassCard({
 
   // Study time is keyed by the *Canvas* course id, which is why it only appears for a
   // linked class — the Focus Timer has never known about schedule entries.
+  const canvasCourseId = isCanvasOnly ? entry.courseId : cls.canvasCourseId
   const studySec = useMemo(() => {
-    if (cls.canvasCourseId == null) return 0
-    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7)
+    if (canvasCourseId == null) return 0
+    const weekAgo = now - 7 * 86_400_000
     return (studySessions ?? [])
-      .filter(s => String(s.courseId) === String(cls.canvasCourseId) && new Date(`${s.date}T00:00:00`) >= weekAgo)
+      .filter(s => String(s.courseId) === String(canvasCourseId) && new Date(`${s.date}T00:00:00`).getTime() >= weekAgo)
       .reduce((sum, s) => sum + (s.durationSec ?? 0), 0)
-  }, [studySessions, cls.canvasCourseId])
+  }, [studySessions, canvasCourseId, now])
+
+  // "This week" filters the two lists of *work*, which is what the filter is for.
+  // Meetings and the grade are left alone.
+  const week = useMemo(() => thisWeekBounds(now), [now])
+  const shownTasks = weekOnly
+    ? openTasks.filter(t => {
+        if (!t.dueDate) return false
+        const at = new Date(`${t.dueDate}T00:00:00`).getTime()
+        return at >= week.start && at <= week.end
+      })
+    : openTasks
+  const shownAssignments = useMemo(() => {
+    const list = weekOnly
+      ? assignments.filter(a => {
+          if (!a.dueAt) return false
+          const at = new Date(a.dueAt).getTime()
+          return at >= week.start && at <= week.end
+        })
+      : assignments
+    return [...list].sort((a, b) => {
+      if (!a.dueAt && !b.dueAt) return 0
+      if (!a.dueAt) return 1
+      if (!b.dueAt) return -1
+      return new Date(a.dueAt) - new Date(b.dueAt)
+    })
+  }, [assignments, weekOnly, week])
 
   const openAssignments = assignments.filter(a => !isCompleted(a))
-  const location = describeLocation(cls.location)
+  const location = isCanvasOnly ? { kind: 'empty' } : describeLocation(cls.location)
 
   return (
     <div style={{
@@ -312,13 +387,17 @@ function ClassCard({
 
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {cls.courseName}
-            {cls.section && <span style={{ fontWeight: 500, color: 'var(--text-3)' }}> · {cls.section}</span>}
+            {name}
+            {!isCanvasOnly && cls.section && <span style={{ fontWeight: 500, color: 'var(--text-3)' }}> · {cls.section}</span>}
           </span>
           {!open && (
             <span style={{ display: 'block', fontSize: '0.71rem', color: 'var(--text-3)', marginTop: 1 }}>
-              {daysLabel(cls.days)} · {fmt12(cls.startTime)}
-              {nextMeeting && ` · next ${new Date(nextMeeting.start).toLocaleDateString('en-US', { weekday: 'short' })} ${untilLabel(new Date(nextMeeting.start).getTime() - now)}`}
+              {isCanvasOnly
+                ? `From Canvas · ${openAssignments.length} open`
+                : <>
+                    {daysLabel(cls.days)} · {fmt12(cls.startTime)}
+                    {nextMeeting && ` · next ${new Date(nextMeeting.start).toLocaleDateString('en-US', { weekday: 'short' })} ${untilLabel(new Date(nextMeeting.start).getTime() - now)}`}
+                  </>}
             </span>
           )}
         </span>
@@ -339,30 +418,58 @@ function ClassCard({
       {open && (
         <div style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)', padding: '12px 14px 14px' }}>
 
-          {/* ── Meeting details ── */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginBottom: 12 }}>
-            <MetaChip icon={Clock}>{daysLabel(cls.days)} · {fmt12(cls.startTime)}–{fmt12(cls.endTime)}</MetaChip>
-            {cls.professor && <MetaChip icon={User}>{cls.professor}</MetaChip>}
-            {/* `describeLocation` has already worked out whether the room is a place,
-                an online meeting, or a bare link — the same classification the event
-                detail view uses, so a Zoom class offers its join link rather than a
-                map search for the word "Zoom". */}
-            {location.kind !== 'empty' && (
-              <MetaChip
-                icon={LOCATION_ICONS[location.kind] ?? MapPin}
-                href={location.url ?? undefined}
-                title={location.kind === 'place' ? 'Open in Google Maps' : location.url ? 'Open link' : undefined}
-              >
-                {location.text}
-              </MetaChip>
-            )}
-            {cls.semesterStart && cls.semesterEnd && (
-              <MetaChip icon={CalendarDays}>{shortDate(cls.semesterStart)} – {shortDate(cls.semesterEnd)}</MetaChip>
-            )}
-            {cls.canvasCourseId != null && (
-              <MetaChip icon={BookOpen} title="Linked to a Canvas course">Canvas linked</MetaChip>
-            )}
-          </div>
+          {/* ── Meeting details, or the offer to make this a real class ── */}
+          {isCanvasOnly ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              padding: '9px 12px', marginBottom: 12, borderRadius: 9,
+              background: `${CANVAS_COLOR}0f`, border: `1px solid ${CANVAS_COLOR}33`,
+            }}>
+              <CanvasLogo size={14} />
+              <span style={{ flex: 1, minWidth: 160, fontSize: '0.74rem', color: 'var(--text-3)', lineHeight: 1.45 }}>
+                Straight from Canvas. Add its meeting times to get it on the calendar, file
+                tasks under it, and set reminders.
+              </span>
+              {onAdoptCourse && (
+                <button
+                  onClick={() => onAdoptCourse(entry)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                    padding: isMobile ? '7px 13px' : '5px 11px', borderRadius: 8,
+                    border: `1px solid ${CANVAS_COLOR}66`, background: `${CANVAS_COLOR}18`,
+                    color: CANVAS_COLOR, fontFamily: 'inherit', fontSize: '0.75rem',
+                    fontWeight: 700, cursor: 'pointer',
+                  }}
+                >
+                  <CalendarPlus size={12} /> Add meeting times
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginBottom: 12 }}>
+              <MetaChip icon={Clock}>{daysLabel(cls.days)} · {fmt12(cls.startTime)}–{fmt12(cls.endTime)}</MetaChip>
+              {cls.professor && <MetaChip icon={User}>{cls.professor}</MetaChip>}
+              {/* `describeLocation` has already worked out whether the room is a place,
+                  an online meeting, or a bare link — the same classification the event
+                  detail view uses, so a Zoom class offers its join link rather than a
+                  map search for the word "Zoom". */}
+              {location.kind !== 'empty' && (
+                <MetaChip
+                  icon={LOCATION_ICONS[location.kind] ?? MapPin}
+                  href={location.url ?? undefined}
+                  title={location.kind === 'place' ? 'Open in Google Maps' : location.url ? 'Open link' : undefined}
+                >
+                  {location.text}
+                </MetaChip>
+              )}
+              {cls.semesterStart && cls.semesterEnd && (
+                <MetaChip icon={CalendarDays}>{shortDate(cls.semesterStart)} – {shortDate(cls.semesterEnd)}</MetaChip>
+              )}
+              {cls.canvasCourseId != null && (
+                <MetaChip icon={BookOpen} title="Linked to a Canvas course">Canvas linked</MetaChip>
+              )}
+            </div>
+          )}
 
           {/* ── Grade + study time, side by side when both exist ── */}
           {(grade || studySec > 0) && (
@@ -400,117 +507,140 @@ function ClassCard({
             </div>
           )}
 
-          {/* ── Tasks ── */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionHeading
-              icon={CircleCheck}
-              count={openTasks.length}
-              action={onAddTask && (
-                <button
-                  type="button"
-                  onClick={() => onAddTask(cls)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
-                  onMouseEnter={e => e.currentTarget.style.color = color}
-                  onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
-                >
-                  <Plus size={12} /> Add task
-                </button>
-              )}
-            >
-              Tasks
-            </SectionHeading>
+          {/* ── Tasks. A Canvas-only card has nowhere to file one, so it has no list ── */}
+          {!isCanvasOnly && (
+            <div style={{ marginBottom: 14 }}>
+              <SectionHeading
+                icon={CircleCheck}
+                count={shownTasks.length}
+                action={onAddTask && (
+                  <button
+                    type="button"
+                    onClick={() => onAddTask(cls)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                    onMouseEnter={e => e.currentTarget.style.color = color}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+                  >
+                    <Plus size={12} /> Add task
+                  </button>
+                )}
+              >
+                Tasks
+              </SectionHeading>
 
-            {openTasks.length === 0 ? (
-              <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
-                Nothing outstanding for this class.
-              </p>
-            ) : (
-              openTasks.map(t => (
-                <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onClick={onTodoClick} />
-              ))
-            )}
-
-            {doneTasks.length > 0 && (
-              <>
-                <button
-                  onClick={() => setShowDone(v => !v)}
-                  style={{ marginTop: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                >
-                  {showDone ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                  {doneTasks.length} completed
-                </button>
-                {showDone && doneTasks.map(t => (
+              {shownTasks.length === 0 ? (
+                <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
+                  {weekOnly && openTasks.length > 0
+                    ? `Nothing due this week — ${openTasks.length} outstanding overall.`
+                    : 'Nothing outstanding for this class.'}
+                </p>
+              ) : (
+                shownTasks.map(t => (
                   <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onClick={onTodoClick} />
-                ))}
-              </>
-            )}
-          </div>
+                ))
+              )}
 
-          {/* ── Canvas assignments, when the class is linked ── */}
+              {!weekOnly && doneTasks.length > 0 && (
+                <>
+                  <button
+                    onClick={() => setShowDone(v => !v)}
+                    style={{ marginTop: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    {showDone ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    {doneTasks.length} completed
+                  </button>
+                  {showDone && doneTasks.map(t => (
+                    <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onClick={onTodoClick} />
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Canvas assignments ── */}
           {assignments.length > 0 && (
             <div style={{ marginBottom: 14 }}>
-              <SectionHeading icon={BookOpen} count={openAssignments.length}>Canvas assignments</SectionHeading>
-              {[...assignments]
-                .sort((a, b) => {
-                  if (!a.dueAt && !b.dueAt) return 0
-                  if (!a.dueAt) return 1
-                  if (!b.dueAt) return -1
-                  return new Date(a.dueAt) - new Date(b.dueAt)
-                })
-                .slice(0, 8)
-                .map(a => <AssignmentRow key={a.id} a={a} courseColor={color} />)}
+              <SectionHeading icon={BookOpen} count={openAssignments.length}>
+                {isCanvasOnly ? 'Assignments' : 'Canvas assignments'}
+              </SectionHeading>
+              {shownAssignments.length === 0 ? (
+                <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
+                  Nothing due this week.
+                </p>
+              ) : (
+                shownAssignments.slice(0, 12).map(a => (
+                  <AssignmentRow
+                    key={a.id} a={a}
+                    courseColor={color}
+                    onToggle={onToggleAssignment}
+                    onClickDetail={onAssignmentDetail}
+                    selectMode={selectMode}
+                    isSelected={selectedIds?.has(a.id)}
+                    onToggleSelect={onToggleSelect}
+                  />
+                ))
+              )}
             </div>
           )}
 
           {/* ── Upcoming meetings, exams among them ── */}
-          <div style={{ marginBottom: 14 }}>
-            <SectionHeading icon={CalendarDays}>Coming up</SectionHeading>
-            {upcoming.length === 0 ? (
-              <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
-                No meetings left this term.
-              </p>
-            ) : (
-              upcoming.map(ev => <MeetingRow key={ev.id} ev={ev} onClick={onEventClick} />)
-            )}
-          </div>
+          {!isCanvasOnly && (
+            <div style={{ marginBottom: 14 }}>
+              <SectionHeading icon={CalendarDays}>Coming up</SectionHeading>
+              {upcoming.length === 0 ? (
+                <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
+                  No meetings left this term.
+                </p>
+              ) : (
+                upcoming.map(ev => <MeetingRow key={ev.id} ev={ev} onClick={onEventClick} />)
+              )}
+            </div>
+          )}
 
           {/* ── Notes filed against this class ── */}
-          <div style={{ marginBottom: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-            <LinkedNotes
-              notes={notes}
-              targetId={String(cls.id)}
-              onOpenNote={onOpenNote}
-              onCreate={onCreateLinkedNote
-                ? () => onCreateLinkedNote({ type: 'class', id: String(cls.id), label: cls.courseName })
-                : undefined}
-              compact
-            />
-          </div>
+          {!isCanvasOnly && (
+            <div style={{ marginBottom: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <LinkedNotes
+                notes={notes}
+                targetId={String(cls.id)}
+                onOpenNote={onOpenNote}
+                onCreate={onCreateLinkedNote
+                  ? () => onCreateLinkedNote({ type: 'class', id: String(cls.id), label: cls.courseName })
+                  : undefined}
+                compact
+              />
+            </div>
+          )}
 
-          {/* ── Reminder rules ── */}
-          <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <ClassRemindersEditor
-              cls={cls}
-              color={color}
-              onChange={reminders => onSaveReminders?.(cls, reminders)}
-            />
-          </div>
+          {/* ── Reminder rules. They live on the schedule entry, so a Canvas-only
+                 course has nowhere to keep one until it becomes a class. ── */}
+          {!isCanvasOnly && (
+            <div style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <ClassRemindersEditor
+                cls={cls}
+                color={color}
+                onChange={reminders => onSaveReminders?.(cls, reminders)}
+              />
+            </div>
+          )}
 
           {/* ── Footer ── */}
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <button
-              onClick={() => onEdit?.(cls)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                padding: isMobile ? '7px 13px' : '5px 11px', borderRadius: 8,
-                border: '1px solid var(--border)', background: 'var(--surface2)',
-                color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.75rem',
-                fontWeight: 700, cursor: 'pointer',
-              }}
-            >
-              <Pencil size={12} /> Edit class
-            </button>
-          </div>
+          {!isCanvasOnly && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <button
+                onClick={() => onEdit?.(cls)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: isMobile ? '7px 13px' : '5px 11px', borderRadius: 8,
+                  border: '1px solid var(--border)', background: 'var(--surface2)',
+                  color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.75rem',
+                  fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                <Pencil size={12} /> Edit class
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -524,22 +654,60 @@ export default function ClassesPanel({
   todos = [],
   canvasClassEvents = [],
   canvasAssignments = [],
+  courseColors = {},
   notes = [],
   studySessions = [],
+  canvasConnected = false,
+  syncing = false,
   onAddClass,
   onEditClass,
   onSaveClass,
+  onAdoptCourse,
   onTodoClick,
   onToggleTodo,
   onAddTask,
   onEventClick,
   onOpenNote,
   onCreateLinkedNote,
+  onToggleAssignment,
+  onUpdateAssignmentNotes,
+  onTagSession,
+  onSyncCanvas,
+  onOpenCanvasSettings,
   isMobile = false,
 }) {
   // One clock for the whole panel, ticking once a minute. Per-card intervals would
   // be a timer per class to say the same thing.
   const now = useNow()
+
+  const [weekOnly,     setWeekOnly]     = useState(false)
+  const [detailAssign, setDetailAssign] = useState(null)
+  const [selectMode,   setSelectMode]   = useState(false)
+  const [selectedIds,  setSelectedIds]  = useState(new Set())
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function exitSelect() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  function bulkMarkDone() {
+    // Only the ones that are not already done — toggling is what the handler does,
+    // so including a finished assignment would un-finish it.
+    for (const id of selectedIds) {
+      const a = canvasAssignments.find(x => x.id === id)
+      if (a && !isCompleted(a)) onToggleAssignment?.(id)
+    }
+    exitSelect()
+  }
 
   // ── Index the surrounding data by class, once ──
   const todosByClass = useMemo(() => {
@@ -586,34 +754,72 @@ export default function ClassesPanel({
     return map
   }, [canvasAssignments])
 
-  // Enabled classes first, then alphabetically. A class you switched off is still
-  // yours and still holds its notes and its history, so it is listed rather than
-  // hidden — just not at the top competing with the ones you are taking.
-  const classes = useMemo(() => {
-    return [...canvasClasses].sort((a, b) => {
-      const ae = a.enabled === false ? 1 : 0
-      const be = b.enabled === false ? 1 : 0
-      if (ae !== be) return ae - be
-      return (a.courseName ?? '').localeCompare(b.courseName ?? '')
-    })
-  }, [canvasClasses])
+  /**
+   * The card list: schedule entries, then any Canvas course none of them claimed.
+   *
+   * An unclaimed Canvas course would otherwise vanish the moment the Courses tab did,
+   * which is the one way merging two tabs can quietly lose something. It gets a card
+   * of its own instead, offering to become a real class.
+   *
+   * Order: classes you are taking, then Canvas courses awaiting times, then disabled
+   * classes. A disabled class is still yours — it keeps its notes and its history —
+   * it just should not sit at the top competing with the ones you are in.
+   */
+  const entries = useMemo(() => {
+    const claimed = new Set()
+    const active  = []
+    const off     = []
+
+    for (const cls of [...canvasClasses].sort((a, b) => (a.courseName ?? '').localeCompare(b.courseName ?? ''))) {
+      if (cls.canvasCourseId != null) claimed.add(String(cls.canvasCourseId))
+      const entry = { kind: 'class', key: String(cls.id), cls }
+      if (cls.enabled === false) off.push(entry)
+      else active.push(entry)
+    }
+
+    const fromCanvas = []
+    const seen = new Set()
+    for (const a of canvasAssignments) {
+      const id = String(a.courseId)
+      if (!id || id === 'undefined' || seen.has(id) || claimed.has(id)) continue
+      seen.add(id)
+      fromCanvas.push({
+        kind: 'canvas', key: `canvas:${id}`,
+        courseId: a.courseId, courseName: a.courseName || 'Canvas course',
+        color: getCourseColor(a.courseId, courseColors),
+      })
+    }
+    fromCanvas.sort((a, b) => a.courseName.localeCompare(b.courseName))
+
+    return [...active, ...fromCanvas, ...off]
+  }, [canvasClasses, canvasAssignments, courseColors])
+
+  function assignmentsFor(entry) {
+    const courseId = entry.kind === 'canvas' ? entry.courseId : entry.cls.canvasCourseId
+    if (courseId == null) return []
+    return assignmentsByCourse.get(String(courseId)) ?? []
+  }
 
   // ── Term summary for the subtitle ──
   const summary = useMemo(() => {
-    let openTasks = 0
-    for (const cls of classes) {
-      if (cls.enabled === false) continue
-      openTasks += (todosByClass.get(String(cls.id)) ?? []).filter(t => !t.completed).length
+    let openWork = 0
+    for (const entry of entries) {
+      if (entry.kind === 'class') {
+        if (entry.cls.enabled === false) continue
+        openWork += (todosByClass.get(String(entry.cls.id)) ?? []).filter(t => !t.completed).length
+      }
+      openWork += assignmentsFor(entry).filter(a => !isCompleted(a)).length
     }
     const nextExam = canvasClassEvents
       .filter(ev => ev.extendedProps?.isExam && new Date(ev.start).getTime() >= now)
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
-    const active = classes.filter(c => c.enabled !== false).length
-    const parts = [`${active} ${active === 1 ? 'class' : 'classes'}`]
-    if (openTasks > 0) parts.push(`${openTasks} open ${openTasks === 1 ? 'task' : 'tasks'}`)
+
+    const count = entries.filter(e => e.kind === 'canvas' || e.cls.enabled !== false).length
+    const parts = [`${count} ${count === 1 ? 'class' : 'classes'}`]
+    if (openWork > 0) parts.push(`${openWork} open`)
     if (nextExam) parts.push(`next exam ${new Date(nextExam.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`)
     return parts.join(' · ')
-  }, [classes, todosByClass, canvasClassEvents, now])
+  }, [entries, todosByClass, assignmentsByCourse, canvasClassEvents, now]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addButton = onAddClass && (
     <button
@@ -632,75 +838,193 @@ export default function ClassesPanel({
     </button>
   )
 
+  const anyAssignments = canvasAssignments.length > 0
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── Header ── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-        padding: isMobile ? '14px 16px 10px' : '18px 20px 12px',
-        borderBottom: '1px solid var(--border)',
-      }}>
-        <GraduationCap size={17} style={{ color: 'var(--blue)', flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.015em' }}>
-            My Classes
+        {/* ── Header ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+          padding: isMobile ? '14px 16px 10px' : '18px 20px 12px',
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <GraduationCap size={17} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.015em' }}>
+              My Classes
+            </div>
+            {entries.length > 0 && (
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-3)', marginTop: 1 }}>{summary}</div>
+            )}
           </div>
-          {classes.length > 0 && (
-            <div style={{ fontSize: '0.74rem', color: 'var(--text-3)', marginTop: 1 }}>{summary}</div>
-          )}
-        </div>
-        {classes.length > 0 && addButton}
-      </div>
 
-      {/* ── Body ── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '12px 14px 28px' : '14px 20px 28px' }}>
-        {classes.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 14, padding: 32, textAlign: 'center' }}>
-            <GraduationCap size={38} style={{ color: 'var(--text-3)', opacity: 0.35 }} />
-            <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-2)', marginBottom: 6 }}>No classes yet</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-3)', lineHeight: 1.55, maxWidth: 380 }}>
-                Add the classes you&apos;re taking — days, times and room — and this becomes one
-                page per class: its meetings, its coursework, its exams and its notes. No Canvas
-                account needed, though a class can be linked to a Canvas course to pull in
-                assignments and grades.
+          {/* Canvas chrome, only once there is a Canvas to talk to. */}
+          {anyAssignments && (
+            <button
+              onClick={() => selectMode ? exitSelect() : setSelectMode(true)}
+              style={{
+                background: selectMode ? 'rgba(147,197,253,.15)' : 'none',
+                border: selectMode ? '1px solid rgba(147,197,253,.35)' : '1px solid transparent',
+                cursor: 'pointer', padding: '4px 8px', borderRadius: 6,
+                color: selectMode ? '#93c5fd' : 'var(--text-3)',
+                fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit', flexShrink: 0,
+              }}
+            >
+              {selectMode ? 'Cancel' : 'Select'}
+            </button>
+          )}
+          {canvasConnected && onSyncCanvas && (
+            <IconButton icon={RefreshCw} label="Sync Canvas" onClick={onSyncCanvas} spinning={syncing} disabled={syncing} />
+          )}
+          {canvasConnected && onOpenCanvasSettings && (
+            <IconButton icon={Settings2} label="Canvas settings" onClick={onOpenCanvasSettings} />
+          )}
+          {entries.length > 0 && addButton}
+        </div>
+
+        {/* ── This week / everything. Only worth offering once there is enough to sift ── */}
+        {entries.length > 0 && (
+          <div style={{ display: 'flex', gap: 4, padding: isMobile ? '8px 16px 4px' : '10px 20px 4px', flexShrink: 0 }}>
+            {[{ id: false, label: 'Everything' }, { id: true, label: 'This week' }].map(t => (
+              <button key={String(t.id)} onClick={() => setWeekOnly(t.id)} style={{
+                padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
+                background: weekOnly === t.id ? 'var(--blue-bg)' : 'transparent',
+                color: weekOnly === t.id ? 'var(--blue-text)' : 'var(--text-3)',
+              }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Body ── */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '8px 14px 28px' : '10px 20px 28px' }}>
+          {entries.length === 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 14, padding: 32, textAlign: 'center' }}>
+              <GraduationCap size={38} style={{ color: 'var(--text-3)', opacity: 0.35 }} />
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-2)', marginBottom: 6 }}>No classes yet</div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-3)', lineHeight: 1.55, maxWidth: 380 }}>
+                  Add the classes you&apos;re taking — days, times and room — and this becomes one
+                  page per class: its meetings, its coursework, its exams and its notes. No Canvas
+                  account needed, though connecting one pulls in assignments and grades alongside.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {addButton}
+                {!canvasConnected && onOpenCanvasSettings && (
+                  <button
+                    onClick={onOpenCanvasSettings}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: isMobile ? '8px 14px' : '6px 12px', borderRadius: 9,
+                      border: `1px solid ${CANVAS_COLOR}66`, background: `${CANVAS_COLOR}18`,
+                      color: CANVAS_COLOR, fontFamily: 'inherit', fontSize: '0.78rem',
+                      fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+                    }}
+                  >
+                    <CanvasLogo size={13} /> Connect Canvas
+                  </button>
+                )}
               </div>
             </div>
-            {addButton}
+          ) : (
+            <>
+              {/* Account-wide roll-ups. Both are Canvas-derived, so both are absent
+                  until there is Canvas data — they render nothing on their own. */}
+              {anyAssignments && (
+                <>
+                  <GpaPanel canvasAssignments={canvasAssignments} courseColors={courseColors} />
+                  <StudyTimeCard
+                    courseColors={courseColors}
+                    studySessions={studySessions}
+                    canvasAssignments={canvasAssignments}
+                    onTagSession={onTagSession}
+                  />
+                </>
+              )}
+
+              {entries.map((entry, i) => (
+                <ClassCard
+                  key={entry.key}
+                  entry={entry}
+                  // The first card opens so the tab is never a wall of closed rows;
+                  // the rest stay shut so a six-class term still fits on a screen.
+                  defaultOpen={i === 0}
+                  todos={entry.kind === 'class' ? (todosByClass.get(String(entry.cls.id)) ?? []) : []}
+                  meetings={entry.kind === 'class' ? (meetingsByClass.get(String(entry.cls.id)) ?? []) : []}
+                  assignments={assignmentsFor(entry)}
+                  notes={notes}
+                  studySessions={studySessions}
+                  now={now}
+                  weekOnly={weekOnly}
+                  onEdit={onEditClass}
+                  onSaveReminders={(c, reminders) => onSaveClass?.({ ...c, reminders })}
+                  onAdoptCourse={onAdoptCourse}
+                  onTodoClick={onTodoClick}
+                  onToggleTodo={onToggleTodo}
+                  onAddTask={onAddTask ? c => onAddTask(classCategoryId(c.id)) : undefined}
+                  onEventClick={onEventClick}
+                  onOpenNote={onOpenNote}
+                  onCreateLinkedNote={onCreateLinkedNote}
+                  onToggleAssignment={onToggleAssignment}
+                  onAssignmentDetail={setDetailAssign}
+                  selectMode={selectMode}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
+                  isMobile={isMobile}
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* ── Bulk action bar ── */}
+        {selectMode && selectedIds.size > 0 && (
+          <div style={{
+            flexShrink: 0, borderTop: '1px solid var(--border)', background: 'var(--surface)',
+            padding: '10px 16px', display: 'flex', gap: 8, alignItems: 'center',
+          }}>
+            <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-2)' }}>
+              {selectedIds.size} selected
+            </span>
+            <button
+              onClick={bulkMarkDone}
+              style={{
+                padding: '6px 14px', borderRadius: 8, border: 'none',
+                background: CANVAS_COLOR, color: '#fff',
+                fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              Mark done
+            </button>
+            <button
+              onClick={exitSelect}
+              style={{
+                padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--surface2)', color: 'var(--text-2)',
+                fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
           </div>
-        ) : (
-          classes.map((cls, i) => {
-            const id = String(cls.id)
-            return (
-              <ClassCard
-                key={id}
-                cls={cls}
-                // The first card opens so the tab is never a wall of closed rows;
-                // the rest stay shut so a six-class term still fits on a screen.
-                defaultOpen={i === 0}
-                todos={todosByClass.get(id) ?? []}
-                meetings={meetingsByClass.get(id) ?? []}
-                assignments={cls.canvasCourseId != null
-                  ? (assignmentsByCourse.get(String(cls.canvasCourseId)) ?? [])
-                  : []}
-                notes={notes}
-                studySessions={studySessions}
-                now={now}
-                onEdit={onEditClass}
-                onSaveReminders={(c, reminders) => onSaveClass?.({ ...c, reminders })}
-                onTodoClick={onTodoClick}
-                onToggleTodo={onToggleTodo}
-                onAddTask={onAddTask ? c => onAddTask(classCategoryId(c.id)) : undefined}
-                onEventClick={onEventClick}
-                onOpenNote={onOpenNote}
-                onCreateLinkedNote={onCreateLinkedNote}
-                isMobile={isMobile}
-              />
-            )
-          })
         )}
       </div>
-    </div>
+
+      {/* ── Assignment detail ── */}
+      {detailAssign && (
+        <AssignmentDetailModal
+          assignment={detailAssign}
+          courseColor={getCourseColor(detailAssign.courseId, courseColors)}
+          onClose={() => setDetailAssign(null)}
+          onToggleDone={id => { onToggleAssignment?.(id); setDetailAssign(prev => prev?.id === id ? { ...prev, done: !prev.done } : prev) }}
+          onUpdateNotes={(id, n) => { onUpdateAssignmentNotes?.(id, n); setDetailAssign(prev => prev?.id === id ? { ...prev, notes: n } : prev) }}
+        />
+      )}
+    </>
   )
 }
