@@ -24,6 +24,7 @@ import { useState, useMemo, useEffect } from 'react'
 import {
   GraduationCap, ChevronDown, ChevronRight, Plus, Pencil, MapPin, Clock,
   CalendarDays, AlertCircle, User, Timer, TrendingUp, BookOpen, CircleCheck, Circle,
+  Video, Link2,
 } from 'lucide-react'
 import LinkedNotes           from '@/components/LinkedNotes'
 import ClassRemindersEditor  from '@/components/ClassRemindersEditor'
@@ -32,7 +33,10 @@ import { EXAM_COLOR }        from '@/lib/classInstances'
 import { classIdForTodo }    from '@/lib/classReminders'
 import { classCategoryId }   from '@/lib/classCategories'
 import { courseGradeSummary, gradeColor } from '@/lib/grades'
-import { mapsUrl, isMappable, describeLocation } from '@/lib/maps'
+import { describeLocation } from '@/lib/maps'
+
+/** One icon per `describeLocation` kind — a Zoom class is not a place on a map. */
+const LOCATION_ICONS = { place: MapPin, online: Video, link: Link2 }
 
 const DEFAULT_COLOR = '#3a6fa8'
 const DAY_LETTERS   = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
@@ -339,13 +343,17 @@ function ClassCard({
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginBottom: 12 }}>
             <MetaChip icon={Clock}>{daysLabel(cls.days)} · {fmt12(cls.startTime)}–{fmt12(cls.endTime)}</MetaChip>
             {cls.professor && <MetaChip icon={User}>{cls.professor}</MetaChip>}
-            {location && (
+            {/* `describeLocation` has already worked out whether the room is a place,
+                an online meeting, or a bare link — the same classification the event
+                detail view uses, so a Zoom class offers its join link rather than a
+                map search for the word "Zoom". */}
+            {location.kind !== 'empty' && (
               <MetaChip
-                icon={MapPin}
-                href={isMappable(cls.location) ? mapsUrl(cls.location) : undefined}
-                title={isMappable(cls.location) ? 'Open in Google Maps' : undefined}
+                icon={LOCATION_ICONS[location.kind] ?? MapPin}
+                href={location.url ?? undefined}
+                title={location.kind === 'place' ? 'Open in Google Maps' : location.url ? 'Open link' : undefined}
               >
-                {location}
+                {location.text}
               </MetaChip>
             )}
             {cls.semesterStart && cls.semesterEnd && (
