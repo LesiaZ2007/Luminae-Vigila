@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest'
-import { render, screen, cleanup, within } from '@testing-library/react'
+import { render, screen, cleanup, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ClassesPanel from './ClassesPanel'
 
@@ -37,8 +37,12 @@ function meeting(date, over = {}) {
   }
 }
 
-function renderPanel(props = {}) {
-  return render(
+/**
+ * The panel opens on the calendar, so anything asserting about the cards has to ask
+ * for them. `view: 'calendar'` opts back out for the calendar's own cases.
+ */
+function renderPanel({ view = 'classes', ...props } = {}) {
+  const result = render(
     <ClassesPanel
       canvasClasses={[makeClass()]}
       todos={[]}
@@ -49,6 +53,10 @@ function renderPanel(props = {}) {
       {...props}
     />,
   )
+  if (view === 'classes') {
+    fireEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
+  }
+  return result
 }
 
 describe('ClassesPanel — empty state', () => {
@@ -91,6 +99,7 @@ describe('ClassesPanel — a class card', () => {
         todos={[]} canvasClassEvents={[]} canvasAssignments={[]} notes={[]} studySessions={[]}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
     // The open card shows its meeting details; the closed one shows only its summary.
     expect(screen.getByText('Dr. Vane')).toBeInTheDocument()
     expect(screen.getByText('Chem 210')).toBeInTheDocument()
@@ -105,6 +114,7 @@ describe('ClassesPanel — a class card', () => {
         todos={[]} canvasClassEvents={[]} canvasAssignments={[]} notes={[]} studySessions={[]}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
     expect(screen.getByText('Art History')).toBeInTheDocument()
     // Physics sorts first and is therefore the one that opened.
     expect(screen.getByText('Dr. Vane')).toBeInTheDocument()
@@ -265,6 +275,7 @@ describe('ClassesPanel — Canvas courses with no schedule entry', () => {
         canvasAssignments={assignments}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
     expect(screen.getByText('History 100')).toBeInTheDocument()
     expect(screen.getByText('Essay')).toBeInTheDocument()
   })
@@ -286,6 +297,7 @@ describe('ClassesPanel — Canvas courses with no schedule entry', () => {
         canvasAssignments={assignments} onAdoptCourse={onAdoptCourse}
       />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
     expect(screen.queryByRole('button', { name: /Tasks due/ })).not.toBeInTheDocument()
     await userEvent.click(screen.getAllByRole('button', { name: /Add meeting times/ })[0])
     expect(onAdoptCourse).toHaveBeenCalledWith(expect.objectContaining({ courseId: 7, courseName: 'History 100' }))
@@ -354,6 +366,103 @@ describe('ClassesPanel — this week', () => {
     renderPanel({ todos: [{ id: 't2', title: 'Due much later', category: 'class:c1', dueDate: '2026-04-20' }] })
     await userEvent.click(screen.getByRole('button', { name: 'This week' }))
     expect(screen.getByText(/Nothing due this week — 1 outstanding overall\./)).toBeInTheDocument()
+  })
+})
+
+describe('ClassesPanel — the calendar is the main spread', () => {
+  const todos = [
+    { id: 't1', title: 'Lab report', category: 'class:c1', dueDate: '2026-03-12' },
+  ]
+  const events = [
+    meeting('2026-03-04', {
+      title: 'Midterm', color: '#ef4444',
+      extendedProps: { source: 'canvas-class', classId: 'c1', category: 'exam', isExam: true },
+    }),
+  ]
+
+  it('opens on the calendar, not the class cards', () => {
+    renderPanel({ view: 'calendar', todos })
+    expect(screen.getByText('March 2026')).toBeInTheDocument()
+    // A card detail would only be on screen in the Classes view.
+    expect(screen.queryByText('Dr. Vane')).not.toBeInTheDocument()
+  })
+
+  it('puts coursework from every class on the month', () => {
+    renderPanel({ view: 'calendar', todos, canvasClassEvents: events })
+    expect(screen.getByTitle(/Lab report/)).toBeInTheDocument()
+    expect(screen.getByTitle(/Midterm/)).toBeInTheDocument()
+  })
+
+  // The calendar tab already shows every lecture. Here they would bury the four
+  // things that actually have deadlines.
+  it('leaves ordinary class meetings off', () => {
+    renderPanel({ view: 'calendar', canvasClassEvents: [meeting('2026-03-04')] })
+    expect(screen.queryByTitle(/Physics 101 \(002\)/)).not.toBeInTheDocument()
+  })
+
+  it('shows the selected day in full underneath, starting on today', () => {
+    renderPanel({ view: 'calendar', canvasClassEvents: events })
+    // "Today" is both the jump-to button and the strip's heading, so assert on the
+    // heading's own copy rather than the ambiguous word.
+    expect(screen.getByText('Nothing due today.')).toBeInTheDocument()
+  })
+
+  it('fills the day strip when a day with work is picked', async () => {
+    renderPanel({ view: 'calendar', canvasClassEvents: events })
+    await userEvent.click(screen.getByTitle(/2026-03-04: 1 exam/))
+    expect(screen.getByText('Wednesday, March 4')).toBeInTheDocument()
+    expect(screen.getAllByText('Midterm').length).toBeGreaterThan(0)
+  })
+
+  it('opens a task in the task editor rather than a view of its own', async () => {
+    const onTodoClick = vi.fn()
+    renderPanel({ view: 'calendar', todos, onTodoClick })
+    await userEvent.click(screen.getByTitle(/Lab report/))
+    expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
+  })
+
+  it('opens an exam in the event detail view', async () => {
+    const onEventClick = vi.fn()
+    renderPanel({ view: 'calendar', canvasClassEvents: events, onEventClick })
+    await userEvent.click(screen.getByTitle(/Midterm/))
+    expect(onEventClick).toHaveBeenCalledWith(expect.objectContaining({ title: 'Midterm' }))
+  })
+
+  it('ticks a task off from the day strip', async () => {
+    const onToggleTodo = vi.fn()
+    renderPanel({ view: 'calendar', todos, onToggleTodo })
+    await userEvent.click(screen.getByTitle(/2026-03-12: 1 task/))
+    await userEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+    expect(onToggleTodo).toHaveBeenCalledWith('t1')
+  })
+
+  it('pages to another month and back to today', async () => {
+    renderPanel({ view: 'calendar' })
+    await userEvent.click(screen.getByRole('button', { name: 'Next month' }))
+    expect(screen.getByText('April 2026')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Today' }))
+    expect(screen.getByText('March 2026')).toBeInTheDocument()
+  })
+
+  it('counts what is still outstanding in the month on screen', () => {
+    renderPanel({
+      view: 'calendar',
+      todos: [
+        ...todos,
+        { id: 't2', title: 'Done already', category: 'class:c1', dueDate: '2026-03-13', completed: true },
+        { id: 't3', title: 'Next month', category: 'class:c1', dueDate: '2026-04-13' },
+      ],
+    })
+    expect(screen.getByText('1 outstanding')).toBeInTheDocument()
+  })
+
+  // Narrowing a month view to one week is not a filter so much as a lie about
+  // the month you are looking at.
+  it('offers the week filter only on the cards', async () => {
+    renderPanel({ view: 'calendar', todos })
+    expect(screen.queryByRole('button', { name: 'This week' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^Classes$/ }))
+    expect(screen.getByRole('button', { name: 'This week' })).toBeInTheDocument()
   })
 })
 
