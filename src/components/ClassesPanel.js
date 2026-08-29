@@ -32,10 +32,11 @@ import { useState, useMemo, useEffect } from 'react'
 import {
   GraduationCap, ChevronDown, ChevronRight, Plus, Pencil, MapPin, Clock,
   CalendarDays, AlertCircle, User, Timer, TrendingUp, BookOpen, CircleCheck, Circle,
-  Video, Link2, RefreshCw, Settings2, CalendarPlus,
+  Video, Link2, RefreshCw, Settings2, CalendarPlus, LayoutGrid, CalendarRange,
 } from 'lucide-react'
 import LinkedNotes           from '@/components/LinkedNotes'
 import ClassRemindersEditor  from '@/components/ClassRemindersEditor'
+import ClassCalendar         from '@/components/ClassCalendar'
 import AssignmentRow, { isCompleted } from '@/components/AssignmentRow'
 import AssignmentDetailModal from '@/components/AssignmentDetailModal'
 import GpaPanel              from '@/components/GpaPanel'
@@ -47,6 +48,8 @@ import { classCategoryId }   from '@/lib/classCategories'
 import { courseGradeSummary, gradeColor } from '@/lib/grades'
 import { getCourseColor, CANVAS_COLOR }   from '@/lib/courseColors'
 import { describeLocation }  from '@/lib/maps'
+import { buildCourseworkItems } from '@/lib/classCalendar'
+import { toYMDLocal }        from '@/lib/calendarView'
 
 /** One icon per `describeLocation` kind — a Zoom class is not a place on a map. */
 const LOCATION_ICONS = { place: MapPin, online: Video, link: Link2 }
@@ -680,6 +683,12 @@ export default function ClassesPanel({
   // be a timer per class to say the same thing.
   const now = useNow()
 
+  /* Calendar first. The cards answer "what is the state of Physics?", but the question
+     you open this tab with most days is "what is coming at me, and when?" — and that
+     one crosses classes, so no arrangement of cards answers it. The cards are a click
+     away and remember nothing, which is the right way round: the calendar is where you
+     look, the cards are where you go to work on one class. */
+  const [view,         setView]         = useState('calendar') // 'calendar' | 'classes'
   const [weekOnly,     setWeekOnly]     = useState(false)
   const [detailAssign, setDetailAssign] = useState(null)
   const [selectMode,   setSelectMode]   = useState(false)
@@ -794,6 +803,34 @@ export default function ClassesPanel({
     return [...active, ...fromCanvas, ...off]
   }, [canvasClasses, canvasAssignments, courseColors])
 
+  /* Everything dated, from every class, for the month grid. Built from the same
+     `todos` / `canvasAssignments` / `canvasClassEvents` the cards read, so the two
+     views cannot disagree about what is due. */
+  const courseworkItems = useMemo(() => buildCourseworkItems({
+    classes:     canvasClasses,
+    todos,
+    assignments: canvasAssignments,
+    classEvents: canvasClassEvents,
+    courseColors,
+  }), [canvasClasses, todos, canvasAssignments, canvasClassEvents, courseColors])
+
+  const todayStr = useMemo(() => toYMDLocal(new Date(now)), [now])
+
+  /* A calendar item is a task, an assignment, or an exam, and each already has a
+     detail view elsewhere in the app. Routing to the existing one keeps this a *view*
+     rather than a fourth place where coursework can be edited. */
+  function openItem(item) {
+    if (item.kind === 'task')       onTodoClick?.(item.ref)
+    else if (item.kind === 'exam')  onEventClick?.(item.ref)
+    else                            setDetailAssign(item.ref)
+  }
+
+  function toggleItem(item) {
+    if (item.kind === 'task')            onToggleTodo?.(item.ref.id)
+    else if (item.kind === 'assignment') onToggleAssignment?.(item.ref.id)
+    // An exam is not a thing you tick off; it happens to you.
+  }
+
   function assignmentsFor(entry) {
     const courseId = entry.kind === 'canvas' ? entry.courseId : entry.cls.canvasCourseId
     if (courseId == null) return []
@@ -884,19 +921,46 @@ export default function ClassesPanel({
           {entries.length > 0 && addButton}
         </div>
 
-        {/* ── This week / everything. Only worth offering once there is enough to sift ── */}
+        {/* ── Calendar ⇄ Classes, and the week filter that only the cards use ── */}
         {entries.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, padding: isMobile ? '8px 16px 4px' : '10px 20px 4px', flexShrink: 0 }}>
-            {[{ id: false, label: 'Everything' }, { id: true, label: 'This week' }].map(t => (
-              <button key={String(t.id)} onClick={() => setWeekOnly(t.id)} style={{
-                padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
-                background: weekOnly === t.id ? 'var(--blue-bg)' : 'transparent',
-                color: weekOnly === t.id ? 'var(--blue-text)' : 'var(--text-3)',
-              }}>
-                {t.label}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '8px 16px 4px' : '10px 20px 4px', flexShrink: 0 }}>
+            {[
+              { id: 'calendar', label: 'Calendar', icon: CalendarRange },
+              { id: 'classes',  label: 'Classes',  icon: LayoutGrid },
+            ].map(t => {
+              const Icon = t.icon
+              const on   = view === t.id
+              return (
+                <button key={t.id} onClick={() => setView(t.id)} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
+                  background: on ? 'var(--blue-bg)' : 'transparent',
+                  color: on ? 'var(--blue-text)' : 'var(--text-3)',
+                }}>
+                  <Icon size={12} /> {t.label}
+                </button>
+              )
+            })}
+
+            {/* The week filter narrows the *cards*. On the calendar it would mean
+                hiding most of the month you are looking at, which is not a filter so
+                much as a lie about the month. */}
+            {view === 'classes' && (
+              <>
+                <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
+                {[{ id: false, label: 'Everything' }, { id: true, label: 'This week' }].map(t => (
+                  <button key={String(t.id)} onClick={() => setWeekOnly(t.id)} style={{
+                    padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
+                    background: weekOnly === t.id ? 'var(--surface2)' : 'transparent',
+                    color: weekOnly === t.id ? 'var(--text-2)' : 'var(--text-3)',
+                  }}>
+                    {t.label}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         )}
 
@@ -931,6 +995,14 @@ export default function ClassesPanel({
                 )}
               </div>
             </div>
+          ) : view === 'calendar' ? (
+            <ClassCalendar
+              items={courseworkItems}
+              todayStr={todayStr}
+              onSelectItem={openItem}
+              onToggleItem={toggleItem}
+              isMobile={isMobile}
+            />
           ) : (
             <>
               {/* Account-wide roll-ups. Both are Canvas-derived, so both are absent
