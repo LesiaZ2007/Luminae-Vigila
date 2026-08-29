@@ -2565,7 +2565,10 @@ export default function Home() {
     /* Unconditional, unlike Courses. Classes are typed in by hand and work with
        Canvas disconnected — hiding the one view of them behind a Canvas token was
        the gap this tab exists to close. */
-    { id: 'classes',  label: 'My Classes', icon: <GraduationCap size={22}/> },
+    /* `shortLabel` is what the mobile bar uses. Every tab there is `flex: 1`, so on a
+       narrow phone with Canvas connected each one gets around 40px — "My Classes"
+       would wrap onto the icon. The sidebar has room for the full name. */
+    { id: 'classes',  label: 'My Classes', shortLabel: 'Classes', icon: <GraduationCap size={22}/> },
     ...(canvasConnected
       ? [{ id: 'courses', label: 'Courses', icon: <BookOpen size={22}/> }]
       : []),
@@ -3246,7 +3249,7 @@ export default function Home() {
                         transition: 'all .15s', minHeight: 52,
                       }}>
                 {item.icon}
-                <span style={{ lineHeight: 1, marginTop: 1 }}>{item.label}</span>
+                <span style={{ lineHeight: 1, marginTop: 1 }}>{item.shortLabel ?? item.label}</span>
               </button>
             )
           })}
