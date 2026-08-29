@@ -101,7 +101,7 @@ function lastWeekRange() {
  * FocusTimer writes `durationSec` (see its shape comment) — this used to read
  * `durationMs ?? duration`, neither of which is ever present, so **every**
  * session counted as zero and the weekly total sat at 0h no matter how much you
- * focused. The other reader, CoursesPanel, always used durationSec, which is why
+ * focused. The other reader, StudyTimeCard, always used durationSec, which is why
  * the Study Time panel was right while this card was wrong.
  *
  * The ms/duration fallbacks are kept only to tolerate any older stored shape.

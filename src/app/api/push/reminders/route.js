@@ -20,6 +20,7 @@ import sql     from '@/lib/db'
 import { requireCron, requireVapid }       from '@/lib/cronAuth'
 import { ddlOnce }                         from '@/lib/ddlOnce'
 import { noteDisplayTitle, notePlainText, noteHasImage } from '@/lib/notes'
+import { classReminderCandidates }         from '@/lib/classReminders'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
 // Prevents backfilling ancient reminders on the very first cron run, while being
@@ -68,6 +69,47 @@ async function fetchReminderCandidates(userId) {
       SELECT 'td' AS kind, data FROM todos  WHERE user_id = ${userId} AND data ? 'reminder'
     `
   }
+}
+
+/**
+ * Everything a user's class-level reminder rules imply, or [] if they have none.
+ *
+ * A rule lives on the class and is resolved here rather than stamped onto each task —
+ * see lib/classReminders.js. That means the cron has to go and find the tasks, which
+ * is two queries where the per-item path needs none:
+ *
+ *   1. The classes carrying a rule. Cheap, and almost always empty — a user with no
+ *      rules pays exactly this one query and nothing else.
+ *   2. Only if any came back: the tasks with NO reminder of their own. Deliberately
+ *      the complement of the `data ? 'reminder'` prefilter above, so no row is
+ *      fetched twice and the "item's own reminder wins" rule is enforced in Postgres
+ *      rather than trusted to line up in JS.
+ *
+ * Exams need no query at all: an exam block lives inside its class's own
+ * `exceptions.exams`, which query 1 already brought back.
+ *
+ * Canvas assignments are absent by construction — they are never persisted (see the
+ * header of /api/sync), so class rules reach them only in the open tab.
+ */
+async function fetchClassCandidates(userId) {
+  let classRows
+  try {
+    classRows = await sql`
+      SELECT data FROM class_schedule WHERE user_id = ${userId} AND data ? 'reminders'
+    `
+  } catch {
+    // `class_schedule` predates this feature, but a deployment that has never synced
+    // a schedule may still not have the table. No rules is the right answer, not a
+    // failed cron run for every other user in the loop.
+    return []
+  }
+  if (classRows.length === 0) return []
+
+  const classes = classRows.map(r => r.data)
+  const todoRows = await sql`
+    SELECT data FROM todos WHERE user_id = ${userId} AND NOT (data ? 'reminder')
+  `
+  return classReminderCandidates({ classes, todos: todoRows.map(r => r.data) })
 }
 
 /** Compute the epoch-ms fire time for an item's reminder, or null if none/invalid. */
@@ -151,6 +193,10 @@ export async function GET(request) {
       const snippet = text || (noteHasImage(nt.html) ? 'Image' : '')
       candidates.push({ key: `nt-${nt.id}-${at}`, at, title: `Note: ${noteDisplayTitle(nt)}`, body: snippet })
     }
+
+    // Reminders implied by a class rule rather than set on the item. Appended to the
+    // same list, so they go through the identical grace window, claim and send path.
+    candidates.push(...await fetchClassCandidates(user_id))
 
     // Keep only reminders that just came due within the grace window.
     const dueNow = candidates.filter(c => c.at <= now && c.at >= windowLo)

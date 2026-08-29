@@ -22,7 +22,7 @@ const PRIORITY = [
   { id: 'high',   label: 'High',   color: '#ef4444' },
 ]
 
-export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate, initialTitle, initialNotes,
+export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate, initialTitle, initialNotes, initialCategory,
   allNotes = [], onOpenNote, onCreateLinkedNote }) {
   const isEdit   = !!editTodo
   const isCanvas = !!(editTodo?.canvasId)
@@ -32,7 +32,11 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const classCategoryChips = todoCategories.filter(c => isClassCategoryId(c.id))
 
   const [title,         setTitle]         = useState(editTodo?.title || initialTitle || '')
-  const [category,      setCategory]      = useState(editTodo?.category || ownCategories[0]?.id || '')
+  /* `initialCategory` is how "Add task" from inside a class card arrives already filed
+     under that class. Only honoured when the id resolves — a class that has since been
+     deleted must not leave the picker showing a category that is not in it. */
+  const initialCategoryId = todoCategories.some(c => c.id === initialCategory) ? initialCategory : null
+  const [category,      setCategory]      = useState(editTodo?.category || initialCategoryId || ownCategories[0]?.id || '')
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
   const [notes,         setNotes]         = useState(editTodo?.notes || initialNotes || '')
