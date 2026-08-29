@@ -20,37 +20,9 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { GraduationCap, ChevronDown, ChevronRight, TrendingUp, RefreshCw, RotateCcw } from 'lucide-react'
 import { getCourseColor } from '@/components/CoursesPanel'
-
-// ── GPA scale ────────────────────────────────────────────────────────────────
-
-const GPA_SCALE = [
-  { min: 93, letter: 'A',  points: 4.0 },
-  { min: 90, letter: 'A-', points: 3.7 },
-  { min: 87, letter: 'B+', points: 3.3 },
-  { min: 83, letter: 'B',  points: 3.0 },
-  { min: 80, letter: 'B-', points: 2.7 },
-  { min: 77, letter: 'C+', points: 2.3 },
-  { min: 73, letter: 'C',  points: 2.0 },
-  { min: 70, letter: 'C-', points: 1.7 },
-  { min: 67, letter: 'D+', points: 1.3 },
-  { min: 63, letter: 'D',  points: 1.0 },
-  { min: 60, letter: 'D-', points: 0.7 },
-  { min: 0,  letter: 'F',  points: 0.0 },
-]
-
-function pctToGrade(pct) {
-  for (const g of GPA_SCALE) {
-    if (pct >= g.min) return g
-  }
-  return GPA_SCALE[GPA_SCALE.length - 1]
-}
-
-function gradeColor(letter) {
-  if (letter.startsWith('A')) return '#10b981'
-  if (letter.startsWith('B')) return '#3a6fa8'
-  if (letter.startsWith('C')) return '#f59e0b'
-  return '#ef4444'
-}
+// The scale and the points arithmetic are shared with the Grades rail and the class
+// cards in My Classes — three copies had already begun to disagree. See lib/grades.js.
+import { pctToGrade, gradeColor, courseGradeSummary } from '@/lib/grades'
 
 const LS_KEY = 'lv-gpa'
 
@@ -366,25 +338,21 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
     fetchCanvasGrades(courseIds)
   }, [courseIds.join(','), fetchCanvasGrades]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Build per-course grade summaries from graded assignments
+  // Build per-course grade summaries from graded assignments. `courseGradeSummary`
+  // returns null for a course with nothing graded yet, which is what filters them out.
   const courses = useMemo(() => {
     const map = {}
     for (const a of canvasAssignments) {
       const key = a.courseId
-      if (!map[key]) map[key] = { id: key, name: a.courseName, graded: [], all: [] }
-      if (a.pointsPossible != null && a.pointsPossible > 0) map[key].all.push(a)
-      if (a.score != null && a.pointsPossible != null && a.pointsPossible > 0) map[key].graded.push(a)
+      if (!map[key]) map[key] = { id: key, name: a.courseName, assignments: [] }
+      map[key].assignments.push(a)
     }
     return Object.values(map)
-      .filter(c => c.graded.length > 0)
       .map(c => {
-        const earnedPts   = c.graded.reduce((s, a) => s + a.score, 0)
-        const possiblePts = c.graded.reduce((s, a) => s + a.pointsPossible, 0)
-        const totalPossible = c.all.reduce((s, a) => s + a.pointsPossible, 0)
-        const pct         = possiblePts > 0 ? (earnedPts / possiblePts) * 100 : 0
-        const grade       = pctToGrade(pct)
-        return { ...c, earnedPts, possiblePts, totalPossible, pct, grade }
+        const summary = courseGradeSummary(c.assignments)
+        return summary ? { ...c, ...summary } : null
       })
+      .filter(Boolean)
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [canvasAssignments])
 

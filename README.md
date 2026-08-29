@@ -273,6 +273,47 @@ A midterm happens *in* the class period — same room, usually the same hour. De
 - **Link to Canvas** — optionally connect a schedule entry to its matching Canvas course
 - Fully independent of Canvas
 
+### 🎓 My Classes — one page per class
+
+The **Courses** tab has always been a *Canvas* view: it groups Canvas assignments by Canvas course, and the whole tab is hidden unless a token is connected. But the app has had a real class model all along — the schedule entries you type in by hand, which expand into calendar meetings, carry cancellations and exam blocks, and derive the `class:` task categories. Nothing read *those* back. Your schedule was in the sidebar, your coursework in To-Do, your exams on the calendar and your notes in Notes, and nothing answered **"what is the state of Physics?"**
+
+**My Classes** is that view, and it is always there — no Canvas account, no personal access token, nothing to connect. One expandable card per class, holding:
+
+- **When and where it meets** — the day pattern, the hours, the term dates, and the room as a link that opens in Google Maps
+- **Its coursework** — every task filed under the class, soonest first, with completed ones behind a count. Tick one off in place, or click through to the real editor. **+ Add task** opens the task form already filed under that class
+- **Its Canvas assignments**, when the class is linked to a Canvas course
+- **What's coming up** — the next few meetings with exams among them rather than in a list of their own, because an exam *is* the period
+- **Its notes** — the reverse of a note's "link to", the same way the Courses tab shows them
+- **Its grade**, when Canvas-linked: what you have earned so far, and what you finish at if the rate holds
+- **Study time** in the last seven days, when Canvas-linked — the Focus Timer tags sessions with a *Canvas* course id, so an unlinked class has nothing to show
+- **Its reminder rules** — see below
+
+Design notes:
+
+- **The Courses tab is unchanged.** It still does the Canvas-native view, still grouped by Canvas course, still gated on a connection. This sits beside it rather than replacing it — the two answer different questions, and someone with Canvas connected reasonably wants both
+- **Expandable cards, not a master/detail split.** It matches the panels either side of it and collapses to a phone without needing a second layout. The first card opens so the tab is never a wall of closed rows; the rest stay shut so a six-class term fits on one screen
+- **A disabled class is listed, not hidden.** It is still yours, and it still holds its notes and its history — it just sorts below the classes you are actually taking
+- **The task rows are deliberately thinner than the To-Do panel's** — no drag handle, no swipe, no subtask tree. This is a read-and-jump view, and a second full-featured row would be a second row to keep in step
+- One fix fell out of building it: the note-link picker labelled every class with the literal word **"Class"**. It was reading `name`/`title`, fields a class entry has never had — the field is `courseName`
+
+#### 🔔 Reminders you set once per class
+
+*"Remind me two days before anything is due in Physics"* is a fact about the class, not about each task. Every class card carries two rows of chips — one for **tasks due**, one for **exams** — and they are multi-select on purpose: a week's warning *and* a nudge the day before is a normal want, and making them exclusive would mean choosing which to lose.
+
+**The rule is resolved, never stamped.** It is applied when a reminder is *evaluated*, not copied onto each task as the task is created. This is the same argument the derived task categories make, and it buys the same things: change "2 days" to "3 days" and every existing task follows, clear the rule and every reminder it implied disappears — with no writes, no sync traffic, and no second record of one fact to drift out of step. Stamping would also have no answer for the awkward middle: a task created while the rule said two days, edited after it said a week.
+
+**A task's own reminder wins.** The rule is a *default*, filling in only where there isn't one. A reminder you set by hand is the more specific statement of intent, so the class rule neither overrides it nor stacks a second notification on top of it — which is why the card says so under the chips, rather than leaving a hand-set reminder looking like the rule silently failed.
+
+- **Exams need no separate record.** An exam block already lives inside its class's own `exceptions.exams`, and an omitted time there means "the usual hour" — so an exam reminder counts back from the class period the exam inherits, and keeps following it if the period moves
+- **A disabled or deleted class contributes no rules.** It is already hidden from the calendar and out of the category picker; still being notified about its coursework would be the clearest possible bug
+- **The offset is part of the dedup key**, so two rules on one class are two notifications rather than one that swallows the other, and rescheduling a task fires a fresh reminder exactly as it always has
+- **Malformed stored rules are dropped on read**, not trusted — the same treatment `exceptions` gets, so a bad value can't take down the every-minute cron for everyone else
+- Rules live in the class row's existing JSONB alongside `exceptions`, so **there is no migration**
+
+**One honest limitation: a class rule reaches Canvas assignments only while a tab is open.** Canvas assignments are deliberately never persisted server-side — they are live data, refetched rather than stored — so the reminder cron that delivers pushes to a closed app cannot see them. Tasks and exams work closed-app as normal. Filing a Canvas assignment as a task is the workaround, and linking the class to its Canvas course is what makes the rule apply at all.
+
+Server-side, a user with no rules pays exactly one extra query per cron tick (the classes carrying one, almost always none). Only if that returns something does it go looking for tasks, and it asks for the ones with **no** reminder of their own — the exact complement of the existing prefilter, so no row is fetched twice and the precedence rule is enforced in Postgres rather than trusted to line up in JavaScript.
+
 ### ☁️ Cloud Sync — Reliability & Manual Refresh
 - **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
 - **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.

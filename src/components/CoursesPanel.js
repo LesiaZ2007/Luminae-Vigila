@@ -23,6 +23,7 @@ import AssignmentDetailModal from '@/components/AssignmentDetailModal'
 import LinkedNotes           from '@/components/LinkedNotes'
 import GpaPanel from '@/components/GpaPanel'
 import SessionHistory, { buildCourseOptions } from '@/components/SessionHistory'
+import { courseGradeSummary } from '@/lib/grades'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function formatDue(dueAt) {
   return { label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), urgent: false, past: false }
 }
 
-function isCompleted(a) {
+export function isCompleted(a) {
   return a.done || a.submissionState === 'graded' || a.submissionState === 'submitted'
 }
 
@@ -75,7 +76,7 @@ function getThisWeekBounds() {
 
 // ── AssignmentRow ─────────────────────────────────────────────────────────────
 
-function AssignmentRow({ a, courseColor, onToggle, onClickDetail, selectMode, isSelected, onToggleSelect }) {
+export function AssignmentRow({ a, courseColor, onToggle, onClickDetail, selectMode, isSelected, onToggleSelect }) {
   const [hovered, setHovered] = useState(false)
   const color   = courseColor ?? CANVAS_COLOR
   const due     = formatDue(a.dueAt)
@@ -491,18 +492,13 @@ function GradesPanel({ canvasAssignments, courseColors, courseIds }) {
     return map
   }, [canvasAssignments])
 
-  // Projected grade calculation
+  /* Projected grade. This used to average each assignment's *percentage* and carry
+     that average across the ungraded remainder, which weighted a 5-point warm-up the
+     same as a 200-point final — and disagreed with the GPA card sitting inches away,
+     which summed points. Both now go through lib/grades.js, which sums points. */
   function projected(courseId) {
-    const assignments = byCourse[courseId] ?? []
-    const graded = assignments.filter(a => a.score != null && a.pointsPossible != null)
-    if (!graded.length) return null
-    const avgPct = graded.reduce((s, a) => s + a.score / a.pointsPossible, 0) / graded.length
-    const totalPossible = assignments.filter(a => a.pointsPossible != null).reduce((s, a) => s + a.pointsPossible, 0)
-    if (!totalPossible) return null
-    const earnedSoFar = graded.reduce((s, a) => s + a.score, 0)
-    const ungradedPossible = totalPossible - graded.reduce((s, a) => s + a.pointsPossible, 0)
-    const projected = earnedSoFar + avgPct * ungradedPossible
-    return Math.round((projected / totalPossible) * 100)
+    const summary = courseGradeSummary(byCourse[courseId] ?? [])
+    return summary ? Math.round(summary.projected) : null
   }
 
   // Recent graded (sorted by gradedAt desc, cap 6)
