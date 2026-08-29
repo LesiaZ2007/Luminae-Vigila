@@ -52,7 +52,12 @@ export default function ClassScheduleModal({
   // holiday vanished if you closed the form without saving.
   onRestoreMeeting, onRemoveMeeting, onAddMeeting, onClearExam,
 }) {
-  const isEdit = !!editClass
+  /* Keyed on the id, not on the prop being present. "Add meeting times" for a Canvas
+     course opens this form pre-filled with a *draft* — a course name and a Canvas link,
+     no id — and that is an add, not an edit: it must not be titled "Edit Class", and it
+     must not offer a Delete that would call onDelete(undefined). Every stored class has
+     an id, so nothing else changes. */
+  const isEdit = !!editClass?.id
 
   const [courseName,     setCourseName]     = useState(editClass?.courseName     || '')
   const [section,        setSection]        = useState(editClass?.section         || '')
