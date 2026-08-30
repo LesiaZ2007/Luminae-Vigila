@@ -1430,6 +1430,18 @@ export default function Home() {
     )
   }, [todosRaw, pushToast])
   const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : t)), [])
+  /* Drag a task to another day on the coursework month.
+     Only the due date moves. A reminder is stored as an *offset* from the due date, so
+     it follows on its own and rewriting it here would double-apply the move; an
+     absolute one was pinned to a wall-clock time deliberately and is not ours to
+     shift. Recurrence is left alone too — dragging one occurrence is not a statement
+     about the pattern. */
+  const rescheduleTodo = useCallback((todoId, dueDate) => {
+    setTodos(prev => prev.map(t =>
+      t.id === todoId ? { ...t, dueDate, updatedAt: new Date().toISOString() } : t,
+    ))
+  }, [])
+
   const toggleSubtask = useCallback((todoId, subtaskId) => {
     setTodos(prev => prev.map(t =>
       t.id !== todoId ? t : {
@@ -3032,6 +3044,7 @@ export default function Home() {
                 onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onToggleTodo={toggleTodo}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
+                onRescheduleTask={(todo, dueDate) => rescheduleTodo(todo.id, dueDate)}
                 onEventClick={ev => setDetailEvent(ev)}
                 onOpenNote={openNoteById}
                 onCreateLinkedNote={createLinkedNote}

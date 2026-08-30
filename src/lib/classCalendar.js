@@ -167,6 +167,83 @@ export function monthGrid(year, month) {
   return cells
 }
 
+/**
+ * How much a single item weighs on the day it lands.
+ *
+ * A day showing four chips tells you *that* Thursday is busy, not that it is four big
+ * things. This is the crude correction for that.
+ *
+ * An exam is worth three: it is the thing you reorganise a week around, and it carries
+ * the revision that does not appear anywhere on the calendar as work of its own.
+ *
+ * An assignment counts double when it is in the **top third of its own course** by
+ * points. Relative to the course rather than to an absolute number on purpose — a
+ * 40-point essay is a big deal in a 200-point seminar and a rounding error in a
+ * 2,000-point lecture course, and any fixed threshold would be wrong for one of them.
+ * Courses that never publish points simply never get the boost, which is the right
+ * failure: no data, no claim.
+ */
+export function itemWeight(item, bigAssignmentCutoffs = new Map()) {
+  if (item.kind === 'exam') return 3
+  if (item.kind === 'assignment') {
+    const cutoff = bigAssignmentCutoffs.get(String(item.ref?.courseId))
+    const points = Number(item.ref?.pointsPossible)
+    if (cutoff != null && Number.isFinite(points) && points >= cutoff) return 2
+  }
+  return 1
+}
+
+/**
+ * The points value at which an assignment counts as "big", per course.
+ *
+ * The 67th percentile of that course's *pointed* assignments. A course with fewer than
+ * three of them gets no cutoff at all — two data points cannot establish what large
+ * looks like, and calling the bigger of two "big" would be noise dressed as signal.
+ */
+export function bigAssignmentCutoffs(assignments = []) {
+  const byCourse = new Map()
+  for (const a of assignments ?? []) {
+    const points = Number(a?.pointsPossible)
+    if (!Number.isFinite(points) || points <= 0) continue
+    const key = String(a.courseId)
+    if (!byCourse.has(key)) byCourse.set(key, [])
+    byCourse.get(key).push(points)
+  }
+
+  const cutoffs = new Map()
+  for (const [courseId, points] of byCourse) {
+    if (points.length < 3) continue
+    points.sort((a, b) => a - b)
+    cutoffs.set(courseId, points[Math.floor(points.length * 0.67)])
+  }
+  return cutoffs
+}
+
+/** Everything still outstanding on a day, weighed. Finished work weighs nothing. */
+export function dayLoad(items = [], cutoffs) {
+  return items.reduce((sum, it) => (it.done ? sum : sum + itemWeight(it, cutoffs)), 0)
+}
+
+/**
+ * Load as a band the grid can paint.
+ *
+ * Absolute thresholds rather than percentiles of the term. A relative scale would
+ * repaint every cell as you page between months — a Tuesday going from "heavy" to
+ * "light" because a worse month came into view — and a calendar whose colours mean
+ * something different each screen is worse than one whose colours are only roughly
+ * calibrated. These are fixed, so a heavy day looks heavy in every month.
+ *
+ * An exam alone reaches 'medium'; an exam plus a big assignment reaches 'heavy'.
+ */
+export function loadLevel(load) {
+  if (load <= 0) return 'none'
+  if (load <= 2) return 'light'
+  if (load <= 4) return 'medium'
+  return 'heavy'
+}
+
+export const LOAD_LABELS = { none: '', light: 'Light day', medium: 'Busy day', heavy: 'Heavy day' }
+
 /** Outstanding and past its date. Completed work is never overdue. */
 export function isOverdue(item, todayStr) {
   return !item.done && item.date < todayStr
@@ -178,7 +255,7 @@ export function isOverdue(item, todayStr) {
  * The chips are colour and truncated text; without this, a busy day reads as three
  * coloured smudges to anyone not looking closely at it.
  */
-export function describeDay(dateStr, items = []) {
+export function describeDay(dateStr, items = [], cutoffs) {
   if (items.length === 0) return dateStr
   const counts = { exam: 0, assignment: 0, task: 0 }
   for (const it of items) counts[it.kind]++
@@ -186,5 +263,27 @@ export function describeDay(dateStr, items = []) {
   if (counts.exam)       parts.push(`${counts.exam} exam${counts.exam === 1 ? '' : 's'}`)
   if (counts.assignment) parts.push(`${counts.assignment} assignment${counts.assignment === 1 ? '' : 's'}`)
   if (counts.task)       parts.push(`${counts.task} task${counts.task === 1 ? '' : 's'}`)
-  return `${dateStr}: ${parts.join(', ')}`
+
+  // The load word carries the shading in words, so the heat is not colour-only —
+  // it reaches a screen reader and anyone who cannot separate the tints.
+  const level = loadLevel(dayLoad(items, cutoffs))
+  const load  = LOAD_LABELS[level]
+  return `${dateStr}: ${parts.join(', ')}${load ? ` · ${load}` : ''}`
+}
+
+/**
+ * Can this be dragged to another day?
+ *
+ * Only your own tasks. A Canvas assignment's due date belongs to Canvas — moving it
+ * here would either be a lie the next sync overwrites, or a silent local fork of
+ * someone else's record.
+ *
+ * An exam is excluded for a subtler reason: an exam block is a *transform of a class
+ * period*, so its date has to be a day the class actually meets. Dropping one on a
+ * Sunday would file an exam against a meeting that does not exist — which the model
+ * carries, so it would vanish from the calendar rather than error. Moving an exam is
+ * the class form's job, where the meeting days are visible.
+ */
+export function canReschedule(item) {
+  return item?.kind === 'task'
 }
