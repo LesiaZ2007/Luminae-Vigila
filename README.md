@@ -298,6 +298,10 @@ The cards answer *"what is the state of Physics?"*. They cannot answer the quest
 - **Month-only, on purpose.** A week view of coursework is what the cards' *This week* filter already is, and a day view of it is the `/today` page. The week filter sits over the cards, not the month: narrowing a month view to one week is less a filter than a lie about the month
 - Hand-rolled rather than a FullCalendar month view. FullCalendar is already in the bundle, but this is a read-only grid of deadlines with its own chip design, overdue treatment and day strip — re-theming a general calendar engine into that shape is more code than drawing seven columns, and it would pull the tab into FullCalendar's styling surface
 
+**Class colour is meant to be read at a glance.** Each chip carries a solid 3px spine in its class colour over a wash of it, each class card has a 4px spine down its full height and a washed header, and a **colour key** above the grid names every class with something on it — a grid coded by colour with no key told you Thursday was two blues and a green without saying what green was. The key lists only classes that actually appear; a key to absent colours is just a second class list.
+
+One deliberate limit: **colour identifies in blocks, never in text.** Half the palette — lime, amber, cyan — fails contrast as small coloured text on a light background, so spines, washes and swatches carry the colour while every label stays at full contrast. A course whose name you cannot read is a worse outcome than one whose name is not tinted.
+
 One subtle thing it gets right: dates are local `YYYY-MM-DD` throughout. `toISOString().slice(0, 10)` — how the mini month navigator does it — yields the **UTC** day, so an 11pm deadline in New York files itself on tomorrow.
 
 #### The class cards

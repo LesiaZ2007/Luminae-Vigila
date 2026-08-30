@@ -72,11 +72,15 @@ function Chip({ item, overdue, onClick, onDragStart, onDragEnd, dragging }) {
       onDragEnd={draggable ? () => onDragEnd?.() : undefined}
       title={`${item.title}${item.className ? ` — ${item.className}` : ''}${draggable ? ' · drag to move' : ''}`}
       style={{
-        display: 'flex', alignItems: 'center', gap: 4, width: '100%',
-        padding: '1px 4px', borderRadius: 4, border: 'none', cursor: 'pointer',
-        fontFamily: 'inherit', fontSize: '0.65rem', fontWeight: 600, textAlign: 'left',
-        background: hovered ? `${item.color}28` : `${item.color}14`,
-        color: item.done ? 'var(--text-3)' : 'var(--text-2)',
+        display: 'flex', alignItems: 'center', gap: 5, width: '100%',
+        padding: '2px 5px', borderRadius: 4, border: 'none', cursor: 'pointer',
+        fontFamily: 'inherit', fontSize: '0.65rem', fontWeight: 700, textAlign: 'left',
+        /* A solid spine in the class colour plus a wash of it. The 4px dot this
+           replaced was too small to read a hue from at a glance, which is the one
+           job the colour has on a month grid. */
+        borderLeft: `3px solid ${item.color}`,
+        background: hovered ? `${item.color}3d` : `${item.color}24`,
+        color: item.done ? 'var(--text-3)' : overdue ? 'var(--red)' : 'var(--text)',
         textDecoration: item.done ? 'line-through' : 'none',
         transition: 'background .12s, opacity .12s',
         opacity: dragging ? 0.4 : 1,
@@ -84,10 +88,6 @@ function Chip({ item, overdue, onClick, onDragStart, onDragEnd, dragging }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <span style={{
-        width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
-        background: overdue ? 'var(--red)' : item.color,
-      }} />
       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {item.title}
       </span>
@@ -111,7 +111,9 @@ function DayRow({ item, overdue, onClick, onToggle }) {
       style={{
         display: 'flex', alignItems: 'center', gap: 9, padding: '7px 10px',
         borderRadius: 8, cursor: 'pointer', transition: 'background .12s',
-        background: hovered ? 'var(--surface2)' : 'transparent',
+        borderLeft: `3px solid ${item.color}`,
+        background: hovered ? `${item.color}1f` : `${item.color}0d`,
+        marginBottom: 3,
       }}
     >
       {tickable ? (
@@ -129,8 +131,6 @@ function DayRow({ item, overdue, onClick, onToggle }) {
         <Icon size={15} style={{ flexShrink: 0, color: item.color }} />
       )}
 
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{
           display: 'block', fontSize: '0.8rem', fontWeight: 600, lineHeight: 1.3,
@@ -140,8 +140,10 @@ function DayRow({ item, overdue, onClick, onToggle }) {
         }}>
           {item.title}
         </span>
+        {/* The spine already says which class this is in colour; the name says it in
+            words, at a contrast that survives a lime course. */}
         {item.className && (
-          <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-3)', marginTop: 1 }}>
+          <span style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-3)', marginTop: 1 }}>
             {item.className}
           </span>
         )}
@@ -160,6 +162,7 @@ function DayRow({ item, overdue, onClick, onToggle }) {
 
 export default function ClassCalendar({
   items = [],
+  legend = [],
   assignments = [],
   todayStr,
   onSelectItem,
@@ -331,9 +334,11 @@ export default function ClassCalendar({
                   <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                     {dayItems.slice(0, 4).map(i => (
                       <span key={i.id} style={{
-                        width: 5, height: 5, borderRadius: '50%',
-                        background: isOverdue(i, todayStr) ? 'var(--red)' : i.color,
-                        opacity: i.done ? 0.35 : 1,
+                        width: 7, height: 7, borderRadius: 2,
+                        background: i.color,
+                        outline: isOverdue(i, todayStr) ? '1.5px solid var(--red)' : 'none',
+                        outlineOffset: 1,
+                        opacity: i.done ? 0.3 : 1,
                       }} />
                     ))}
                   </div>
@@ -361,6 +366,27 @@ export default function ClassCalendar({
           )
         })}
       </div>
+
+      {/* ── Which colour is which class ──
+             The grid is colour-coded and, until now, had no key: you could see that
+             Thursday was two blues and a green without being told what green was.
+             Only classes with something on the calendar are listed — a key to colours
+             that do not appear is just a second class list. */}
+      {legend.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px 12px', marginTop: 10 }}>
+          {legend.map(c => (
+            <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: c.color, flexShrink: 0 }} />
+              <span style={{
+                fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-2)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160,
+              }}>
+                {c.name}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* ── Legend ──
              The shading is faint by design, so it needs saying once what it means.
