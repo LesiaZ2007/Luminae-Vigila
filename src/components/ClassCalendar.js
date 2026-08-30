@@ -23,7 +23,25 @@ import { useState, useMemo } from 'react'
 import {
   ChevronLeft, ChevronRight, GraduationCap, BookOpen, CircleCheck, Circle, AlertCircle,
 } from 'lucide-react'
-import { monthGrid, groupByDate, isOverdue, describeDay } from '@/lib/classCalendar'
+import {
+  monthGrid, groupByDate, isOverdue, describeDay,
+  bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule, LOAD_LABELS,
+} from '@/lib/classCalendar'
+
+/**
+ * How heavy a day looks.
+ *
+ * A single warm hue at rising alpha, not a red-to-green ramp: red already means
+ * *overdue* on this grid, and a second red meaning "busy" would make an ordinary busy
+ * Thursday read as a crisis. The tints stay faint because the chips carry the class
+ * colours on top of them and have to stay legible.
+ */
+const LOAD_TINT = {
+  none:   'transparent',
+  light:  'rgba(245,158,11,.07)',
+  medium: 'rgba(245,158,11,.15)',
+  heavy:  'rgba(245,158,11,.26)',
+}
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -43,12 +61,16 @@ function longDay(dateStr) {
 
 // ── One item, as a chip in a day cell ─────────────────────────────────────────
 
-function Chip({ item, overdue, onClick }) {
+function Chip({ item, overdue, onClick, onDragStart, onDragEnd, dragging }) {
   const [hovered, setHovered] = useState(false)
+  const draggable = canReschedule(item)
   return (
     <button
       onClick={e => { e.stopPropagation(); onClick?.(item) }}
-      title={`${item.title}${item.className ? ` — ${item.className}` : ''}`}
+      draggable={draggable}
+      onDragStart={draggable ? e => { e.stopPropagation(); onDragStart?.(item, e) } : undefined}
+      onDragEnd={draggable ? () => onDragEnd?.() : undefined}
+      title={`${item.title}${item.className ? ` — ${item.className}` : ''}${draggable ? ' · drag to move' : ''}`}
       style={{
         display: 'flex', alignItems: 'center', gap: 4, width: '100%',
         padding: '1px 4px', borderRadius: 4, border: 'none', cursor: 'pointer',
@@ -56,7 +78,8 @@ function Chip({ item, overdue, onClick }) {
         background: hovered ? `${item.color}28` : `${item.color}14`,
         color: item.done ? 'var(--text-3)' : 'var(--text-2)',
         textDecoration: item.done ? 'line-through' : 'none',
-        transition: 'background .12s',
+        transition: 'background .12s, opacity .12s',
+        opacity: dragging ? 0.4 : 1,
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -137,9 +160,11 @@ function DayRow({ item, overdue, onClick, onToggle }) {
 
 export default function ClassCalendar({
   items = [],
+  assignments = [],
   todayStr,
   onSelectItem,
   onToggleItem,
+  onReschedule,
   isMobile = false,
 }) {
   // Opens on the month containing today, then follows the user rather than snapping
@@ -153,8 +178,24 @@ export default function ClassCalendar({
      from under them at midnight would be the calendar taking the click back. */
   const [selected, setSelected] = useState(todayStr)
 
-  const byDate = useMemo(() => groupByDate(items), [items])
-  const cells  = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor])
+  /* The item being dragged, and the day under the cursor. Held in state rather than
+     read off the drop event because the cell needs to light up *during* the drag. */
+  const [dragItem, setDragItem] = useState(null)
+  const [dragOver, setDragOver] = useState(null)
+
+  const byDate  = useMemo(() => groupByDate(items), [items])
+  const cells   = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor])
+  const cutoffs = useMemo(() => bigAssignmentCutoffs(assignments), [assignments])
+
+  function handleDrop(dateStr) {
+    const item = dragItem
+    setDragItem(null)
+    setDragOver(null)
+    // Dropping a task back where it started is a no-op, not an edit — it should not
+    // stamp updatedAt and wake the sync for nothing.
+    if (!item || !canReschedule(item) || item.date === dateStr) return
+    onReschedule?.(item, dateStr)
+  }
 
   function step(delta) {
     setCursor(({ year, month }) => {
@@ -239,18 +280,30 @@ export default function ClassCalendar({
           const anyOverdue = dayItems.some(i => isOverdue(i, todayStr))
           const shown      = dayItems.slice(0, CHIPS_PER_CELL)
           const extra      = dayItems.length - shown.length
+          const level      = loadLevel(dayLoad(dayItems, cutoffs))
+          const isDropZone = dragOver === cell.date
 
           return (
             <div
               key={cell.date}
               onClick={() => setSelected(cell.date)}
-              title={describeDay(cell.date, dayItems)}
+              title={describeDay(cell.date, dayItems, cutoffs)}
+              /* Every cell is a drop target while a task is in the air. preventDefault
+                 on dragOver is what actually permits the drop — without it the browser
+                 refuses and the task springs back. */
+              onDragOver={dragItem ? e => { e.preventDefault(); setDragOver(cell.date) } : undefined}
+              onDragLeave={dragItem ? () => setDragOver(d => (d === cell.date ? null : d)) : undefined}
+              onDrop={dragItem ? e => { e.preventDefault(); handleDrop(cell.date) } : undefined}
               style={{
                 minHeight: isMobile ? 62 : 92,
                 padding: 4, borderRadius: 8, cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden',
-                border: isSelected ? '1.5px solid var(--blue)' : '1px solid var(--border)',
-                background: cell.inMonth ? 'var(--surface)' : 'transparent',
+                border: isDropZone ? '1.5px dashed var(--blue)'
+                      : isSelected  ? '1.5px solid var(--blue)'
+                      : '1px solid var(--border)',
+                background: isDropZone ? 'var(--blue-bg)'
+                          : cell.inMonth ? `linear-gradient(${LOAD_TINT[level]}, ${LOAD_TINT[level]}), var(--surface)`
+                          : LOAD_TINT[level],
                 opacity: cell.inMonth ? 1 : 0.45,
                 transition: 'border-color .12s, background .12s',
               }}
@@ -288,7 +341,14 @@ export default function ClassCalendar({
               ) : (
                 <>
                   {shown.map(i => (
-                    <Chip key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={onSelectItem} />
+                    <Chip
+                      key={i.id} item={i}
+                      overdue={isOverdue(i, todayStr)}
+                      onClick={onSelectItem}
+                      onDragStart={(it, e) => { setDragItem(it); e.dataTransfer.effectAllowed = 'move' }}
+                      onDragEnd={() => { setDragItem(null); setDragOver(null) }}
+                      dragging={dragItem?.id === i.id}
+                    />
                   ))}
                   {extra > 0 && (
                     <span style={{ fontSize: '0.63rem', fontWeight: 700, color: 'var(--text-3)', paddingLeft: 4 }}>
@@ -300,6 +360,29 @@ export default function ClassCalendar({
             </div>
           )
         })}
+      </div>
+
+      {/* ── Legend ──
+             The shading is faint by design, so it needs saying once what it means.
+             The drag hint sits here rather than on every chip: it is a property of the
+             grid, and repeating it forty times is noise. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        marginTop: 8, fontSize: '0.68rem', color: 'var(--text-3)',
+      }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          Workload
+          {['light', 'medium', 'heavy'].map(l => (
+            <span key={l} title={LOAD_LABELS[l]} style={{
+              width: 13, height: 13, borderRadius: 3,
+              border: '1px solid var(--border)', background: LOAD_TINT[l],
+            }} />
+          ))}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--red)' }} /> overdue
+        </span>
+        {!isMobile && onReschedule && <span>· drag a task to move it</span>}
       </div>
 
       {/* ── The selected day, in full ──

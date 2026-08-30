@@ -32,7 +32,7 @@ import { useState, useMemo, useEffect } from 'react'
 import {
   GraduationCap, ChevronDown, ChevronRight, Plus, Pencil, MapPin, Clock,
   CalendarDays, AlertCircle, User, Timer, TrendingUp, BookOpen, CircleCheck, Circle,
-  Video, Link2, RefreshCw, Settings2, CalendarPlus, LayoutGrid, CalendarRange,
+  Video, Link2, RefreshCw, Settings2, CalendarPlus, LayoutGrid,
 } from 'lucide-react'
 import LinkedNotes           from '@/components/LinkedNotes'
 import ClassRemindersEditor  from '@/components/ClassRemindersEditor'
@@ -669,6 +669,7 @@ export default function ClassesPanel({
   onTodoClick,
   onToggleTodo,
   onAddTask,
+  onRescheduleTask,
   onEventClick,
   onOpenNote,
   onCreateLinkedNote,
@@ -683,12 +684,6 @@ export default function ClassesPanel({
   // be a timer per class to say the same thing.
   const now = useNow()
 
-  /* Calendar first. The cards answer "what is the state of Physics?", but the question
-     you open this tab with most days is "what is coming at me, and when?" — and that
-     one crosses classes, so no arrangement of cards answers it. The cards are a click
-     away and remember nothing, which is the right way round: the calendar is where you
-     look, the cards are where you go to work on one class. */
-  const [view,         setView]         = useState('calendar') // 'calendar' | 'classes'
   const [weekOnly,     setWeekOnly]     = useState(false)
   const [detailAssign, setDetailAssign] = useState(null)
   const [selectMode,   setSelectMode]   = useState(false)
@@ -921,48 +916,6 @@ export default function ClassesPanel({
           {entries.length > 0 && addButton}
         </div>
 
-        {/* ── Calendar ⇄ Classes, and the week filter that only the cards use ── */}
-        {entries.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '8px 16px 4px' : '10px 20px 4px', flexShrink: 0 }}>
-            {[
-              { id: 'calendar', label: 'Calendar', icon: CalendarRange },
-              { id: 'classes',  label: 'Classes',  icon: LayoutGrid },
-            ].map(t => {
-              const Icon = t.icon
-              const on   = view === t.id
-              return (
-                <button key={t.id} onClick={() => setView(t.id)} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
-                  fontFamily: 'inherit', fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
-                  background: on ? 'var(--blue-bg)' : 'transparent',
-                  color: on ? 'var(--blue-text)' : 'var(--text-3)',
-                }}>
-                  <Icon size={12} /> {t.label}
-                </button>
-              )
-            })}
-
-            {/* The week filter narrows the *cards*. On the calendar it would mean
-                hiding most of the month you are looking at, which is not a filter so
-                much as a lie about the month. */}
-            {view === 'classes' && (
-              <>
-                <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
-                {[{ id: false, label: 'Everything' }, { id: true, label: 'This week' }].map(t => (
-                  <button key={String(t.id)} onClick={() => setWeekOnly(t.id)} style={{
-                    padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: '0.75rem', fontWeight: 600, transition: 'all .13s',
-                    background: weekOnly === t.id ? 'var(--surface2)' : 'transparent',
-                    color: weekOnly === t.id ? 'var(--text-2)' : 'var(--text-3)',
-                  }}>
-                    {t.label}
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-        )}
 
         {/* ── Body ── */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '8px 14px 28px' : '10px 20px 28px' }}>
@@ -995,16 +948,56 @@ export default function ClassesPanel({
                 )}
               </div>
             </div>
-          ) : view === 'calendar' ? (
-            <ClassCalendar
-              items={courseworkItems}
-              todayStr={todayStr}
-              onSelectItem={openItem}
-              onToggleItem={toggleItem}
-              isMobile={isMobile}
-            />
           ) : (
             <>
+              {/* ── The month, which is what the tab is for ── */}
+              <section aria-label="Coursework calendar">
+              <ClassCalendar
+                items={courseworkItems}
+                assignments={canvasAssignments}
+                todayStr={todayStr}
+                onSelectItem={openItem}
+                onToggleItem={toggleItem}
+                onReschedule={onRescheduleTask ? (item, date) => onRescheduleTask(item.ref, date) : undefined}
+                isMobile={isMobile}
+              />
+              </section>
+
+              {/* ── Then each class in detail, on the same page ──
+                     Below the calendar rather than behind a tab: the two answer
+                     different questions and you often want the second right after the
+                     first — "Thursday is brutal" is followed by "what *is* all that",
+                     and a switch would make that a round trip.
+
+                     A landmark rather than a bare div: naming the two halves lets a
+                     screen reader jump between them the way a sighted reader scrolls
+                     past the grid. */}
+              <section aria-label="Your classes">
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                marginTop: 22, paddingTop: 14, borderTop: '1px solid var(--border)',
+              }}>
+                <LayoutGrid size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-2)', letterSpacing: '-0.01em' }}>
+                  Your classes
+                </span>
+                {/* Narrows the cards only. On the month above it would mean hiding most
+                    of what you are looking at, which is less a filter than a lie. */}
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
+                  {[{ id: false, label: 'Everything' }, { id: true, label: 'This week' }].map(t => (
+                    <button key={String(t.id)} onClick={() => setWeekOnly(t.id)} style={{
+                      padding: '3px 11px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: '0.73rem', fontWeight: 600, transition: 'all .13s',
+                      background: weekOnly === t.id ? 'var(--blue-bg)' : 'transparent',
+                      color: weekOnly === t.id ? 'var(--blue-text)' : 'var(--text-3)',
+                    }}>
+                      {t.label}
+                    </button>
+                  ))}
+                </span>
+              </div>
+              <div style={{ height: 12 }} />
+
               {/* Account-wide roll-ups. Both are Canvas-derived, so both are absent
                   until there is Canvas data — they render nothing on their own. */}
               {anyAssignments && (
@@ -1019,13 +1012,15 @@ export default function ClassesPanel({
                 </>
               )}
 
-              {entries.map((entry, i) => (
+              {entries.map(entry => (
                 <ClassCard
                   key={entry.key}
                   entry={entry}
-                  // The first card opens so the tab is never a wall of closed rows;
-                  // the rest stay shut so a six-class term still fits on a screen.
-                  defaultOpen={i === 0}
+                  /* All shut. When the cards were the tab, opening the first one was
+                     what stopped it reading as a wall of closed rows — but they now sit
+                     below a month grid that already fills the screen, and an open card
+                     would just push the other five out of reach. */
+                  defaultOpen={false}
                   todos={entry.kind === 'class' ? (todosByClass.get(String(entry.cls.id)) ?? []) : []}
                   meetings={entry.kind === 'class' ? (meetingsByClass.get(String(entry.cls.id)) ?? []) : []}
                   assignments={assignmentsFor(entry)}
@@ -1050,6 +1045,7 @@ export default function ClassesPanel({
                   isMobile={isMobile}
                 />
               ))}
+              </section>
             </>
           )}
         </div>
