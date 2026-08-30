@@ -373,23 +373,32 @@ function ClassCard({
     <div style={{
       borderRadius: 12, overflow: 'hidden', marginBottom: 12,
       border: '1px solid var(--border)', background: 'var(--surface2)',
+      /* The spine is what makes a collapsed list of six classes scannable by colour
+         rather than by reading six names. It runs the full height, so an expanded
+         card stays visibly owned by its class all the way down. */
+      borderLeft: `4px solid ${color}`,
     }}>
       {/* ── Header ── */}
       <button
         onClick={() => setOpen(v => !v)}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 9,
-          padding: '11px 14px', background: 'none', border: 'none', cursor: 'pointer',
+          padding: '11px 14px', border: 'none', cursor: 'pointer',
           fontFamily: 'inherit', textAlign: 'left',
+          background: `${color}14`,
         }}
       >
         {open
-          ? <ChevronDown  size={13} style={{ color, flexShrink: 0, opacity: 0.7 }} />
-          : <ChevronRight size={13} style={{ color, flexShrink: 0, opacity: 0.7 }} />}
-        <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0 }} />
+          ? <ChevronDown  size={13} style={{ color, flexShrink: 0 }} />
+          : <ChevronRight size={13} style={{ color, flexShrink: 0 }} />}
 
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {/* Deliberately NOT the class colour. Half the palette — lime, amber, cyan —
+              fails contrast as small text on a light background, and a course whose
+              name you cannot read is a worse outcome than one whose name is not tinted.
+              Colour identifies in blocks (the spine, the header wash, the swatches);
+              text stays at full contrast. */}
+          <span style={{ display: 'block', fontSize: '0.85rem', fontWeight: 800, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {name}
             {!isCanvasOnly && cls.section && <span style={{ fontWeight: 500, color: 'var(--text-3)' }}> · {cls.section}</span>}
           </span>
@@ -811,6 +820,18 @@ export default function ClassesPanel({
 
   const todayStr = useMemo(() => toYMDLocal(new Date(now)), [now])
 
+  /* The calendar's colour key. Built from the items actually on the grid rather than
+     from the class list, so it never explains a colour that does not appear — a key to
+     absent colours is just a second class list. */
+  const legend = useMemo(() => {
+    const seen = new Map()
+    for (const it of courseworkItems) {
+      const key = it.className ?? 'Unfiled'
+      if (!seen.has(key)) seen.set(key, { id: key, name: key, color: it.color })
+    }
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [courseworkItems])
+
   /* A calendar item is a task, an assignment, or an exam, and each already has a
      detail view elsewhere in the app. Routing to the existing one keeps this a *view*
      rather than a fourth place where coursework can be edited. */
@@ -954,6 +975,7 @@ export default function ClassesPanel({
               <section aria-label="Coursework calendar">
               <ClassCalendar
                 items={courseworkItems}
+                legend={legend}
                 assignments={canvasAssignments}
                 todayStr={todayStr}
                 onSelectItem={openItem}
