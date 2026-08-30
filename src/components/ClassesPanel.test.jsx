@@ -315,8 +315,9 @@ describe('ClassesPanel — Canvas courses with no schedule entry', () => {
   it('does not duplicate a course a class already claims', () => {
     renderPanel({ canvasClasses: [makeClass({ canvasCourseId: 42 })], canvasAssignments: assignments })
     // Physics appears once — as the class, not also as a loose Canvas course.
-    expect(screen.getAllByText('Physics 101')).toHaveLength(1)
-    expect(screen.getByText('History 100')).toBeInTheDocument()
+    // Scoped to the cards: the colour key above names it too, legitimately.
+    expect(cards().getAllByText('Physics 101')).toHaveLength(1)
+    expect(cards().getByText('History 100')).toBeInTheDocument()
   })
 
   // Reminder rules live on the schedule entry, so a Canvas-only course has nowhere
@@ -502,9 +503,9 @@ describe('ClassesPanel — the calendar is the main spread', () => {
 
   it('shows the month and the class cards on one page', () => {
     renderPanel({ todos })
-    expect(screen.getByText('March 2026')).toBeInTheDocument()
+    expect(calendar().getByText('March 2026')).toBeInTheDocument()
     expect(screen.getByText('Your classes')).toBeInTheDocument()
-    expect(screen.getByText('Physics 101')).toBeInTheDocument()
+    expect(cards().getByText('Physics 101')).toBeInTheDocument()
   })
 })
 
@@ -590,6 +591,35 @@ describe('ClassesPanel — workload heat', () => {
   it('explains the shading rather than leaving it to be guessed at', () => {
     renderPanel()
     expect(screen.getByText('Workload')).toBeInTheDocument()
+  })
+})
+
+describe('ClassesPanel — the colour key', () => {
+  it('names the classes whose colours are on the grid', () => {
+    renderPanel({
+      canvasClasses: [makeClass(), makeClass({ id: 'c2', courseName: 'Chem 210', color: '#10b981' })],
+      todos: [
+        { id: 't1', title: 'Lab report', category: 'class:c1', dueDate: '2026-03-12' },
+        { id: 't2', title: 'Titration',  category: 'class:c2', dueDate: '2026-03-13' },
+      ],
+    })
+    expect(calendar().getByText('Physics 101')).toBeInTheDocument()
+    expect(calendar().getByText('Chem 210')).toBeInTheDocument()
+  })
+
+  // A key to colours that never appear is just a second class list.
+  it('leaves out a class with nothing on the calendar', () => {
+    renderPanel({
+      canvasClasses: [makeClass(), makeClass({ id: 'c2', courseName: 'Chem 210' })],
+      todos: [{ id: 't1', title: 'Lab report', category: 'class:c1', dueDate: '2026-03-12' }],
+    })
+    expect(calendar().getByText('Physics 101')).toBeInTheDocument()
+    expect(calendar().queryByText('Chem 210')).not.toBeInTheDocument()
+  })
+
+  it('has no key at all when nothing is dated', () => {
+    renderPanel()
+    expect(calendar().queryByText('Physics 101')).not.toBeInTheDocument()
   })
 })
 
