@@ -278,11 +278,11 @@ There used to be two tabs asking almost the same question. **Courses** was a Can
 
 Two tabs called "Courses" and "My Classes", listing overlapping things under different names, is a question the app was asking you rather than answering. So there is **one** tab. It looks different depending on whether Canvas is connected — which is the actual difference — rather than being two places to look.
 
-The tab opens on a **coursework month** — every deadline from every class on one grid — with the class cards a click away.
+The tab is one scrolling page: a **coursework month** at the top — every deadline from every class on one grid — and the detail of each class below it.
 
 #### 📅 The calendar is the main spread
 
-The cards answer *"what is the state of Physics?"*. They cannot answer the question that crosses classes — *"what is coming at me, and when?"* — because finding out that three things land on Thursday means opening five cards and holding five lists in your head. So the month grid is what the tab opens on, and **Calendar ⇄ Classes** switches.
+The cards answer *"what is the state of Physics?"*. They cannot answer the question that crosses classes — *"what is coming at me, and when?"* — because finding out that three things land on Thursday means opening five cards and holding five lists in your head. So the month grid is what the tab opens on, and the cards sit **underneath it on the same page** rather than behind a switch: *"Thursday is brutal"* is followed immediately by *"what* is *all that?"*, and a tab switch would make that a round trip.
 
 - **Exams, Canvas assignments and your own class tasks**, colour-coded by class, each chip clicking through to the detail view it already had — the task editor, the assignment modal, the event detail. It's a *view*, not a fourth place coursework can be edited
 - **Ordinary class meetings are deliberately absent.** A calendar of every lecture is the Calendar tab; here forty recurring meetings would bury the four things that actually have deadlines
@@ -291,12 +291,18 @@ The cards answer *"what is the state of Physics?"*. They cannot answer the quest
 - **A count of what's still outstanding in the month on screen** — the number that says whether this month is calm or brutal, which no single cell can
 - **On a phone the cells are too small for text**, so a day collapses to coloured dots and the strip below does the reading
 - Paging to April and clicking a day doesn't snap back to today, and midnight doesn't yank your selected day out from under you — **Today** is a button for when you want it
-- **Month-only, on purpose.** A week view of coursework is what the cards' *This week* filter already is, and a day view of it is the `/today` page. The week filter isn't offered on the calendar: narrowing a month view to one week is less a filter than a lie about the month
+- **Drag a task to another day.** Grab its chip and drop it on a date — the due date moves and nothing else does. A reminder is stored as an *offset* from the due date, so it follows on its own; rewriting it would double-apply the move. Dropping a task back on its own day is a no-op, not an edit, so it doesn't stamp `updatedAt` and wake the sync for nothing
+- **Only your own tasks drag.** A Canvas assignment's due date belongs to Canvas — moving it here would either be a lie the next sync overwrites or a silent local fork of someone else's record. An exam is excluded for a subtler reason: an exam block is a *transform of a class period*, so its date has to be a day the class actually meets. Dropping one on a Sunday would file an exam against a meeting that doesn't exist — which the model carries, so it would quietly vanish from the calendar rather than error. Moving an exam is the class form's job, where the meeting days are visible. Dragging is desktop-only; on a phone, tapping through to the editor is the path
+- **Workload shading** — a day is tinted by how much is *outstanding* on it, so you can see that Thursday is four **big** things and not four small ones. An exam weighs 3 (it's what you reorganise a week around, and it carries revision that appears nowhere as work of its own); an assignment counts double when it's in the **top third of its own course** by points — relative to the course, because a 40-point essay is a big deal in a 200-point seminar and a rounding error in a 2,000-point lecture course. Courses that never publish points simply never get the boost: no data, no claim, and fewer than three pointed assignments isn't enough to say what "large" looks like
+- **The thresholds are absolute, not percentiles of your term.** A relative scale would repaint every cell as you page between months — a Tuesday going from *heavy* to *light* because a worse month came into view — and a calendar whose colours mean something different on each screen is worse than one only roughly calibrated. Finishing the work clears the shading, and the day's tooltip says *"Heavy day"* in words so the tint is never the only carrier
+- **Month-only, on purpose.** A week view of coursework is what the cards' *This week* filter already is, and a day view of it is the `/today` page. The week filter sits over the cards, not the month: narrowing a month view to one week is less a filter than a lie about the month
 - Hand-rolled rather than a FullCalendar month view. FullCalendar is already in the bundle, but this is a read-only grid of deadlines with its own chip design, overdue treatment and day strip — re-theming a general calendar engine into that shape is more code than drawing seven columns, and it would pull the tab into FullCalendar's styling surface
 
 One subtle thing it gets right: dates are local `YYYY-MM-DD` throughout. `toISOString().slice(0, 10)` — how the mini month navigator does it — yields the **UTC** day, so an 11pm deadline in New York files itself on tomorrow.
 
 #### The class cards
+
+Below the month, under a **Your classes** heading. All start collapsed — when the cards *were* the tab, opening the first one stopped it reading as a wall of closed rows, but they now sit under a grid that already fills the screen and an open card would just push the other five out of reach.
 
 One expandable card per class, holding:
 

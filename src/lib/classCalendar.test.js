@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   localDayOf, buildCourseworkItems, groupByDate, monthGrid, isOverdue, describeDay,
+  itemWeight, bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule,
 } from '@/lib/classCalendar'
 
 const CLASSES = [
@@ -222,17 +223,111 @@ describe('isOverdue', () => {
 })
 
 describe('describeDay', () => {
-  it('counts each kind for the tooltip and for screen readers', () => {
+  it('counts each kind, and says how heavy the day is', () => {
     expect(describeDay('2026-03-04', [
       { kind: 'exam' }, { kind: 'assignment' }, { kind: 'assignment' }, { kind: 'task' },
-    ])).toBe('2026-03-04: 1 exam, 2 assignments, 1 task')
+    ])).toBe('2026-03-04: 1 exam, 2 assignments, 1 task · Heavy day')
   })
 
   it('names only the kinds actually present', () => {
-    expect(describeDay('2026-03-04', [{ kind: 'task' }])).toBe('2026-03-04: 1 task')
+    expect(describeDay('2026-03-04', [{ kind: 'task' }])).toBe('2026-03-04: 1 task · Light day')
   })
 
   it('is just the date on an empty day', () => {
     expect(describeDay('2026-03-04', [])).toBe('2026-03-04')
+  })
+
+  // The shading must not be the only carrier of "this day is brutal".
+  it('drops the load word when everything on the day is done', () => {
+    expect(describeDay('2026-03-04', [{ kind: 'task', done: true }])).toBe('2026-03-04: 1 task')
+  })
+})
+
+describe('bigAssignmentCutoffs', () => {
+  const a = (courseId, pointsPossible) => ({ id: String(Math.random()), courseId, pointsPossible })
+
+  it('sets a cutoff from the course’s own distribution', () => {
+    const cutoffs = bigAssignmentCutoffs([a(1, 10), a(1, 20), a(1, 100)])
+    expect(cutoffs.get('1')).toBe(100)
+  })
+
+  // Two data points cannot establish what "large" looks like; calling the bigger of
+  // two big would be noise dressed as signal.
+  it('refuses to guess from fewer than three pointed assignments', () => {
+    expect(bigAssignmentCutoffs([a(1, 10), a(1, 500)]).has('1')).toBe(false)
+  })
+
+  it('ignores assignments with no points, and courses that publish none', () => {
+    const cutoffs = bigAssignmentCutoffs([
+      a(1, 10), a(1, 20), a(1, 100), { id: 'x', courseId: 1 },
+      { id: 'y', courseId: 2 }, { id: 'z', courseId: 2 }, { id: 'w', courseId: 2 },
+    ])
+    expect(cutoffs.has('1')).toBe(true)
+    expect(cutoffs.has('2')).toBe(false)
+  })
+
+  it('scores each course on its own scale', () => {
+    const cutoffs = bigAssignmentCutoffs([
+      a(1, 10), a(1, 20), a(1, 40),
+      a(2, 400), a(2, 800), a(2, 2000),
+    ])
+    expect(cutoffs.get('1')).toBeLessThan(cutoffs.get('2'))
+  })
+})
+
+describe('itemWeight', () => {
+  it('weighs an exam heaviest — it is what you reorganise a week around', () => {
+    expect(itemWeight({ kind: 'exam' })).toBe(3)
+  })
+
+  it('weighs an ordinary task and a small assignment the same', () => {
+    const cutoffs = new Map([['1', 100]])
+    expect(itemWeight({ kind: 'task' }, cutoffs)).toBe(1)
+    expect(itemWeight({ kind: 'assignment', ref: { courseId: 1, pointsPossible: 10 } }, cutoffs)).toBe(1)
+  })
+
+  it('doubles an assignment in the top third of its course', () => {
+    const cutoffs = new Map([['1', 100]])
+    expect(itemWeight({ kind: 'assignment', ref: { courseId: 1, pointsPossible: 100 } }, cutoffs)).toBe(2)
+  })
+
+  // No data, no claim.
+  it('gives no boost when the course publishes no points', () => {
+    expect(itemWeight({ kind: 'assignment', ref: { courseId: 9, pointsPossible: 5000 } }, new Map())).toBe(1)
+  })
+})
+
+describe('dayLoad and loadLevel', () => {
+  it('adds up what is outstanding', () => {
+    expect(dayLoad([{ kind: 'exam' }, { kind: 'task' }])).toBe(4)
+  })
+
+  it('counts finished work as no burden at all', () => {
+    expect(dayLoad([{ kind: 'exam', done: true }, { kind: 'task' }])).toBe(1)
+  })
+
+  it('bands an empty day as none', () => {
+    expect(loadLevel(0)).toBe('none')
+    expect(loadLevel(dayLoad([{ kind: 'task', done: true }]))).toBe('none')
+  })
+
+  it('reaches medium for an exam alone and heavy once work piles on it', () => {
+    expect(loadLevel(dayLoad([{ kind: 'exam' }]))).toBe('medium')
+    expect(loadLevel(dayLoad([{ kind: 'exam' }, { kind: 'task' }, { kind: 'task' }]))).toBe('heavy')
+  })
+
+  it('bands a couple of small things as light', () => {
+    expect(loadLevel(dayLoad([{ kind: 'task' }, { kind: 'task' }]))).toBe('light')
+  })
+})
+
+describe('canReschedule', () => {
+  // Moving a Canvas assignment here is either a lie the next sync overwrites, or a
+  // silent local fork of someone else's record.
+  it('allows your own tasks and nothing else', () => {
+    expect(canReschedule({ kind: 'task' })).toBe(true)
+    expect(canReschedule({ kind: 'assignment' })).toBe(false)
+    expect(canReschedule({ kind: 'exam' })).toBe(false)
+    expect(canReschedule(null)).toBe(false)
   })
 })
