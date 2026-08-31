@@ -244,6 +244,53 @@ export function loadLevel(load) {
 
 export const LOAD_LABELS = { none: '', light: 'Light day', medium: 'Busy day', heavy: 'Heavy day' }
 
+/** `n` days after a local `YYYY-MM-DD`, still local and still a plain date. */
+export function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return toYMDLocal(new Date(y, m - 1, d + n))
+}
+
+/**
+ * What is already late, soonest-overdue last.
+ *
+ * Surfaced above the upcoming days rather than mixed into them, because overdue work
+ * has no day left to belong to — filing it under the date it was due would put it
+ * behind you on a list about what is ahead, which is exactly where it gets forgotten.
+ */
+export function overdueItems(items = [], todayStr) {
+  return items
+    .filter(it => isOverdue(it, todayStr))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/**
+ * The next `days` calendar days that actually have something on them.
+ *
+ * Days are dropped when empty rather than rendered as blanks: a week with work on two
+ * days should be two rows, not seven with five apologies.
+ */
+export function upcomingDays(items = [], todayStr, days = 7) {
+  const end    = addDays(todayStr, days)
+  const byDate = groupByDate(items.filter(it => it.date >= todayStr && it.date < end))
+  return [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, dayItems]) => ({ date, items: dayItems }))
+}
+
+/**
+ * The first day beyond the window that still has outstanding work.
+ *
+ * So an empty week can say "nothing until the 20th" instead of just "nothing", which
+ * reads as *no work exists* when the truth is that it is a fortnight out.
+ */
+export function nextDateAfter(items = [], fromDateStr) {
+  const later = items
+    .filter(it => !it.done && it.date >= fromDateStr)
+    .map(it => it.date)
+    .sort()
+  return later[0] ?? null
+}
+
 /** Outstanding and past its date. Completed work is never overdue. */
 export function isOverdue(item, todayStr) {
   return !item.done && item.date < todayStr

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   localDayOf, buildCourseworkItems, groupByDate, monthGrid, isOverdue, describeDay,
   itemWeight, bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule,
+  addDays, overdueItems, upcomingDays, nextDateAfter,
 } from '@/lib/classCalendar'
 
 const CLASSES = [
@@ -329,5 +330,75 @@ describe('canReschedule', () => {
     expect(canReschedule({ kind: 'assignment' })).toBe(false)
     expect(canReschedule({ kind: 'exam' })).toBe(false)
     expect(canReschedule(null)).toBe(false)
+  })
+})
+
+describe('addDays', () => {
+  it('walks forward and back within a month', () => {
+    expect(addDays('2026-03-04', 3)).toBe('2026-03-07')
+    expect(addDays('2026-03-04', -3)).toBe('2026-03-01')
+  })
+
+  it('crosses month and year boundaries', () => {
+    expect(addDays('2026-03-30', 3)).toBe('2026-04-02')
+    expect(addDays('2026-12-30', 3)).toBe('2027-01-02')
+  })
+
+  it('knows February 2028 has 29 days', () => {
+    expect(addDays('2028-02-28', 1)).toBe('2028-02-29')
+  })
+})
+
+const item = (date, over = {}) => ({ id: date + Math.random(), date, kind: 'task', done: false, ...over })
+
+describe('overdueItems', () => {
+  it('collects what is late, oldest first', () => {
+    const out = overdueItems([item('2026-03-01'), item('2026-02-20'), item('2026-03-10')], '2026-03-04')
+    expect(out.map(i => i.date)).toEqual(['2026-02-20', '2026-03-01'])
+  })
+
+  it('leaves finished work out however old it is', () => {
+    expect(overdueItems([item('2026-01-01', { done: true })], '2026-03-04')).toEqual([])
+  })
+
+  it('does not count today as late — the day is not over', () => {
+    expect(overdueItems([item('2026-03-04')], '2026-03-04')).toEqual([])
+  })
+})
+
+describe('upcomingDays', () => {
+  it('groups the next week by day, soonest first', () => {
+    const out = upcomingDays([item('2026-03-06'), item('2026-03-04'), item('2026-03-04')], '2026-03-04', 7)
+    expect(out.map(d => d.date)).toEqual(['2026-03-04', '2026-03-06'])
+    expect(out[0].items).toHaveLength(2)
+  })
+
+  // A week with work on two days should be two rows, not seven with five apologies.
+  it('omits days with nothing on them', () => {
+    expect(upcomingDays([item('2026-03-04')], '2026-03-04', 7)).toHaveLength(1)
+  })
+
+  it('stops at the window and never looks backwards', () => {
+    const out = upcomingDays([item('2026-03-01'), item('2026-03-04'), item('2026-03-11')], '2026-03-04', 7)
+    expect(out.map(d => d.date)).toEqual(['2026-03-04'])
+  })
+
+  it('keeps completed work visible on its day rather than hiding it', () => {
+    const out = upcomingDays([item('2026-03-04', { done: true })], '2026-03-04', 7)
+    expect(out[0].items).toHaveLength(1)
+  })
+})
+
+describe('nextDateAfter', () => {
+  it('names the soonest outstanding day from a point onwards', () => {
+    expect(nextDateAfter([item('2026-03-25'), item('2026-03-20')], '2026-03-11')).toBe('2026-03-20')
+  })
+
+  it('skips work that is already done', () => {
+    expect(nextDateAfter([item('2026-03-20', { done: true }), item('2026-03-25')], '2026-03-11')).toBe('2026-03-25')
+  })
+
+  it('is null when there is genuinely nothing left', () => {
+    expect(nextDateAfter([item('2026-03-01')], '2026-03-11')).toBeNull()
   })
 })
