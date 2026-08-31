@@ -26,7 +26,11 @@ import {
 import {
   monthGrid, groupByDate, isOverdue, describeDay,
   bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule, LOAD_LABELS,
+  overdueItems, upcomingDays, nextDateAfter, addDays,
 } from '@/lib/classCalendar'
+
+/** How far ahead "coming up" looks, in days including today. */
+const HORIZON_DAYS = 7
 
 /**
  * How heavy a day looks.
@@ -57,6 +61,18 @@ function monthLabel(year, month) {
 function longDay(dateStr) {
   return new Date(`${dateStr}T00:00:00`)
     .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+/** "Today" / "Tomorrow" / "Fri, Mar 6" — the nearest days earn their own words. */
+function relativeDay(dateStr, todayStr) {
+  if (dateStr === todayStr) return 'Today'
+  const t = new Date(`${todayStr}T00:00:00`)
+  t.setDate(t.getDate() + 1)
+  const pad = n => String(n).padStart(2, '0')
+  const tomorrow = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`
+  if (dateStr === tomorrow) return 'Tomorrow'
+  return new Date(`${dateStr}T00:00:00`)
+    .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 // ── One item, as a chip in a day cell ─────────────────────────────────────────
@@ -176,10 +192,11 @@ export default function ClassCalendar({
     const d = new Date(`${todayStr}T00:00:00`)
     return { year: d.getFullYear(), month: d.getMonth() }
   })
-  /* Not re-synced to `todayStr` when the date rolls over. The today-highlight and the
-     overdue line follow the prop on their own, and yanking someone's selected day out
-     from under them at midnight would be the calendar taking the click back. */
-  const [selected, setSelected] = useState(todayStr)
+  /* `null` means no day has been singled out, which is the resting state: the strip
+     then shows the week ahead rather than one day. A single day was too narrow a
+     default under a grid showing a whole month — "nothing due today" is a poor answer
+     when the useful one is that two things land tomorrow. */
+  const [selected, setSelected] = useState(null)
 
   /* The item being dragged, and the day under the cursor. Held in state rather than
      read off the drop event because the cell needs to light up *during* the drag. */
@@ -210,10 +227,18 @@ export default function ClassCalendar({
   function goToday() {
     const d = new Date(`${todayStr}T00:00:00`)
     setCursor({ year: d.getFullYear(), month: d.getMonth() })
-    setSelected(todayStr)
+    setSelected(null)
   }
 
   const selectedItems = selected ? (byDate.get(selected) ?? []) : []
+
+  // The resting view: what is late, then the next week, day by day.
+  const late     = useMemo(() => overdueItems(items, todayStr), [items, todayStr])
+  const upcoming = useMemo(() => upcomingDays(items, todayStr, HORIZON_DAYS), [items, todayStr])
+  const beyond   = useMemo(
+    () => (upcoming.length === 0 ? nextDateAfter(items, addDays(todayStr, HORIZON_DAYS)) : null),
+    [items, todayStr, upcoming.length],
+  )
 
   // Everything still outstanding in the month on screen — the number that says
   // whether this month is calm or brutal, which no single cell can.
@@ -289,7 +314,7 @@ export default function ClassCalendar({
           return (
             <div
               key={cell.date}
-              onClick={() => setSelected(cell.date)}
+              onClick={() => setSelected(d => (d === cell.date ? null : cell.date))}
               title={describeDay(cell.date, dayItems, cutoffs)}
               /* Every cell is a drop target while a task is in the air. preventDefault
                  on dragOver is what actually permits the drop — without it the browser
@@ -411,37 +436,93 @@ export default function ClassCalendar({
         {!isMobile && onReschedule && <span>· drag a task to move it</span>}
       </div>
 
-      {/* ── The selected day, in full ──
-             This is what makes "+2 more" and the phone's dots readable, and it is
-             where a day is actually worked rather than glanced at. */}
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      {/* ── The strip ──
+             Either one day in full — which is what makes "+2 more" and the phone's
+             dots readable — or, at rest, the week ahead. */}
+      {/* A landmark with a *stable* name — the heading swaps between "Coming up" and a
+          date, so naming it after the heading would name a moving target. */}
+      <section aria-label="Upcoming work" style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 7 }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-2)' }}>
-            {selected === todayStr ? 'Today' : longDay(selected)}
+            {selected ? longDay(selected) : 'Coming up'}
           </span>
-          {selectedItems.length > 0 && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
-              {selectedItems.length} {selectedItems.length === 1 ? 'item' : 'items'}
-            </span>
+          {selected ? (
+            <>
+              {selectedItems.length > 0 && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
+                  {selectedItems.length} {selectedItems.length === 1 ? 'item' : 'items'}
+                </span>
+              )}
+              <button
+                onClick={() => setSelected(null)}
+                style={{
+                  marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+                  color: 'var(--text-3)', padding: 0,
+                }}
+              >
+                Coming up
+              </button>
+            </>
+          ) : (
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>next 7 days</span>
           )}
         </div>
 
-        {selectedItems.length === 0 ? (
-          <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-3)' }}>
-            Nothing due{selected === todayStr ? ' today' : ' this day'}.
-          </p>
+        {selected ? (
+          selectedItems.length === 0 ? (
+            <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-3)' }}>Nothing due this day.</p>
+          ) : (
+            selectedItems.map(i => (
+              <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={onSelectItem} onToggle={onToggleItem} />
+            ))
+          )
         ) : (
-          selectedItems.map(i => (
-            <DayRow
-              key={i.id}
-              item={i}
-              overdue={isOverdue(i, todayStr)}
-              onClick={onSelectItem}
-              onToggle={onToggleItem}
-            />
-          ))
+          <>
+            {/* Late work leads, because it has no day left to belong to — filing it
+                under the date it was due puts it behind you on a list about what is
+                ahead, which is exactly where it gets forgotten. */}
+            {late.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                  <AlertCircle size={11} style={{ color: 'var(--red)' }} />
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--red)' }}>
+                    Overdue · {late.length}
+                  </span>
+                </div>
+                {late.map(i => (
+                  <DayRow key={i.id} item={i} overdue onClick={onSelectItem} onToggle={onToggleItem} />
+                ))}
+              </div>
+            )}
+
+            {upcoming.map(day => (
+              <div key={day.date} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-2)' }}>
+                    {relativeDay(day.date, todayStr)}
+                  </span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}>
+                    {day.items.length} {day.items.length === 1 ? 'item' : 'items'}
+                  </span>
+                </div>
+                {day.items.map(i => (
+                  <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={onSelectItem} onToggle={onToggleItem} />
+                ))}
+              </div>
+            ))}
+
+            {late.length === 0 && upcoming.length === 0 && (
+              <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-3)' }}>
+                Nothing due in the next 7 days.
+                {/* Without this, an empty week reads as "no work exists" when the
+                    truth is that it is a fortnight out. */}
+                {beyond && ` Next up ${relativeDay(beyond, todayStr)}.`}
+              </p>
+            )}
+          </>
         )}
-      </div>
+      </section>
     </div>
   )
 }

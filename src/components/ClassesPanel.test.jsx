@@ -66,6 +66,11 @@ function calendar() {
   return within(screen.getByRole('region', { name: 'Coursework calendar' }))
 }
 
+/** The strip under the grid — "Coming up", or one day when one is picked. */
+function strip() {
+  return within(screen.getByRole('region', { name: 'Upcoming work' }))
+}
+
 /** Expand a class card — they are collapsed under the calendar until asked. */
 function openCard(name = 'Physics 101') {
   fireEvent.click(cards().getByText(name).closest('button'))
@@ -370,7 +375,11 @@ describe('ClassesPanel — Canvas chrome appears only with Canvas', () => {
     for (const box of cards().getAllByRole('button', { name: 'Select' })) {
       await userEvent.click(box)
     }
-    await userEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+    // The row toggles carry the same accessible name, so pick the bar's own button —
+    // it is the one whose *text* says "Mark done" rather than only its title.
+    const bulk = screen.getAllByRole('button', { name: 'Mark done' })
+      .find(b => b.textContent === 'Mark done')
+    await userEvent.click(bulk)
     expect(onToggleAssignment).toHaveBeenCalledTimes(1)
     expect(onToggleAssignment).toHaveBeenCalledWith('a1')
   })
@@ -437,18 +446,53 @@ describe('ClassesPanel — the calendar is the main spread', () => {
     expect(screen.queryByTitle(/Physics 101 \(002\)/)).not.toBeInTheDocument()
   })
 
-  it('shows the selected day in full underneath, starting on today', () => {
+  it('rests on the week ahead rather than on one day', () => {
     renderPanel({ canvasClassEvents: events })
-    // "Today" is both the jump-to button and the strip's heading, so assert on the
-    // heading's own copy rather than the ambiguous word.
-    expect(screen.getByText('Nothing due today.')).toBeInTheDocument()
+    expect(strip().getByText('Coming up')).toBeInTheDocument()
+    expect(strip().getByText('next 7 days')).toBeInTheDocument()
+  })
+
+  it('names the near days rather than dating them', () => {
+    renderPanel({
+      todos: [
+        { id: 't1', title: 'Due today',    category: 'class:c1', dueDate: '2026-03-02' },
+        { id: 't2', title: 'Due tomorrow', category: 'class:c1', dueDate: '2026-03-03' },
+        { id: 't3', title: 'Due Friday',   category: 'class:c1', dueDate: '2026-03-06' },
+      ],
+    })
+    // Scoped to the strip: "Today" is also the grid's jump-to button.
+    expect(strip().getByText('Today')).toBeInTheDocument()
+    expect(strip().getByText('Tomorrow')).toBeInTheDocument()
+    expect(strip().getByText('Fri, Mar 6')).toBeInTheDocument()
+  })
+
+  // Late work has no day left to belong to; filing it under the date it was due puts
+  // it behind you on a list about what is ahead.
+  it('leads with what is already overdue', () => {
+    renderPanel({ todos: [{ id: 't1', title: 'Late essay', category: 'class:c1', dueDate: '2026-02-20' }] })
+    expect(strip().getByText(/Overdue · 1/)).toBeInTheDocument()
+    expect(strip().getByText('Late essay')).toBeInTheDocument()
+  })
+
+  it('says the week is clear, and when the next thing lands', () => {
+    renderPanel({ todos: [{ id: 't1', title: 'Far off', category: 'class:c1', dueDate: '2026-03-20' }] })
+    expect(strip().getByText(/Nothing due in the next 7 days/)).toBeInTheDocument()
+    expect(strip().getByText(/Next up Fri, Mar 20/)).toBeInTheDocument()
+  })
+
+  it('narrows to one day when a day is picked, and back again', async () => {
+    renderPanel({ canvasClassEvents: events })
+    await userEvent.click(calendar().getByTitle(/2026-03-04: 1 exam/))
+    expect(strip().getByText('Wednesday, March 4')).toBeInTheDocument()
+    await userEvent.click(strip().getByRole('button', { name: 'Coming up' }))
+    expect(strip().getByText('next 7 days')).toBeInTheDocument()
   })
 
   it('fills the day strip when a day with work is picked', async () => {
     renderPanel({ canvasClassEvents: events })
-    await userEvent.click(screen.getByTitle(/2026-03-04: 1 exam/))
-    expect(screen.getByText('Wednesday, March 4')).toBeInTheDocument()
-    expect(screen.getAllByText('Midterm').length).toBeGreaterThan(0)
+    await userEvent.click(calendar().getByTitle(/2026-03-04: 1 exam/))
+    expect(strip().getByText('Wednesday, March 4')).toBeInTheDocument()
+    expect(strip().getAllByText('Midterm').length).toBeGreaterThan(0)
   })
 
   it('opens a task in the task editor rather than a view of its own', async () => {
@@ -468,8 +512,8 @@ describe('ClassesPanel — the calendar is the main spread', () => {
   it('ticks a task off from the day strip', async () => {
     const onToggleTodo = vi.fn()
     renderPanel({ todos, onToggleTodo })
-    await userEvent.click(screen.getByTitle(/2026-03-12: 1 task/))
-    await userEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+    await userEvent.click(strip().getByRole('button', { name: 'Mark done' }))
     expect(onToggleTodo).toHaveBeenCalledWith('t1')
   })
 
