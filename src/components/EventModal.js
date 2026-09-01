@@ -8,13 +8,7 @@ import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
 import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
-
-// Same palette the calendar's right-click recolor popover offers, so the two
-// entry points can't drift apart.
-const RECOLOR_SWATCHES = [
-  '#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6',
-  '#e8751a','#0ea5e9','#ec4899','#6366f1','#14b8a6',
-]
+import ColorSwatches, { sameColor } from '@/components/ColorSwatches'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',   ms: 0 },
@@ -39,7 +33,23 @@ function toYMDLocal(date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
 }
 
-function initState(event, initialDate, categories) {
+/**
+ * The colour the form starts on, as an *explicit choice* — `null` means "whatever the
+ * category is", which is the resting state and the only way changing the category can
+ * still change the colour.
+ *
+ * An event always stores a colour, and for an untouched one that colour simply is its
+ * category's. Seeding the picker with it verbatim would silently promote it to a
+ * deliberate override, and then switching the category would keep the old hue.
+ */
+function initColor(event, colorOverride, categories, categoryId) {
+  if (!event) return null
+  const catColor = (categories.find(c => c.id === categoryId) || categories[0])?.color
+  const stored   = colorOverride || event.backgroundColor || event.borderColor || event.color || null
+  return stored && !sameColor(stored, catColor) ? stored : null
+}
+
+function initState(event, initialDate, categories, colorOverride) {
   if (event) {
     const s    = event.start instanceof Date ? event.start : new Date(event.start || Date.now())
     const eRaw = event.end instanceof Date
@@ -48,9 +58,11 @@ function initState(event, initialDate, categories) {
     const aDay = event.allDay || false
     // FullCalendar stores allDay end as exclusive next-day; show inclusive
     const eDisplay = aDay ? new Date(eRaw.getTime() - 86400_000) : eRaw
+    const catId    = event.extendedProps?.category || categories[0].id
     return {
       title:     event.title || '',
-      category:  event.extendedProps?.category || categories[0].id,
+      category:  catId,
+      color:     initColor(event, colorOverride, categories, catId),
       allDay:    aDay,
       date:      aDay ? s.toISOString().slice(0, 10) : toYMDLocal(s),
       endDate:   aDay ? eDisplay.toISOString().slice(0, 10) : '',
@@ -70,7 +82,7 @@ function initState(event, initialDate, categories) {
   const d      = new Date(base)
   const hasTime = base.length > 10
   return {
-    title: '', category: categories[0].id, allDay: false,
+    title: '', category: categories[0].id, color: null, allDay: false,
     date:    hasTime ? toYMDLocal(d) : d.toISOString().slice(0, 10),
     endDate: '',
     startTime: hasTime ? toHHMM(d) : '09:00',
@@ -156,9 +168,11 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
 }
 
 export default function EventModal({ event, initialDate, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
-  // Per-event color override, stored outside the event itself in eventPrefs.
-  // Surfaced here because on mobile there's no right-click to reach the
-  // calendar's recolor popover.
+  /* The per-event override in eventPrefs. The form no longer writes colours there —
+     an event the app stores keeps its own `color`, which is the field the picker now
+     edits. These two are still needed to *read* an override set earlier (by the
+     calendar's right-click popover or the detail view) so the picker opens on the
+     colour actually on screen, and to clear it on save so it can't mask the new one. */
   onRecolor, colorOverride,
   // Reverse view of note.linkedTo — see LinkedNotes.
   // `allNotes` rather than `notes` — an event already has a notes text field.
@@ -169,7 +183,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
   const isEdit         = !!event
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
-  const init   = initState(event, initialDate, categories)
+  const init   = initState(event, initialDate, categories, colorOverride)
   // Seed values used when creating from elsewhere (e.g. turning a note into an
   // event). Only applied in create mode — an existing event owns its own data.
   if (!event) {
@@ -179,6 +193,8 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
 
   const [title,       setTitle]       = useState(init.title)
   const [category,    setCategory]    = useState(init.category)
+  // An explicit colour pick, or null to follow the category. See initColor.
+  const [color,       setColor]       = useState(init.color)
   const [allDay,      setAllDay]      = useState(init.allDay)
   const [date,        setDate]        = useState(init.date)
   const [endDate,     setEndDate]     = useState(init.endDate)
@@ -224,6 +240,8 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
   }, [date, startTime, endTime, allDay, event?.id, existingEvents, canvasClasses]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const cat = categories.find(c => c.id === category) || categories[0]
+  // What the event will actually be: the pick if there is one, else the category's.
+  const effectiveColor = color ?? cat.color
 
   function handleClose() {
     setClosing(true)
@@ -292,13 +310,21 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
     const scope   = editScope || 'single'
     const groupId = event?.extendedProps?.recurrenceGroupId
 
+    /* The per-event override in eventPrefs wins over the stored colour at render time,
+       so a stale one would mask the pick that was just made here and the save would
+       look like it did nothing. Clearing it hands authority back to the event itself —
+       which is the right owner for an event the app stores. The override stays the
+       mechanism for imported Google and Canvas events, which have nowhere to keep a
+       colour of their own. */
+    if (isEdit && onRecolor && colorOverride) onRecolor(event.id, null)
+
     onSave({
       ...(isEdit ? { id: event.id } : {}),
       title:    title.trim(),
       start:    startISO,
       end:      endISO,
       allDay,
-      color:    cat.color,
+      color:    effectiveColor,
       extendedProps: { category, notes: notes.trim() || null, location: location.trim() || null },
       reminder: reminderObj,
       recurrence: repeats
@@ -486,38 +512,24 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
               </div>
             </div>
 
-            {/* Color — overrides the category color for this one event */}
-            {isEdit && onRecolor && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label className="field-label">Color</label>
-                  {colorOverride && (
-                    <button type="button" onClick={() => onRecolor(event.id, null)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
-                            onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
-                            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
-                      Use category color
-                    </button>
-                  )}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 2 }}>
-                  {RECOLOR_SWATCHES.map(c => {
-                    const active = (colorOverride ?? cat.color).toLowerCase() === c.toLowerCase()
-                    return (
-                      <button key={c} type="button" onClick={() => onRecolor(event.id, c)}
-                              aria-label={`Color this event ${c}`}
-                              style={{
-                                width: 26, height: 26, borderRadius: '50%', background: c, padding: 0,
-                                border: active ? '2.5px solid var(--text)' : '2px solid transparent',
-                                cursor: 'pointer', transition: 'transform .1s',
-                              }}
-                              onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'}
-                              onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'} />
-                    )
-                  })}
-                </div>
+            {/* Color — this one event's colour, overriding its category's.
+                Offered when creating too: it is part of what an event *is*, and the
+                calendar's right-click recolor is desktop-only, so leaving it out of
+                the create form meant a phone could not colour a new event at all. */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label className="field-label">Color</label>
+                {color && (
+                  <button type="button" onClick={() => setColor(null)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+                    Use category color
+                  </button>
+                )}
               </div>
-            )}
+              <ColorSwatches value={effectiveColor} onChange={setColor} label="Color this event" />
+            </div>
 
             {/* All day */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -756,7 +768,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
             {!confirmDelete && (
               <div style={{ display: 'flex', gap: '10px', paddingTop: '4px' }}>
                 <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, background: cat.color }}>
+                <button type="submit" className="btn-primary" style={{ flex: 1, background: effectiveColor }}>
                   {isEdit ? 'Save Changes' : 'Add Event'}
                 </button>
               </div>

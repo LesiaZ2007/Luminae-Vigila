@@ -101,6 +101,13 @@ export default function TodoPanel({
   // Mobile-only: which section to show ('both' | 'todos' | 'canvas')
   const [mobileView,       setMobileView]       = useState('both')
 
+  /* Filtered down to a single category? Then that's what a new task is for, so it
+     becomes the modal's default. A class chip *is* a class category, so this carries
+     the class link too — AddTodoModal derives linkedClassId from the category. With
+     two or more chips active there is no one answer, so fall through to the modal's
+     own default (which deliberately never picks a class). */
+  const prefillCategory = activeCategories.length === 1 ? activeCategories[0] : null
+
   function handleToggle(id, e) {
     const todo = todos.find(t => t.id === id)
     if (todo && !todo.completed && e) {
@@ -292,7 +299,7 @@ export default function TodoPanel({
                       style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
                 <Settings2 size={14} />
               </button>
-              <button onClick={onAddClick}
+              <button onClick={() => onAddClick(prefillCategory)}
                       style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600 }}>
                 <Plus size={13} /> Add
               </button>
@@ -401,7 +408,7 @@ export default function TodoPanel({
                     onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
               <Settings2 size={14} />
             </button>
-            <button onClick={onAddClick}
+            <button onClick={() => onAddClick(prefillCategory)}
                     style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--blue)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 600 }}>
               <Plus size={13} /> Add
             </button>
