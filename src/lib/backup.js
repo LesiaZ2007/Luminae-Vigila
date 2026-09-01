@@ -104,20 +104,37 @@ export function readLocalPrefs(storage) {
 }
 
 /**
- * Restore settings blobs, merged over what is already there.
+ * Restore settings blobs.
  *
- * Merged rather than replaced so a redacted field survives: restoring a backup must
- * not wipe the Canvas feed URL on a device that already has one, purely because the
- * file was written without it.
+ * Merged over what is there by default, so a redacted field survives: restoring must
+ * not wipe the Canvas feed URL on a device that has one, purely because the file was
+ * written without it.
+ *
+ * `replace` is for a full restore, and drops anything the file did not mention — with
+ * one exception, which is the same one. A redacted field is absent because *we*
+ * removed it on the way out, not because the user cleared it, so deleting their feed
+ * URL as a side effect of protecting it would be the worst of both. Replace therefore
+ * means "everything the file was allowed to carry".
  */
-export function applyLocalPrefs(prefs, storage) {
+export function applyLocalPrefs(prefs, storage, { replace = false } = {}) {
   if (!prefs || typeof prefs !== 'object') return
   for (const [name, key] of Object.entries(PREF_KEYS)) {
     const incoming = prefs[name]
     if (!incoming || typeof incoming !== 'object') continue
     const existing = parseJson(storage?.getItem?.(key), {})
+
+    let next
+    if (replace) {
+      next = { ...incoming }
+      for (const field of REDACTED_PREF_FIELDS[name] ?? []) {
+        if (existing[field] !== undefined) next[field] = existing[field]
+      }
+    } else {
+      next = { ...existing, ...incoming }
+    }
+
     try {
-      storage?.setItem?.(key, JSON.stringify({ ...existing, ...incoming }))
+      storage?.setItem?.(key, JSON.stringify(next))
     } catch {
       // A full or blocked storage is not a reason to abandon the rest of the restore.
     }
@@ -144,12 +161,21 @@ export function buildBackup({ collections = {}, eventPrefs = {}, prefs = {}, exp
  */
 export function readBackup(parsed) {
   const collections = {}
+  const present = []
   for (const { key } of BACKUP_COLLECTIONS) {
-    collections[key] = Array.isArray(parsed?.[key]) ? parsed[key] : []
+    const has = Array.isArray(parsed?.[key])
+    collections[key] = has ? parsed[key] : []
+    if (has) present.push(key)
   }
   return {
     version:     Number(parsed?.version) || 1,
     collections,
+    /* Which collections the file actually carried, as opposed to the ones defaulted
+       to empty above. A full restore must only clear what the file has an opinion
+       about — wiping your classes because an ICS import, or a backup written before
+       classes existed, says nothing about them would be data loss dressed as a
+       restore. */
+    present,
     // `undefined` rather than `{}` is meaningful for these two: it is the difference
     // between "the file says you have no hidden events" and "the file has nothing to
     // say about hidden events", and only the first should overwrite what you have.
