@@ -8,6 +8,7 @@ import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
 import { loadCalendarPrefs, saveCalendarPrefs, slotRange, toYMDLocal } from '@/lib/calendarView'
+import { EVENT_SWATCHES } from '@/components/ColorSwatches'
 
 /**
  * How overlapping timed events are laid out.
@@ -511,7 +512,7 @@ export default function WeeklyCalendar({
 
   const swatchColors = colorSwatches && colorSwatches.length > 0
     ? colorSwatches
-    : ['#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6','#e8751a','#0ea5e9','#ec4899','#6366f1','#14b8a6']
+    : EVENT_SWATCHES
 
   return (
     <div className="flex flex-col h-full"

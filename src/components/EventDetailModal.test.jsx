@@ -188,6 +188,60 @@ describe('EventDetailModal', () => {
   })
 })
 
+/* The colour control used to be a bare `<input type="color">`, which handed the job to
+   the OS colour wheel — unreadable against the app's own palette and no way to tell
+   which of the ten preset colours was in use. */
+describe('EventDetailModal — colour', () => {
+  afterEach(cleanup)
+
+  it('offers the app palette rather than an OS colour wheel', () => {
+    const { container } = render(
+      <EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} onRecolor={() => {}} />,
+    )
+    expect(container.querySelector('input[type="color"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /Color this event #10b981/i })).toBeTruthy()
+  })
+
+  it('applies a picked colour on the spot — there is no save button here', async () => {
+    const onRecolor = vi.fn()
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} onRecolor={onRecolor} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /Color this event #ef4444/i }))
+
+    expect(onRecolor).toHaveBeenCalledWith('e1', '#ef4444')
+  })
+
+  it('marks the colour currently in force, override winning over the event', () => {
+    render(
+      <EventDetailModal event={ownEvent({ color: '#3a6fa8' })} categories={CATEGORIES}
+                        colorOverride="#8b5cf6" onClose={() => {}} onRecolor={() => {}} />,
+    )
+    expect(screen.getByRole('button', { name: /Color this event #8b5cf6/i }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /Color this event #3a6fa8/i }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('offers to drop an override, and only when there is one', async () => {
+    const onRecolor = vi.fn()
+    const { rerender } = render(
+      <EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} onRecolor={onRecolor} />,
+    )
+    expect(screen.queryByRole('button', { name: /use original color/i })).toBeNull()
+
+    rerender(
+      <EventDetailModal event={ownEvent()} categories={CATEGORIES} colorOverride="#8b5cf6"
+                        onClose={() => {}} onRecolor={onRecolor} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /use original color/i }))
+
+    expect(onRecolor).toHaveBeenCalledWith('e1', null)
+  })
+
+  it('leaves the whole block out when recolouring is not on offer', () => {
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /Color this event/i })).toBeNull()
+  })
+})
+
 describe('EventDetailModal — exam blocks', () => {
   afterEach(cleanup)
 
