@@ -1322,6 +1322,7 @@ src/
 │   ├── ClassesPanel.js               # My Classes tab — coursework month + one card per class
 │   ├── ClassCalendar.js              # The coursework month grid + floating day + strip
 │   ├── TaskActionMenu.js             # Done / edit / delete for a task clicked on a calendar
+│   ├── ColorSwatches.js              # The shared event colour grid + the event palette
 │   ├── ClassRemindersEditor.js       # Per-class reminder rules (tasks / exams)
 │   ├── AssignmentRow.js              # One Canvas assignment, as a row
 │   ├── StudyTimeCard.js              # Focus-timer hours per course, this week vs last
