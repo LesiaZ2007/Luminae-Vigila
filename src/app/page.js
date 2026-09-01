@@ -1573,28 +1573,56 @@ export default function Home() {
   }, [])
 
   /* ── Import / Export ── */
+  /* What a backup contains. The *raw* arrays, tombstones included: a tombstone is a
+     record that something was deleted, and dropping them would let a restore onto a
+     fresh device resurrect everything you had ever thrown away. */
+  const backupCollections = useMemo(() => ({
+    events:          eventsRaw,
+    todos:           todosRaw,
+    todoCategories,
+    eventCategories,
+    notes,
+    classSchedule:   canvasClassesRaw,
+    customLists:     customListsRaw,
+    studySessions,
+  }), [eventsRaw, todosRaw, todoCategories, eventCategories, notes, canvasClassesRaw, customListsRaw, studySessions])
+
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
   // We just set state directly — the existing localStorage sync effects will persist them.
-  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes, classSchedule: mergedClasses }) => {
-    setEvents(mergedEvents)
-    setTodos(mergedTodos)
-    setTodoCategories(mergedCats)
-    if (Array.isArray(mergedNotes)) setNotes(mergedNotes)
-    // An ICS import carries no classes, and a pre-v2 JSON backup has no such key —
-    // both must leave the schedule alone rather than blanking it.
-    if (Array.isArray(mergedClasses)) setCanvasClasses(mergedClasses)
-    const addedEvents  = mergedEvents.length - events.length
-    const addedTodos   = mergedTodos.length  - todos.length
-    const addedNotes   = Array.isArray(mergedNotes)   ? mergedNotes.length   - notes.length : 0
-    const addedClasses = Array.isArray(mergedClasses) ? mergedClasses.length - canvasClassesRaw.length : 0
-    const parts = [
-      addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events',
-      addedTodos  > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}`    : 'no new tasks',
-    ]
-    if (addedNotes   > 0) parts.push(`+${addedNotes} note${addedNotes !== 1 ? 's' : ''}`)
-    if (addedClasses > 0) parts.push(`+${addedClasses} class${addedClasses !== 1 ? 'es' : ''}`)
+  const handleImport = useCallback(({ collections: merged, eventPrefs: importedPrefs }) => {
+    /* Every collection the backup carries, restored by the same rule: the component
+       has already merged each one against what is here, so these are final arrays.
+       A collection the file said nothing about arrives unchanged, which is what lets
+       an ICS import — or an older backup — touch only what it actually contains. */
+    if (Array.isArray(merged?.events))          setEvents(merged.events)
+    if (Array.isArray(merged?.todos))           setTodos(merged.todos)
+    if (Array.isArray(merged?.todoCategories))  setTodoCategories(merged.todoCategories)
+    if (Array.isArray(merged?.eventCategories)) setEventCategories(merged.eventCategories)
+    if (Array.isArray(merged?.notes))           setNotes(merged.notes)
+    if (Array.isArray(merged?.classSchedule))   setCanvasClasses(merged.classSchedule)
+    if (Array.isArray(merged?.customLists))     setCustomLists(merged.customLists)
+    if (Array.isArray(merged?.studySessions))   setStudySessions(merged.studySessions)
+
+    /* `undefined` means the file had no opinion on hidden/recoloured events, which is
+       different from it saying you have none — only the latter should overwrite. */
+    if (importedPrefs && typeof importedPrefs === 'object') {
+      setEventPrefs(prev => ({ ...prev, ...importedPrefs }))
+    }
+
+    const grew = (after, before) => (Array.isArray(after) ? after.length - before.length : 0)
+    const counts = [
+      ['event', grew(merged?.events, eventsRaw)],
+      ['task',  grew(merged?.todos,  todosRaw)],
+      ['note',  grew(merged?.notes,  notes)],
+      ['class', grew(merged?.classSchedule, canvasClassesRaw)],
+      ['list',  grew(merged?.customLists,   customListsRaw)],
+    ].filter(([, n]) => n > 0)
+
+    const parts = counts.length > 0
+      ? counts.map(([noun, n]) => `+${n} ${noun}${n !== 1 ? (noun === 'class' ? 'es' : 's') : ''}`)
+      : ['Nothing new to add']
     pushToast('Import complete', parts.join(', ') + '.')
-  }, [events.length, todos.length, notes.length, canvasClassesRaw.length, pushToast])
+  }, [eventsRaw, todosRaw, notes, canvasClassesRaw, customListsRaw, pushToast])
 
   /* ── Google Calendar sync ── */
   const syncGoogleCalendar = useCallback(async () => {
@@ -3218,8 +3246,9 @@ export default function Home() {
                 <Timer size={14}/> Focus Timer
               </button>
               <ImportExportButton
-                events={events} todos={todos} todoCategories={todoCategories} notes={notes}
-                classSchedule={canvasClassesRaw} classMeetings={canvasClassEvents}
+                collections={backupCollections}
+                eventPrefs={eventPrefs}
+                classMeetings={canvasClassEvents}
                 onImport={handleImport}
                 inline
               />
@@ -3501,11 +3530,8 @@ export default function Home() {
       {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
       {!isMobile && (
         <ImportExportButton
-          events={events}
-          todos={todos}
-          todoCategories={todoCategories}
-          notes={notes}
-          classSchedule={canvasClassesRaw}
+          collections={backupCollections}
+          eventPrefs={eventPrefs}
           classMeetings={canvasClassEvents}
           onImport={handleImport}
         />
