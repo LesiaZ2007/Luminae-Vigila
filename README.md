@@ -398,9 +398,33 @@ So a 402 is now named. [`lib/dbErrors.js`](src/lib/dbErrors.js) classifies it as
 
 ### 📦 Import / Export
 
-- **Export JSON** — a full local backup: events, tasks, task categories, notes, **and your class schedule**
+- **Export JSON** — a complete local backup: events, tasks, task *and* event categories, notes, your class schedule, custom lists, study sessions, per-event display settings, and your Canvas/Google/GPA preferences
 - **Export ICS** — your own calendar events **plus every class meeting of the term**, exams included, openable in Google Calendar / Apple Calendar / Outlook
 - **Import JSON or ICS** — non-destructive. New items are added; duplicates prompt for *Keep mine* / *Replace mine* / *Keep both*
+
+#### What "backup" used to mean
+
+Not much. The JSON payload was a hand-written object literal naming four collections, and every collection added since was quietly left out of it. A restore came back missing **the class schedule, event categories, custom lists, study sessions, per-event colours and hidden flags, and every preference** — course colours, credit weightings, which Google calendars you'd hidden.
+
+The ICS was worse in a subtler way: it was handed `events`, the *stored* events. Class meetings aren't stored — they're expanded from the schedule on every render, the way the calendar draws them — so a term of classes was never in the file, and exams went with them.
+
+Two more faults sat in the same function, both silent: **location and notes were always blank** (read as `event.location`, stored under `extendedProps`), and **all-day events landed a day early** (`new Date('2026-03-04')` is UTC midnight, so writing it as a UTC timestamp puts it on 3 March west of Greenwich — they're `VALUE=DATE` now, with the exclusive end iCalendar requires).
+
+#### The fix is a list, not another literal
+
+The same bug three times means the shape was wrong. [`lib/backup.js`](src/lib/backup.js) now holds one list of what a backup contains, and the export, the diff, the summary and the merge all loop over it — adding a collection is a one-line change there and nothing else. A test asserts that list covers every collection `SYNC_KEYS` pushes to the server, so the two can't drift apart again.
+
+Two kinds of thing live in a backup and restore differently. **Collections** are arrays of records with ids: they merge, and a record you already have raises the duplicate prompt. **Settings** are blobs keyed by something other than an id — which calendars are hidden, what colour each course is, how many credits it's worth. Merging those record-by-record is meaningless, so they're restored wholesale.
+
+**One thing is deliberately left out: your Canvas calendar feed URL.** That's a *capability*, not a preference — anyone holding it can read your Canvas calendar without being you, and a backup file is exactly the sort of thing that gets emailed to yourself or dropped in a shared folder. Everything else in that blob is kept. The cost is re-pasting the feed URL on a new device, which is a fair trade for a file that can't leak read access to your calendar. Restoring also *merges* settings rather than replacing them, so a device that already has a feed URL keeps it rather than having it blanked by a file written without one.
+
+Also excluded, and for stated reasons in the code: the caches of live Canvas data (refetched on load — a backup would preserve a stale copy the next sync overwrites), and which assignments have already been announced (restoring it would re-announce, or wrongly silence, a term of work). The Canvas API token was never in localStorage at all; it lives server-side in `canvas_credentials`.
+
+#### Other details
+
+- The backup carries **raw arrays, tombstones included**. A tombstone records that something was deleted; dropping them would let a restore onto a fresh device resurrect everything you'd ever thrown away
+- The JSON format is **version 3**. Versions 1 and 2 restore exactly as they used to — missing keys read as empty, and an ICS import (which carries only events) leaves every other collection alone rather than blanking it
+- The ICS serializer moved to [`lib/icsExport.js`](src/lib/icsExport.js). It had been a closure inside a render function, which is precisely why three faults could sit in it unnoticed — there was no way to test it. It's now pinned by a round trip back through `parseIcs`, the same reader the Canvas feed uses, so the app can always read what it writes. Lines fold at 75 octets as the spec requires, and an event with an unusable start is dropped rather than written malformed: one bad `VEVENT` can make a client reject the entire file
 
 #### The classes were missing from both
 
