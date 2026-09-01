@@ -166,6 +166,39 @@ export function notePreview(note, max = 140) {
 }
 
 /**
+ * Is there nothing in this note worth keeping?
+ *
+ * "Empty" is deliberately strict: a note with only a tag, a reminder, a link, or
+ * a pasted image still holds something the user put there on purpose, and
+ * throwing it away because the body happens to be blank would be a surprise.
+ * What this catches is the note nobody wrote — the one created by pressing W or
+ * New and then wandering off, which otherwise piles up in the list forever.
+ *
+ * Starred/pinned count as content for the same reason: they are deliberate.
+ */
+export function isNoteEmpty(note) {
+  if (!note) return false
+  if ((note.title ?? '').trim()) return false
+  if (notePlainText(note.html)) return false
+  if (noteHasImage(note.html)) return false
+  if ((note.tags ?? []).length > 0) return false
+  if (note.linkedTo) return false
+  if (note.reminder) return false
+  if (note.starred || note.pinned) return false
+  return true
+}
+
+/**
+ * Drop every untouched empty note. Pure — returns a new array.
+ *
+ * Trashed notes are left alone: Trash should show exactly what was thrown away,
+ * and the 30-day retention already clears it out. See `purgeExpiredTrash`.
+ */
+export function dropEmptyNotes(notes) {
+  return (notes ?? []).filter(n => n?.trashedAt || !isNoteEmpty(n))
+}
+
+/**
  * Sort order for the notes list: pinned first, then starred, then most
  * recently updated. Trashed notes are expected to be filtered out beforehand.
  */

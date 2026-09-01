@@ -227,3 +227,36 @@ describe('EventDetailModal — exam blocks', () => {
     expect(screen.queryByRole('button', { name: /make this an exam/i })).toBeNull()
   })
 })
+
+describe('EventDetailModal — flagging an event important', () => {
+  it('offers the flag for a read-only event too', async () => {
+    // The flag lives in eventPrefs, not on the event, so a Google invite or a
+    // Canvas due date can be marked even though neither is ours to edit.
+    const onToggleImportant = vi.fn()
+    render(<EventDetailModal event={ownEvent({ extendedProps: { source: 'google' } })}
+                             categories={CATEGORIES} onToggleImportant={onToggleImportant} onClose={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: /mark important/i }))
+    expect(onToggleImportant).toHaveBeenCalledWith('e1')
+  })
+
+  it('flips to the undo wording and says so on the card once flagged', () => {
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES} important
+                             onToggleImportant={() => {}} onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /mark important/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /not important/i }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText(/sits on top of anything it overlaps/i)).toBeTruthy()
+  })
+
+  it('stays open after toggling, so the badge can confirm it took', async () => {
+    const onClose = vi.fn()
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES}
+                             onToggleImportant={() => {}} onClose={onClose} />)
+    await userEvent.click(screen.getByRole('button', { name: /mark important/i }))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('leaves the action out when no handler is given', () => {
+    render(<EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /important/i })).toBeNull()
+  })
+})
