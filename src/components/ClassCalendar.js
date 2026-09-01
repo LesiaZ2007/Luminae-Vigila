@@ -19,15 +19,17 @@
  * already is, and a day view of it is the Today page.
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
-  ChevronLeft, ChevronRight, GraduationCap, BookOpen, CircleCheck, Circle, AlertCircle,
+  ChevronLeft, ChevronRight, GraduationCap, BookOpen, CircleCheck, Circle, AlertCircle, X,
 } from 'lucide-react'
 import {
   monthGrid, groupByDate, isOverdue, describeDay,
   bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule, LOAD_LABELS,
   overdueItems, upcomingDays, nextDateAfter, addDays,
 } from '@/lib/classCalendar'
+import TaskActionMenu from '@/components/TaskActionMenu'
+import useAnchoredPosition from '@/lib/useAnchoredPosition'
 
 /** How far ahead "coming up" looks, in days including today. */
 const HORIZON_DAYS = 7
@@ -82,7 +84,10 @@ function Chip({ item, overdue, onClick, onDragStart, onDragEnd, dragging }) {
   const draggable = canReschedule(item)
   return (
     <button
-      onClick={e => { e.stopPropagation(); onClick?.(item) }}
+      /* The element goes up with the item so a menu can anchor to this very chip
+         rather than to the pointer — a menu that grows out of the thing you clicked
+         is much easier to connect to it on a dense grid. */
+      onClick={e => { e.stopPropagation(); onClick?.(item, e.currentTarget) }}
       draggable={draggable}
       onDragStart={draggable ? e => { e.stopPropagation(); onDragStart?.(item, e) } : undefined}
       onDragEnd={draggable ? () => onDragEnd?.() : undefined}
@@ -121,7 +126,7 @@ function DayRow({ item, overdue, onClick, onToggle }) {
 
   return (
     <div
-      onClick={() => onClick?.(item)}
+      onClick={e => onClick?.(item, e.currentTarget)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -174,6 +179,97 @@ function DayRow({ item, overdue, onClick, onToggle }) {
   )
 }
 
+// ── One day, floating above the grid ──────────────────────────────────────────
+
+/**
+ * The day you clicked, over the calendar rather than under it.
+ *
+ * Clicking a day already filled the strip at the bottom of the tab, but on anything
+ * shorter than a tall desktop that strip is below the fold — you clicked Thursday and
+ * nothing appeared to happen. It is worse on a phone, where the cells are colour dots
+ * and the strip is the *only* thing that names them.
+ *
+ * So the day also opens here, anchored to its own cell. The strip still follows the same
+ * selected date, so nothing is lost when this is dismissed and the two never disagree.
+ */
+function DayPanel({ date, anchor, items, todayStr, onClickItem, onToggleItem, onClose }) {
+  const popupRef = useRef(null)
+  const triggerRef = useMemo(() => ({
+    current: anchor ? { getBoundingClientRect: () => anchor } : null,
+  }), [anchor])
+  const pos = useAnchoredPosition(!!anchor, triggerRef, popupRef, { minWidth: 280, align: 'center' })
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); onClose?.() } }
+    function onDown(e) { if (!popupRef.current?.contains(e.target)) onClose?.() }
+    document.addEventListener('keydown', onKey)
+    // Deferred past the click that opened it — see TaskActionMenu for the same guard.
+    const t = setTimeout(() => document.addEventListener('mousedown', onDown), 0)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+  }, [onClose])
+
+  if (!anchor) return null
+
+  return (
+    <div
+      ref={popupRef}
+      role="dialog"
+      aria-label={longDay(date)}
+      onClick={e => e.stopPropagation()}
+      style={{
+        position: 'fixed', zIndex: 9000,
+        top: pos.top, left: pos.left, width: pos.width,
+        /* The hook caps this when the day cannot have its full height on the better
+           side; a long Thursday then scrolls inside the panel rather than running off
+           the screen. */
+        maxHeight: pos.maxHeight ?? '60vh',
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 14, boxShadow: 'var(--shadow-modal)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        animation: 'lvPopIn .16s cubic-bezier(0.22,1,0.36,1) both',
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+        padding: '10px 12px', borderBottom: '1px solid var(--border)',
+      }}>
+        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)' }}>
+          {relativeDay(date, todayStr)}
+        </span>
+        <span style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>
+          {items.length === 0 ? 'nothing due' : `${items.length} ${items.length === 1 ? 'item' : 'items'}`}
+        </span>
+        <button
+          onClick={onClose} aria-label="Close day"
+          style={{
+            marginLeft: 'auto', background: 'none', border: 'none', padding: 4,
+            borderRadius: 6, cursor: 'pointer', color: 'var(--text-3)', display: 'flex',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* No empty-state line: the header already says "nothing due", and saying it
+          twice in a panel this small reads as a bug. An empty day is just a header. */}
+      {items.length > 0 && (
+        <div style={{ overflowY: 'auto', padding: '8px 8px 10px' }}>
+          {items.map(i => (
+            <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)}
+                    onClick={onClickItem} onToggle={onToggleItem} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Calendar ──────────────────────────────────────────────────────────────────
 
 export default function ClassCalendar({
@@ -183,7 +279,11 @@ export default function ClassCalendar({
   todayStr,
   onSelectItem,
   onToggleItem,
+  onDeleteItem,
   onReschedule,
+  // Off while anything is open above the calendar, so ← / → don't page the month
+  // underneath a modal. Same contract as WeeklyCalendar's prop of the same name.
+  arrowNavEnabled = true,
   isMobile = false,
 }) {
   // Opens on the month containing today, then follows the user rather than snapping
@@ -203,6 +303,28 @@ export default function ClassCalendar({
   const [dragItem, setDragItem] = useState(null)
   const [dragOver, setDragOver] = useState(null)
 
+  /* The task whose little menu is open, and where to put it:
+     { item, anchor }. See TaskActionMenu. */
+  const [taskMenu, setTaskMenu] = useState(null)
+
+  /* Which day is floating above the grid, and the cell it grew out of:
+     { date, anchor }. The strip at the bottom follows the same `selected` date, so the
+     day is readable whether you are looking at the grid or the strip — the panel is
+     what makes it readable *without scrolling past the whole month first.* */
+  const [dayPanel, setDayPanel] = useState(null)
+
+  /* Which half of the slide is playing: 'exit-left' | 'exit-right' | 'enter-left' |
+     'enter-right' | null. Two phases rather than one, so the outgoing month leaves in
+     the direction you pushed it and the new one arrives from the other side — the same
+     shape and the same `.cal-nav-*` classes the main calendar's swipe already uses. */
+  const [navAnim, setNavAnim] = useState(null)
+  const animTimer = useRef(null)
+  const touchStart = useRef(null)
+  const wheelLocked = useRef(false)
+  const wheelTimer  = useRef(null)
+
+  useEffect(() => () => { clearTimeout(animTimer.current); clearTimeout(wheelTimer.current) }, [])
+
   const byDate  = useMemo(() => groupByDate(items), [items])
   const cells   = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor])
   const cutoffs = useMemo(() => bigAssignmentCutoffs(assignments), [assignments])
@@ -217,20 +339,122 @@ export default function ClassCalendar({
     onReschedule?.(item, dateStr)
   }
 
-  function step(delta) {
-    setCursor(({ year, month }) => {
-      const d = new Date(year, month + delta, 1)
-      return { year: d.getFullYear(), month: d.getMonth() }
-    })
-  }
+  /**
+   * Page a month, animated.
+   *
+   * The month used to change on the same frame as the click, which reads as a flicker
+   * rather than a movement — nothing tells you whether you went forwards or back. So:
+   * the grid leaves in the direction you pushed it, the content swaps at the midpoint
+   * while it is faded out, and the new month arrives from the other side. Timings match
+   * the main calendar's swipe (140ms out, 260ms in) because these are the same gesture
+   * in two places and should not feel like two different apps.
+   *
+   * A floating day panel is dismissed on the way — it belongs to a cell in the month
+   * that is leaving, and leaving it pinned over a different month is nonsense.
+   */
+  const step = useCallback(delta => {
+    if (!delta) return
+    clearTimeout(animTimer.current)
+    setDayPanel(null)
+    setTaskMenu(null)
+    setNavAnim(delta > 0 ? 'exit-left' : 'exit-right')
+
+    animTimer.current = setTimeout(() => {
+      setCursor(({ year, month }) => {
+        const d = new Date(year, month + delta, 1)
+        return { year: d.getFullYear(), month: d.getMonth() }
+      })
+      setNavAnim(delta > 0 ? 'enter-right' : 'enter-left')
+      animTimer.current = setTimeout(() => setNavAnim(null), 260)
+    }, 140)
+  }, [])
 
   function goToday() {
     const d = new Date(`${todayStr}T00:00:00`)
-    setCursor({ year: d.getFullYear(), month: d.getMonth() })
+    setCursor(cur => {
+      // Only animate when it is actually a different month; "Today" pressed twice
+      // should sit still rather than flash.
+      const delta = (d.getFullYear() - cur.year) * 12 + (d.getMonth() - cur.month)
+      if (delta !== 0) setNavAnim(delta > 0 ? 'enter-right' : 'enter-left')
+      return { year: d.getFullYear(), month: d.getMonth() }
+    })
+    animTimer.current = setTimeout(() => setNavAnim(null), 260)
     setSelected(null)
+    setDayPanel(null)
   }
 
+  /* ── Swipe and trackpad ───────────────────────────────────────────────────
+     Lifted from WeeklyCalendar: a horizontal drag of at least 60px pages the month, a
+     mostly-vertical one is left alone so the tab can still scroll. The trackpad lock
+     stops one flick of a momentum-scrolling wheel from skipping three months. */
+  function handleTouchStart(e) {
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+
+  function handleTouchEnd(e) {
+    if (!touchStart.current) return
+    const dx = e.changedTouches[0].clientX - touchStart.current.x
+    const dy = e.changedTouches[0].clientY - touchStart.current.y
+    touchStart.current = null
+    if (Math.abs(dy) > Math.abs(dx) || Math.abs(dx) < 60) return
+    step(dx < 0 ? 1 : -1)
+  }
+
+  const handleWheel = useCallback(e => {
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) return
+    if (Math.abs(e.deltaX) < 30) return
+    if (wheelLocked.current) return
+    wheelLocked.current = true
+    clearTimeout(wheelTimer.current)
+    wheelTimer.current = setTimeout(() => { wheelLocked.current = false }, 600)
+    step(e.deltaX > 0 ? 1 : -1)
+  }, [step])
+
+  /* ── Arrow-key navigation ─────────────────────────────────────────────────
+     ← / → page the month, same as the chevrons and the same animation. Guards copied
+     from WeeklyCalendar: modifier combos belong to the browser and to text selection,
+     and a form field's own caret movement must win. */
+  useEffect(() => {
+    if (!arrowNavEnabled) return
+
+    function onKeyDown(e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+
+      const el  = e.target
+      const tag = el?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable) return
+
+      e.preventDefault()
+      step(e.key === 'ArrowRight' ? 1 : -1)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [arrowNavEnabled, step])
+
   const selectedItems = selected ? (byDate.get(selected) ?? []) : []
+
+  /**
+   * What clicking an item does.
+   *
+   * A task answers with a menu — done / edit / delete — because ticking off is what
+   * most clicks want and the edit form made it the expensive option, while delete
+   * wasn't reachable from this grid at all. Assignments and exams keep going straight
+   * to their existing detail views: there is nothing to tick off on an exam, and an
+   * assignment's own view already carries its actions.
+   */
+  function clickItem(item, el) {
+    if (item.kind !== 'task') { onSelectItem?.(item); return }
+    setTaskMenu({ item, anchor: el?.getBoundingClientRect?.() ?? null })
+  }
+
+  /** Open a day above the grid, or close it if it was already the open one. */
+  function clickDay(dateStr, el) {
+    setTaskMenu(null)
+    setSelected(d => (d === dateStr ? null : dateStr))
+    setDayPanel(p => (p?.date === dateStr ? null : { date: dateStr, anchor: el?.getBoundingClientRect?.() ?? null }))
+  }
 
   // The resting view: what is late, then the next week, day by day.
   const late     = useMemo(() => overdueItems(items, todayStr), [items, todayStr])
@@ -248,7 +472,8 @@ export default function ClassCalendar({
   }, [items, cursor])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
+         onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} onWheel={handleWheel}>
 
       {/* ── Month nav ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -299,8 +524,12 @@ export default function ClassCalendar({
         ))}
       </div>
 
-      {/* ── Month grid ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
+      {/* ── Month grid ──
+             The slide classes are the calendar tab's, verbatim — see globals.css. Only
+             the grid moves: the weekday header and the nav are fixed furniture, and
+             sliding them too would make the whole tab lurch. */}
+      <div className={navAnim ? `cal-nav-${navAnim}` : undefined}
+           style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
         {cells.map(cell => {
           const dayItems = byDate.get(cell.date) ?? []
           const isToday    = cell.date === todayStr
@@ -314,7 +543,7 @@ export default function ClassCalendar({
           return (
             <div
               key={cell.date}
-              onClick={() => setSelected(d => (d === cell.date ? null : cell.date))}
+              onClick={e => clickDay(cell.date, e.currentTarget)}
               title={describeDay(cell.date, dayItems, cutoffs)}
               /* Every cell is a drop target while a task is in the air. preventDefault
                  on dragOver is what actually permits the drop — without it the browser
@@ -374,7 +603,7 @@ export default function ClassCalendar({
                     <Chip
                       key={i.id} item={i}
                       overdue={isOverdue(i, todayStr)}
-                      onClick={onSelectItem}
+                      onClick={clickItem}
                       onDragStart={(it, e) => { setDragItem(it); e.dataTransfer.effectAllowed = 'move' }}
                       onDragEnd={() => { setDragItem(null); setDragOver(null) }}
                       dragging={dragItem?.id === i.id}
@@ -474,7 +703,7 @@ export default function ClassCalendar({
             <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-3)' }}>Nothing due this day.</p>
           ) : (
             selectedItems.map(i => (
-              <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={onSelectItem} onToggle={onToggleItem} />
+              <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={clickItem} onToggle={onToggleItem} />
             ))
           )
         ) : (
@@ -491,7 +720,7 @@ export default function ClassCalendar({
                   </span>
                 </div>
                 {late.map(i => (
-                  <DayRow key={i.id} item={i} overdue onClick={onSelectItem} onToggle={onToggleItem} />
+                  <DayRow key={i.id} item={i} overdue onClick={clickItem} onToggle={onToggleItem} />
                 ))}
               </div>
             )}
@@ -507,7 +736,7 @@ export default function ClassCalendar({
                   </span>
                 </div>
                 {day.items.map(i => (
-                  <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={onSelectItem} onToggle={onToggleItem} />
+                  <DayRow key={i.id} item={i} overdue={isOverdue(i, todayStr)} onClick={clickItem} onToggle={onToggleItem} />
                 ))}
               </div>
             ))}
@@ -523,6 +752,32 @@ export default function ClassCalendar({
           </>
         )}
       </section>
+
+      {dayPanel && (
+        <DayPanel
+          date={dayPanel.date}
+          anchor={dayPanel.anchor}
+          items={byDate.get(dayPanel.date) ?? []}
+          todayStr={todayStr}
+          onClickItem={clickItem}
+          onToggleItem={onToggleItem}
+          /* Only the panel closes; `selected` stays, so the strip below keeps showing
+             the day you were looking at rather than snapping back to "Coming up". */
+          onClose={() => setDayPanel(null)}
+        />
+      )}
+
+      {taskMenu && (
+        <TaskActionMenu
+          anchor={taskMenu.anchor}
+          title={taskMenu.item.title}
+          done={taskMenu.item.done}
+          onToggle={() => onToggleItem?.(taskMenu.item)}
+          onEdit={() => onSelectItem?.(taskMenu.item)}
+          onDelete={onDeleteItem ? () => onDeleteItem(taskMenu.item) : undefined}
+          onClose={() => setTaskMenu(null)}
+        />
+      )}
     </div>
   )
 }
