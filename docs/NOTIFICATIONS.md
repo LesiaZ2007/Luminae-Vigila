@@ -42,12 +42,22 @@ genuinely confusing pair of signals. Check the pinger's execution history for th
 status code: **`401` means the secret, full stop.** Rotate it and set both sides (see
 [Getting a `CRON_SECRET` you can actually paste](#getting-a-cron_secret-you-can-actually-paste)).
 
-**Settings → Notifications → Test notifications** now reports this directly. Every
+**Settings → Notifications → Test notifications** now reports this directly. An
 authorised run stamps `cron_pings`, and `/api/push/status` reports how long ago each
 job last got through, so "nothing has called the reminder cron in three days" is a
 line of text rather than an inference. Only successes are recorded — logging
 rejections would mean a database write on every unauthenticated hit to a public URL,
 and a 401 loop and a dead pinger look identical from here anyway.
+
+One wrinkle worth knowing before you read the number: the reminder job stamps its
+heartbeat only on the ticks where it actually **scans**, not on every ping. A write
+a minute is by itself enough to keep a Neon compute endpoint awake around the clock,
+which is the cost the endpoint now goes out of its way to avoid — see
+`src/lib/reminderWindow.js` and the README's *Keeping Neon Usage Down*. So
+`lastSuccess` means "last scanned", scans happen at least every 30 minutes, and the
+staleness threshold (75 min) allows for that cadence plus a missed one. A pinger
+that has stopped still shows up here; it just takes a little over an hour rather
+than a quarter of one.
 
 ## The reminder scheduler needs a heartbeat
 
@@ -167,7 +177,7 @@ Both require a signed-in session and only ever touch the caller's own rows.
 
 - `GET /api/push/status` — reports which links are healthy, including a
   `crons` array with each job's last successful ping and whether it is overdue
-  (reminders: 15 min, daily: 26 h, digest: 8 days). Booleans, counts and timestamps
+  (reminders: 75 min — it scans at most every 30, see above; daily: 26 h; digest: 8 days). Booleans, counts and timestamps
   only; never returns key material or the cron secret.
 - `POST /api/push/test` — sends a real push to the caller's devices immediately,
   and reports the push service's actual rejection per endpoint. A 403 (key

@@ -17,15 +17,22 @@ import sql            from '@/lib/db'
  * How long each job may go between successful pings before something is wrong.
  * Generous multiples of the real cadence, so a slipped tick isn't reported as an
  * outage — only a genuinely stopped clock is.
+ *
+ * `reminders` is the odd one: it is *pinged* every minute but only stamps its
+ * heartbeat on the ticks where it actually scans, which is at most once every
+ * MAX_SKIP_MS (30 min) when nothing is due. That is deliberate — a per-minute
+ * write is what keeps a Neon compute endpoint awake around the clock, see
+ * lib/reminderWindow — so the threshold has to allow for the scan cadence plus a
+ * missed one, not the ping cadence.
  */
 const STALE_AFTER_MIN = {
-  reminders: 15,          // pinged every ~1–5 min from outside Vercel
+  reminders: 75,          // scans at least every 30 min; pinged far more often
   daily:     26 * 60,     // 0 11 * * *
   digest:    8 * 24 * 60, // 0 18 * * 0
 }
 
 const CADENCE = {
-  reminders: 'every 1–5 minutes, from an external pinger',
+  reminders: 'pinged every 1–5 minutes from an external pinger, scanning at least every 30 minutes',
   daily:     'daily at 11:00 UTC, from Vercel',
   digest:    'Sundays at 18:00 UTC, from Vercel',
 }

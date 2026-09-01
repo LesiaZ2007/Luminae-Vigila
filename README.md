@@ -363,15 +363,16 @@ Server-side, a user with no rules pays exactly one extra query per cron tick (th
 
 Neon bills for **compute time**, and the sync was spending a lot of it saying nothing.
 
-`POST /api/sync` answers every array it receives with `DELETE FROM <table> WHERE user_id = …` followed by one `INSERT` per row. The client sent all nine collections on every save — so **renaming one todo deleted and reinserted every event, note, custom list and category the account owned.** Hundreds of row writes to record a change to one.
+`POST /api/sync` used to answer every array it received with `DELETE FROM <table> WHERE user_id = …` followed by one `INSERT` per row. The client sent all nine collections on every save — so **renaming one todo deleted and reinserted every event, note, custom list and category the account owned.** Hundreds of row writes to record a change to one.
 
-The handler already ignores any key missing from the body, so the fix was entirely client-side: [`lib/syncDelta.js`](src/lib/syncDelta.js) fingerprints each collection with `JSON.stringify`, and the push sends only the ones that no longer match the last push the server *accepted*.
+That was fixed from both ends. On the server, a collection is now reconciled by a set-based upsert that writes only the rows whose JSONB actually differs (see [Keeping Neon Usage Down](#-keeping-neon-usage-down)). On the client, the collection isn't sent at all unless something in it changed. The handler already ignores any key missing from the body, so that half was entirely client-side: [`lib/syncDelta.js`](src/lib/syncDelta.js) fingerprints each collection with `JSON.stringify`, and the push sends only the ones that no longer match the last push the server *accepted*.
 
 - **Accepted, not attempted.** The fingerprint is recorded on `res.ok` only. Optimistically recording it would make a failed push permanent — that collection would look unchanged from then on and never retry
 - **Order counts as a change.** Task order is stored as array position and is user-visible, so a reorder is a real edit. Stringify comparison also errs toward sending, which is the safe direction: a missed change is data loss, an extra send is only cost
 - **The initial merge still sends everything** — it's the first thing the server sees that session. Its fingerprint is recorded so the next push is a delta
 - An unserialisable value is treated as always-changed rather than silently dropped from every future push
 - A re-render that touched no data now sends **nothing**; it used to cost a full rewrite of all nine tables
+- And when a collection *is* sent, the server no longer rewrites the rows inside it that didn't change — so the two mechanisms compose instead of overlapping
 
 **Idle back-off on the pull side.** A left-open tab asked the database the same question every 2 minutes forever. Since the bill is compute *time*, the cost of an idle tab was an endpoint that never got to sleep. The poll now doubles its gap each time a pull finds nothing new, up to **10 minutes**, and snaps back to 2 minutes the moment a pull finds something or you refocus the tab — so an active phone-then-laptop handoff is as responsive as before. It's a self-rescheduling timeout rather than a fixed interval, which is what lets the gap grow.
 
@@ -792,6 +793,7 @@ dropping a column is unrecoverable and buys nothing.
 - **Reminders fire even when the app is closed** via a server-side scheduler: `GET /api/push/reminders` scans every subscribed user's events/todos for reminders that just came due and sends a push, de-duped through the `sent_reminders` table. This runs independently of any open tab (the old behaviour only fired reminders while a tab was open — which on a phone is almost never when a reminder is due).
   - ⚠️ **This endpoint does nothing unless something calls it, and that is the single most common reason no notifications ever arrive.**
   - **There is no cap on notifications per day.** Web Push has no quota — not from Vercel, not from the browser push services. The only limit is *how often Vercel will ping your endpoint*, so the heartbeat runs outside Vercel and the constraint disappears.
+  - **Most ticks cost nothing.** The endpoint remembers when the next reminder is actually due and returns without opening a database connection until then — so pinging it every minute buys accuracy without keeping Neon awake. See [Keeping Neon Usage Down](#-keeping-neon-usage-down) for the trade-off that makes possible, and note that the `/api/push/status` heartbeat now records the last *scan* rather than the last ping.
   - **Set up with [cron-job.org](https://cron-job.org)** — free, purpose-built, true **1-minute** intervals. The tick rate *is* the accuracy: a 5-minute tick means a reminder set for 3:07 arrives at 3:10. Point a job at `https://<your-domain>/api/push/reminders`, every 1 minute, with header `Authorization: Bearer <CRON_SECRET>`, then use **Test run** to confirm (`200` + `{"ok":true,...}`; `401` means the secret or header is wrong). Full walkthrough in [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
   - **Can't read `CRON_SECRET` back out of Vercel?** You're not meant to — values are write-only after creation. Generate a new one (`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`) and set the same value in both Vercel and cron-job.org. It only has to match, not be the original.
   - GitHub Actions was tried and removed: 5-minute minimum schedule, best-effort start times that slip 10+ minutes under load, and ~60 runner-minutes/hour to work around it.
@@ -1317,16 +1319,50 @@ src/
 
 Storage is not the constraint — the whole database is **~9 MB** against Neon's
 0.5 GiB free allowance. What costs money on Neon is **compute time**, and compute
-suspends only after a period of idleness. The reminder cron is pinged **every
-minute**, which means the database never gets to idle at all.
+suspends only after a period of idleness. **Any** query resets that timer, so the
+bill is driven by how *often* the app talks to the database, not how much it asks
+for. The reminder cron is pinged **every minute**, which used to mean the database
+never got to idle at all: roughly 720 hours a month of billed compute, whether or
+not a single reminder existed.
 
-That is the dominant factor by a wide margin, and it is a **deliberate trade-off,
-not a bug**: the ping interval *is* the reminder accuracy. A 15-minute tick means a
-reminder set for 3:07 arrives at 3:15. Check **Neon Console → your project → Usage**
-against your plan's compute-hour allowance before changing it; if you have headroom,
-per-minute accuracy is worth having.
+### 🎯 The every-minute cron no longer touches the database
 
-What *was* wasteful, and is fixed:
+This was the whole bill, and it is fixed without giving up minute-level accuracy
+and without adding a second service.
+
+A scan already learns when the *next* reminder is due — the fire times are right
+there in the candidate list it just read. So it remembers the earliest one still
+ahead of it, and every tick before that time returns immediately, with **no
+connection opened at all**. The endpoint still answers 1,440 pings a day; on a
+normal day only a handful of them are scans.
+
+Two things force a scan anyway:
+
+- **A reminder actually coming due.** The cache is precisely the time it must stop
+  skipping, so a reminder already on the books can never be missed by a skipped
+  tick. It wakes a minute early so the send isn't a tick late.
+- **A 30-minute cache expiry.** A reminder created *after* the last scan is
+  invisible to a remembered watermark, so the cache has a hard lifetime. This is
+  the one real cost of the design and it is bounded: a reminder created less than
+  30 minutes before it fires, on a device that is then closed, can be up to that
+  late. Creating a reminder means an open tab, and an open tab runs its own
+  60-second check — so the case where the cron is the only mechanism in play is the
+  narrow one. `POST /api/sync` also drops the cache when it writes anything
+  reminder-bearing, which closes the gap whenever the two routes land on the same
+  serverless instance.
+
+The heartbeat that `/api/push/status` reads moved too. It was an `INSERT … ON
+CONFLICT` on **every** ping — a write a minute is enough to keep the compute
+endpoint awake all by itself, which would have made the skip pointless. It is now
+stamped only on ticks that scan, so it means "last scanned at" and the staleness
+threshold allows for the 30-minute scan cadence instead of the ping cadence.
+
+Cold starts always scan: module state dies with the process, and no information is
+never a reason to skip. See `src/lib/reminderWindow.js`.
+
+### The rest of it
+
+What else was wasteful, and is fixed:
 
 - **DDL on every single request.** The self-healing-schema pattern (`CREATE TABLE IF
   NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) is good — a fresh database works with no
@@ -1344,9 +1380,30 @@ What *was* wasteful, and is fixed:
   1,440 DELETEs a day to remove rows that are only ever a week old. Now every 6 hours.
   The orphan-image reaper ran on every sync to discover nothing was 30 days old yet;
   now hourly.
-- **Net effect:** a warm reminder tick went from **8 round trips to 3**, and a warm
-  `/api/sync` GET from 13 to 9. Measured warm latency: reminders ~100 ms, sync ~104 ms
-  (down from ~1.1 s on a cold start that pays the DDL).
+- **A query on every page load, to read the cookie back.** `/api/auth/me` is the
+  first thing every page load calls, and it was doing `SELECT id, email FROM users`
+  to fetch the two values the session cookie had just been issued from. The email is
+  now a signed claim on the cookie, so the common path answers with no database
+  access. Cookies issued before the claim existed still fall back to the query —
+  they're valid for 30 days, and the next sign-in re-issues one that never needs it.
+- **Nine queries per pull.** `GET /api/sync` read its nine collections as nine
+  concurrent queries. The Neon HTTP driver sends each one as its own request, so a
+  pull of a few hundred small rows opened nine of them — every couple of minutes,
+  for as long as a tab is open. It is one `UNION ALL` tagged with the collection
+  name now.
+- **Every push rewrote every row.** `POST /api/sync` answered each array it received
+  with `DELETE FROM <table> WHERE user_id = …` and then one `INSERT` per row. Change
+  one word in one note and Postgres wrote *every* note the account owned: new tuples,
+  WAL for all of them, and that many dead tuples for autovacuum to come back for.
+  It's now two statements per collection — a set-based upsert from one JSONB
+  parameter with `WHERE data IS DISTINCT FROM EXCLUDED.data`, so an unchanged row
+  costs a comparison instead of a write, and a `DELETE … WHERE id NOT IN (…)` that
+  keeps the replace-not-merge contract the client relies on. The statement count no
+  longer grows with your history, only with the number of collections you touched.
+- **Net effect:** a reminder tick that finds nothing due went from **8 round trips
+  to 0**. A warm `/api/sync` GET went from 13 to 1; a warm POST that changes one
+  note went from ~1 + one-per-note to 2 statements and one row written. A page load
+  no longer wakes the database to find out who you are.
 
 ### Missing per-user indexes
 
@@ -1370,21 +1427,42 @@ CREATE INDEX IF NOT EXISTS idx_custom_lists_user     ON custom_lists(user_id);
 CREATE INDEX IF NOT EXISTS idx_event_categories_user ON event_categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_todo_categories_user  ON todo_categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_note_images_user      ON note_images(user_id);
+CREATE INDEX IF NOT EXISTS idx_class_schedule_user   ON class_schedule(user_id);
 ```
+
+`class_schedule` was missed when that list was first written, and it is the one the
+reminder cron reads on every scan to resolve per-class reminder rules.
+
+### Two settings only you can change
+
+Neither of these is in the repo, and the code changes above are worth much less
+without the first one:
+
+1. **Neon Console → your project → Branches → Compute → Autosuspend.** This is the
+   idle timeout that decides how long the endpoint stays awake after the last query,
+   and it is now the number that sets the bill: the cron scans about every 30
+   minutes, so a 5-minute autosuspend means ~17% duty cycle where a 30-minute one
+   would mean 100% and undo the whole thing. Set it as low as your plan allows.
+2. **cron-job.org → the reminder job.** Keep it at 1 minute. The endpoint is cheap
+   to ping now, and the ping interval is still what sets reminder accuracy — there
+   is no longer a reason to trade one for the other.
 
 ### If you need a bigger cut
 
-Ranked by effect, since only the first one really moves compute-hours:
-
-1. **Lengthen the reminder ping interval** in cron-job.org. This is the only lever
-   that changes how much of the day the database is awake. Accuracy degrades to match.
-2. **Move the every-minute poll off Neon entirely.** Keep a "next reminder due at"
-   watermark in something that doesn't bill compute-hours (Upstash Redis' free tier
-   comfortably covers 1,440 pings/day) and only touch Neon when the watermark says
-   something is actually due. This keeps 1-minute accuracy *and* lets Neon idle
-   almost always — it is the correct architecture, at the cost of one more service
-   and an environment variable.
-3. **Vercel Pro** removes the reason the pinger is external in the first place, but
+1. **Raise `MAX_SKIP_MS`** in `src/lib/reminderWindow.js`. It is the floor on how
+   often the database is woken when nothing is happening, traded directly against
+   how late a just-created reminder can be when the app is closed.
+2. **Lengthen the idle poll back-off.** `AUTO_SYNC_IDLE_MAX_MS` in `src/app/page.js`
+   caps how far apart a left-open tab's pulls get (10 minutes). A tab open all day is
+   the other thing that keeps the endpoint awake; raising this to 30 minutes costs
+   only how stale another device's edits can look before you refocus the tab, which
+   already triggers a catch-up pull.
+3. **Move the watermark out of process memory.** The 30-minute cache expiry exists
+   only because module state dies with a serverless instance. A watermark in
+   something that doesn't bill compute-hours (Upstash Redis' free tier covers this
+   easily) would let the skip last until the actual next due time, at the cost of one
+   more service and an environment variable.
+4. **Vercel Pro** removes the reason the pinger is external in the first place, but
    does nothing about Neon compute on its own.
 
 ## 🗄 Data Storage
