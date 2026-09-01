@@ -1575,21 +1575,26 @@ export default function Home() {
   /* ── Import / Export ── */
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
   // We just set state directly — the existing localStorage sync effects will persist them.
-  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes }) => {
+  const handleImport = useCallback(({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes, classSchedule: mergedClasses }) => {
     setEvents(mergedEvents)
     setTodos(mergedTodos)
     setTodoCategories(mergedCats)
     if (Array.isArray(mergedNotes)) setNotes(mergedNotes)
-    const addedEvents = mergedEvents.length - events.length
-    const addedTodos  = mergedTodos.length  - todos.length
-    const addedNotes  = Array.isArray(mergedNotes) ? mergedNotes.length - notes.length : 0
+    // An ICS import carries no classes, and a pre-v2 JSON backup has no such key —
+    // both must leave the schedule alone rather than blanking it.
+    if (Array.isArray(mergedClasses)) setCanvasClasses(mergedClasses)
+    const addedEvents  = mergedEvents.length - events.length
+    const addedTodos   = mergedTodos.length  - todos.length
+    const addedNotes   = Array.isArray(mergedNotes)   ? mergedNotes.length   - notes.length : 0
+    const addedClasses = Array.isArray(mergedClasses) ? mergedClasses.length - canvasClassesRaw.length : 0
     const parts = [
       addedEvents > 0 ? `+${addedEvents} event${addedEvents !== 1 ? 's' : ''}` : 'No new events',
       addedTodos  > 0 ? `+${addedTodos} task${addedTodos !== 1 ? 's' : ''}`    : 'no new tasks',
     ]
-    if (addedNotes > 0) parts.push(`+${addedNotes} note${addedNotes !== 1 ? 's' : ''}`)
+    if (addedNotes   > 0) parts.push(`+${addedNotes} note${addedNotes !== 1 ? 's' : ''}`)
+    if (addedClasses > 0) parts.push(`+${addedClasses} class${addedClasses !== 1 ? 'es' : ''}`)
     pushToast('Import complete', parts.join(', ') + '.')
-  }, [events.length, todos.length, notes.length, pushToast])
+  }, [events.length, todos.length, notes.length, canvasClassesRaw.length, pushToast])
 
   /* ── Google Calendar sync ── */
   const syncGoogleCalendar = useCallback(async () => {
@@ -3214,6 +3219,7 @@ export default function Home() {
               </button>
               <ImportExportButton
                 events={events} todos={todos} todoCategories={todoCategories} notes={notes}
+                classSchedule={canvasClassesRaw} classMeetings={canvasClassEvents}
                 onImport={handleImport}
                 inline
               />
@@ -3499,6 +3505,8 @@ export default function Home() {
           todos={todos}
           todoCategories={todoCategories}
           notes={notes}
+          classSchedule={canvasClassesRaw}
+          classMeetings={canvasClassEvents}
           onImport={handleImport}
         />
       )}

@@ -15,7 +15,12 @@
  *   todos          — array of local todos
  *   todoCategories — array of todo category objects
  *   notes          — array of notes (rich-text notes from the Notes tab)
- *   onImport       — (data: { events, todos, todoCategories, notes }) => void
+ *   classSchedule  — array of class entries (the My Classes tab's classes)
+ *   classMeetings  — those classes expanded into dated meetings, for the ICS.
+ *                    Passed in rather than derived: the app already expands them for
+ *                    the calendar, and re-doing it here would mean a second copy of
+ *                    the recurrence and exception rules to keep in step.
+ *   onImport       — (data: { events, todos, todoCategories, notes, classSchedule }) => void
  *                    receives the fully-merged final arrays (not just the imported data)
  *   inline         — bool: render export/import controls inline (no FAB, no popup)
  *                    used in the mobile Settings tab so no floating circle appears
@@ -24,6 +29,7 @@
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
 import { parseIcs } from '@/lib/ics'
+import { serializeIcs } from '@/lib/icsExport'
 
 // status shape:
 //   null              — idle
@@ -33,7 +39,11 @@ import { parseIcs } from '@/lib/ics'
 //     conflictEvents, conflictTodos, conflictCats }
 //                     — showing merge summary, waiting for user choice
 
-export default function ImportExportButton({ events, todos, todoCategories, notes = [], onImport, isMobile, inline }) {
+export default function ImportExportButton({
+  events, todos, todoCategories, notes = [],
+  classSchedule = [], classMeetings = [],
+  onImport, isMobile, inline,
+}) {
   const [open,             setOpen]             = useState(false)
   const [status,           setStatus]           = useState(null)
   const [conflictStrategy, setConflictStrategy] = useState('skip') // 'skip' | 'replace' | 'keepBoth'
@@ -41,43 +51,13 @@ export default function ImportExportButton({ events, todos, todoCategories, note
 
   function reset() { setStatus(null); setConflictStrategy('skip') }
 
-  function serializeIcs(eventsToExport) {
-    const escapeValue = (value) => String(value || '')
-      .replace(/\\/g, '\\\\')
-      .replace(/\n/g, '\\n')
-      .replace(/;/g, '\\;')
-      .replace(/,/g, '\\,')
-
-    const formatDate = (iso) => {
-      const d = new Date(iso)
-      const pad = (num) => String(num).padStart(2, '0')
-      return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
-    }
-
-    const lines = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//luminae-vigila//EN',
-    ]
-
-    for (const event of eventsToExport) {
-      lines.push('BEGIN:VEVENT')
-      lines.push(`UID:${escapeValue(event.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)}`)
-      if (event.start) lines.push(`DTSTART:${formatDate(event.start)}`)
-      if (event.end) lines.push(`DTEND:${formatDate(event.end)}`)
-      if (event.title) lines.push(`SUMMARY:${escapeValue(event.title)}`)
-      if (event.description) lines.push(`DESCRIPTION:${escapeValue(event.description)}`)
-      if (event.location) lines.push(`LOCATION:${escapeValue(event.location)}`)
-      lines.push('END:VEVENT')
-    }
-
-    lines.push('END:VCALENDAR')
-    return lines.join('\r\n')
-  }
-
   function initiateExport(format = 'json') {
     if (format === 'ics') {
-      const icsData = serializeIcs(events)
+      /* Class meetings are expanded from the schedule rather than stored, so an
+         export of `events` alone contained none of them — a term of classes was
+         simply missing from the file. Exams went with them, being a transform of a
+         meeting rather than an event of their own. */
+      const icsData = serializeIcs([...events, ...classMeetings])
       const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -91,12 +71,15 @@ export default function ImportExportButton({ events, todos, todoCategories, note
     }
 
     const data = {
-      version:    1,
+      /* Bumped because the shape gained a key. Older files have no `classSchedule`
+         and import exactly as they did before — the reader defaults it. */
+      version:    2,
       exportedAt: new Date().toISOString(),
       events,
       todos,
       todoCategories,
       notes,
+      classSchedule,
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url  = URL.createObjectURL(blob)
@@ -123,6 +106,7 @@ export default function ImportExportButton({ events, todos, todoCategories, note
         let importedTodos = []
         let importedCats = []
         let importedNotes = []
+        let importedClasses = []
         let parsed = null
 
         if (isIcs) {
@@ -133,19 +117,23 @@ export default function ImportExportButton({ events, todos, todoCategories, note
           parsed = JSON.parse(text)
           // `notes` alone is a valid export (a backup taken before any events
           // or tasks existed), so accept a file that only carries notes.
-          if (!parsed.events && !parsed.todos && !parsed.notes)
+          // A backup taken before any events or tasks existed is still a backup —
+          // and a schedule-only one is now possible too.
+          if (!parsed.events && !parsed.todos && !parsed.notes && !parsed.classSchedule)
             throw new Error('This file doesn\'t look like a luminaeVigila export.')
 
-          importedEvents = Array.isArray(parsed.events)         ? parsed.events         : []
-          importedTodos  = Array.isArray(parsed.todos)          ? parsed.todos          : []
-          importedCats   = Array.isArray(parsed.todoCategories)  ? parsed.todoCategories : []
-          importedNotes  = Array.isArray(parsed.notes)           ? parsed.notes          : []
+          importedEvents   = Array.isArray(parsed.events)         ? parsed.events         : []
+          importedTodos    = Array.isArray(parsed.todos)          ? parsed.todos          : []
+          importedCats     = Array.isArray(parsed.todoCategories) ? parsed.todoCategories : []
+          importedNotes    = Array.isArray(parsed.notes)          ? parsed.notes          : []
+          importedClasses  = Array.isArray(parsed.classSchedule)  ? parsed.classSchedule  : []
         }
 
         const localEventIds = new Set(events.map(x => x.id))
         const localTodoIds  = new Set(todos.map(x => x.id))
         const localCatIds   = new Set(todoCategories.map(x => x.id))
         const localNoteIds  = new Set(notes.map(x => x.id))
+        const localClassIds = new Set(classSchedule.map(x => x.id))
 
         const newEvents       = importedEvents.filter(x => !localEventIds.has(x.id))
         const conflictEvents  = importedEvents.filter(x =>  localEventIds.has(x.id))
@@ -155,10 +143,13 @@ export default function ImportExportButton({ events, todos, todoCategories, note
         const conflictCats    = importedCats.filter(  x =>  localCatIds.has(x.id))
         const newNotes        = importedNotes.filter( x => !localNoteIds.has(x.id))
         const conflictNotes   = importedNotes.filter( x =>  localNoteIds.has(x.id))
+        const newClasses      = importedClasses.filter(x => !localClassIds.has(x.id))
+        const conflictClasses = importedClasses.filter(x =>  localClassIds.has(x.id))
 
-        const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length + conflictNotes.length > 0
+        const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length
+                           + conflictNotes.length + conflictClasses.length > 0
 
-        if (!hasConflicts && newEvents.length + newTodos.length + newCats.length + newNotes.length === 0) {
+        if (!hasConflicts && newEvents.length + newTodos.length + newCats.length + newNotes.length + newClasses.length === 0) {
           setStatus({ error: 'Nothing new to import — all items already exist locally.' })
           return
         }
@@ -171,6 +162,7 @@ export default function ImportExportButton({ events, todos, todoCategories, note
           newTodos,  conflictTodos,
           newCats,   conflictCats,
           newNotes,  conflictNotes,
+          newClasses, conflictClasses,
         })
       } catch (err) {
         setStatus({ error: err.message || 'Invalid file format.' })
@@ -184,9 +176,11 @@ export default function ImportExportButton({ events, todos, todoCategories, note
   function handleConfirmImport() {
     if (!status?.reviewing) return
     const { newEvents, conflictEvents, newTodos, conflictTodos, newCats, conflictCats } = status
-    // ICS imports carry no notes, so default these rather than assuming.
-    const newNotes      = status.newNotes      ?? []
-    const conflictNotes = status.conflictNotes ?? []
+    // ICS imports carry neither notes nor classes, so default these rather than assuming.
+    const newNotes        = status.newNotes        ?? []
+    const conflictNotes   = status.conflictNotes   ?? []
+    const newClasses      = status.newClasses      ?? []
+    const conflictClasses = status.conflictClasses ?? []
 
     function mergeList(localList, newItems, conflictItems, strategy) {
       let result = [...localList]
@@ -211,9 +205,13 @@ export default function ImportExportButton({ events, todos, todoCategories, note
     const mergedEvents = mergeList(events,        newEvents, conflictEvents, conflictStrategy)
     const mergedTodos  = mergeList(todos,          newTodos,  conflictTodos,  conflictStrategy)
     const mergedCats   = mergeList(todoCategories, newCats,   conflictCats,   conflictStrategy)
-    const mergedNotes  = mergeList(notes,          newNotes,  conflictNotes,  conflictStrategy)
+    const mergedNotes   = mergeList(notes,         newNotes,   conflictNotes,   conflictStrategy)
+    const mergedClasses = mergeList(classSchedule, newClasses, conflictClasses, conflictStrategy)
 
-    onImport({ events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats, notes: mergedNotes })
+    onImport({
+      events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats,
+      notes: mergedNotes, classSchedule: mergedClasses,
+    })
     setStatus('done')
     setTimeout(() => { reset(); setOpen(false) }, 1800)
   }
@@ -222,8 +220,9 @@ export default function ImportExportButton({ events, todos, todoCategories, note
   const isReviewing = status?.reviewing
   const safeArray = (arr) => Array.isArray(arr) ? arr : []
   const hasConflicts = isReviewing &&
-    (safeArray(status.conflictEvents).length + safeArray(status.conflictTodos).length +
-     safeArray(status.conflictCats).length   + safeArray(status.conflictNotes).length > 0)
+    (safeArray(status.conflictEvents).length  + safeArray(status.conflictTodos).length +
+     safeArray(status.conflictCats).length    + safeArray(status.conflictNotes).length +
+     safeArray(status.conflictClasses).length > 0)
 
   /* Inline mode: render controls directly in the layout, no floating button */
   if (inline) {
@@ -260,6 +259,9 @@ export default function ImportExportButton({ events, todos, todoCategories, note
               )}
               {(safeArray(status.newNotes).length > 0 || safeArray(status.conflictNotes).length > 0) && (
                 <SummaryRow label="Notes" newCount={safeArray(status.newNotes).length} conflictCount={safeArray(status.conflictNotes).length} />
+              )}
+              {(safeArray(status.newClasses).length > 0 || safeArray(status.conflictClasses).length > 0) && (
+                <SummaryRow label="Classes" newCount={safeArray(status.newClasses).length} conflictCount={safeArray(status.conflictClasses).length} />
               )}
             </div>
             {hasConflicts && (
@@ -378,7 +380,7 @@ export default function ImportExportButton({ events, todos, todoCategories, note
           {!status && (
             <>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', margin: '0 0 12px', lineHeight: 1.45 }}>
-                Export local data as JSON backup or calendar events as ICS. Import supports both JSON and ICS files.
+                Export everything as a JSON backup, or your calendar and class meetings as ICS. Import supports both.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <button onClick={() => initiateExport('json')} style={btnStyle('var(--green)', 'var(--surface2)')}>
@@ -419,6 +421,11 @@ export default function ImportExportButton({ events, todos, todoCategories, note
                   <SummaryRow label="Notes"
                     newCount={safeArray(status.newNotes).length}
                     conflictCount={safeArray(status.conflictNotes).length} />
+                )}
+                {(safeArray(status.newClasses).length > 0 || safeArray(status.conflictClasses).length > 0) && (
+                  <SummaryRow label="Classes"
+                    newCount={safeArray(status.newClasses).length}
+                    conflictCount={safeArray(status.conflictClasses).length} />
                 )}
               </div>
 
