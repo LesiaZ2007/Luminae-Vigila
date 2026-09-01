@@ -33,6 +33,7 @@ import {
 import { describeLocation } from '@/lib/maps'
 import { toYMDLocal }       from '@/lib/calendarView'
 import { EXAM_COLOR }       from '@/lib/classInstances'
+import ColorSwatches        from '@/components/ColorSwatches'
 
 const SOURCE_LABELS = {
   google:         'Google Calendar',
@@ -352,13 +353,23 @@ export default function EventDetailModal({
           {/* Canvas deep link */}
           {ev.htmlUrl && <ActionLink href={ev.htmlUrl} accent={accent} icon={ExternalLink} label="Open in Canvas" />}
 
-          {/* Color — mirrors the calendar's right-click recolor, which mobile can't reach */}
+          {/* Color — mirrors the calendar's right-click recolor, which mobile can't reach.
+              Applies on the spot: there is no save button on a detail view to apply it. */}
           {onRecolor && (
             <div>
-              <Label icon={Pencil}>Color</Label>
-              <input type="color" value={toHexInput(colorOverride || ev.color)} onChange={e => onRecolor(ev.id, e.target.value)}
-                     aria-label="Event color"
-                     style={{ width: 46, height: 28, padding: 0, border: '1px solid var(--border)', borderRadius: 7, background: 'none', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Label icon={Pencil}>Color</Label>
+                {colorOverride && (
+                  <button type="button" onClick={() => onRecolor(ev.id, null)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+                    Use original color
+                  </button>
+                )}
+              </div>
+              <ColorSwatches value={colorOverride || ev.color} onChange={c => onRecolor(ev.id, c)}
+                             label="Color this event" />
             </div>
           )}
         </div>
@@ -423,11 +434,6 @@ export default function EventDetailModal({
       </div>
     </div>
   )
-}
-
-/** `<input type="color">` only accepts #rrggbb, so anything else has to fall back. */
-function toHexInput(value) {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '#3a6fa8'
 }
 
 /**
