@@ -2953,7 +2953,7 @@ export default function Home() {
                     isMobile={isMobile}
                   >
                     <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                                onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                                onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
                                onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
@@ -2984,7 +2984,7 @@ export default function Home() {
                 isMobile={isMobile}
               >
                 <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
                                onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
