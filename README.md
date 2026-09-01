@@ -613,6 +613,7 @@ Tasks already had a category *and* a separate optional link to a class, and neit
 - **A task filed under a class no longer shows the class chip twice.** The category already names the course in its own color; the chip stays for the older shape, where a task has an ordinary category *and* a class link
 - **A deleted or disabled class leaves its tasks intact.** They point at a category that no longer resolves, so the row simply renders without a category chip — the same thing an unrecognised stored category has always done, rather than an error
 - If you hand-made a category whose id starts with `class:`, yours wins rather than being silently shadowed
+- **A new task inherits the category you're filtered to.** Narrow the list to one chip and hit **Add**, and that category is already selected — you were looking at Physics, so that's what the new task is for. With two or more chips active there is no one answer, so it falls back to the usual default, which deliberately never auto-picks a class
 
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
