@@ -8,6 +8,7 @@ import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
 import { loadCalendarPrefs, saveCalendarPrefs, slotRange, toYMDLocal } from '@/lib/calendarView'
+import { EVENT_SWATCHES } from '@/components/ColorSwatches'
 
 /**
  * How overlapping timed events are laid out.
@@ -29,6 +30,25 @@ import { loadCalendarPrefs, saveCalendarPrefs, slotRange, toYMDLocal } from '@/l
  * move — the cascade code path and its CSS are both still here.
  */
 const OVERLAP_STRATEGY = 'columns'
+
+/**
+ * The marker on an event flagged important.
+ *
+ * Drawn in currentColor rather than amber: the block is already a saturated
+ * colour, and a white star on it stays legible where amber-on-orange would not.
+ * The amber ring around the block is what carries the colour cue — see
+ * .lv-important-event in globals.css.
+ */
+function ImportantStar({ inline = false }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+         style={inline
+           ? { flexShrink: 0, marginRight: 3, verticalAlign: 'middle', display: 'inline-block', position: 'relative', top: -1 }
+           : { flexShrink: 0 }}>
+      <polygon points="12 2 15.1 8.6 22 9.6 17 14.6 18.2 21.6 12 18.3 5.8 21.6 7 14.6 2 9.6 8.9 8.6" />
+    </svg>
+  )
+}
 
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
@@ -142,6 +162,14 @@ export default function WeeklyCalendar({
     // In 'columns' mode we leave the harness alone so FullCalendar's own
     // column packing survives — our CSS uses !important and would override it.
     harness.classList.remove('lv-overlap-earlier-harness', 'lv-overlap-later-harness')
+
+    /* Important events break out of their column by a few pixels and sit above
+       their neighbours. The class goes on the harness, not the event: the
+       harness is the absolutely-positioned box FullCalendar sizes, so it is the
+       only thing that can spill past the column edges or win a z-index fight.
+       The neighbours keep their own width, so they still read underneath. */
+    harness.classList.toggle('lv-important-harness', !!info.event.extendedProps?.important)
+
     if (OVERLAP_STRATEGY === 'cascade') {
       const role = overlapRole(info.event, info.view.calendar.getEvents())
       if (role === 'later') harness.classList.add('lv-overlap-later-harness')
@@ -157,7 +185,12 @@ export default function WeeklyCalendar({
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
 
-    const isUserEvent = !info.event.extendedProps?.source
+    /* A task chip has no `source` either, so it used to pass for a user event and got
+       the recolor popover. That was always a dead end: a task takes its colour from its
+       category, and the per-event override it wrote is a preference the task list never
+       reads. Right-click on one now does what left-click does. */
+    const isTodo      = info.event.extendedProps?.type === 'todo'
+    const isUserEvent = !info.event.extendedProps?.source && !isTodo
 
     const el = info.el
 
@@ -165,9 +198,10 @@ export default function WeeklyCalendar({
     function onContextMenu(e) {
       e.preventDefault()
       e.stopPropagation()
+      if (isTodo) { onEventClick?.(info); return }
       setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
     }
-    if (isUserEvent && onRecolorEvent && !isMobile) {
+    if ((isUserEvent && onRecolorEvent && !isMobile) || (isTodo && !isMobile)) {
       el.addEventListener('contextmenu', onContextMenu)
     }
 
@@ -384,6 +418,7 @@ export default function WeeklyCalendar({
     )
     const isTodo    = arg.event.extendedProps?.type === 'todo'
     const isGoogle  = arg.event.extendedProps?.source === 'google'
+    const important = !!arg.event.extendedProps?.important
     const priority  = arg.event.extendedProps?.priority
     const priorityColor = priority === 'high' ? '#ef4444' : priority === 'medium' ? '#f59e0b' : null
 
@@ -398,6 +433,7 @@ export default function WeeklyCalendar({
       // Compact single-line layout for short events
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', padding: '0 2px', minWidth: 0 }}>
+          {important && <ImportantStar />}
           {isTodo && priorityColor && (
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: priorityColor, flexShrink: 0, display: 'inline-block', boxShadow: '0 0 0 1px rgba(255,255,255,0.5)' }} />
           )}
@@ -430,6 +466,7 @@ export default function WeeklyCalendar({
         )}
         {/* Title: wraps so you can read the full name — block is clipped at event bottom */}
         <div style={{ fontWeight: 600, fontSize: '0.76rem', lineHeight: 1.3, overflow: 'hidden', wordBreak: 'break-word' }}>
+          {important && <ImportantStar inline />}
           {isTodo && priorityColor && (
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: priorityColor, display: 'inline-block', marginRight: 3, verticalAlign: 'middle', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.5)', position: 'relative', top: -1 }} />
           )}
@@ -511,7 +548,7 @@ export default function WeeklyCalendar({
 
   const swatchColors = colorSwatches && colorSwatches.length > 0
     ? colorSwatches
-    : ['#3a6fa8','#10b981','#ef4444','#f59e0b','#8b5cf6','#e8751a','#0ea5e9','#ec4899','#6366f1','#14b8a6']
+    : EVENT_SWATCHES
 
   return (
     <div className="flex flex-col h-full"
@@ -601,7 +638,10 @@ export default function WeeklyCalendar({
                true (FullCalendar's default) → the later one covers ~50% of the
                earlier one, which is the look 'cascade' was reinforcing. */
             slotEventOverlap={OVERLAP_STRATEGY === 'cascade'}
-            eventClassNames={(arg) => (arg.event.extendedProps?.isHiddenEvent ? ['lv-hidden-event'] : [])}
+            eventClassNames={(arg) => [
+              arg.event.extendedProps?.isHiddenEvent ? 'lv-hidden-event'    : null,
+              arg.event.extendedProps?.important     ? 'lv-important-event' : null,
+            ].filter(Boolean)}
             eventContent={renderEventContent}
             eventDidMount={handleEventDidMount}
             eventWillUnmount={handleEventWillUnmount}

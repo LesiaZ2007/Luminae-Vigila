@@ -8,6 +8,7 @@ import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
+import TaskActionMenu from '@/components/TaskActionMenu'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -19,10 +20,23 @@ function useWindowWidth() {
   }, [])
   return w
 }
+
+/**
+ * A zero-size rect at the pointer, for anchoring a popover to a click that had no
+ * element worth measuring behind it. FullCalendar hands over `info.el` for a chip, but
+ * a long-press or a synthetic click may not, and anchoring to the point is fine —
+ * useAnchoredPosition treats it the same as any other rect.
+ */
+function pointRect(jsEvent) {
+  const x = jsEvent?.clientX ?? 0
+  const y = jsEvent?.clientY ?? 0
+  return { top: y, bottom: y, left: x, right: x, width: 0, height: 0, x, y }
+}
+
 import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
-import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
+import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, dropEmptyNotes, isNoteEmpty, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
@@ -167,6 +181,10 @@ export default function Home() {
   // "Add task" from inside a class card, so the new task arrives already filed under
   // that class rather than under whichever category happens to be first in the list.
   const [initialTodoCategory, setInitialTodoCategory] = useState(null)
+  /* The task clicked on the main calendar, and where its little menu should open:
+     { todoId, instanceId, title, done, anchor }. See TaskActionMenu — a click on a task
+     chip offers done / edit / delete rather than dropping straight into the form. */
+  const [taskMenu,      setTaskMenu]      = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
   const [nudgeCluster,  setNudgeCluster]  = useState(null)
@@ -921,9 +939,11 @@ export default function Home() {
       // Custom Lists
       const cl = localStorage.getItem('lv-custom-lists')
       if (cl) setCustomLists(purgeTombstones(JSON.parse(cl)))
-      // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago
+      // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago,
+      // dropEmptyNotes clears out blanks left behind by a previous session
+      // (see discardEmptyNote below for the live version of the same rule).
       const nt = localStorage.getItem('lv-notes')
-      if (nt) setNotes(purgeExpiredTrash(JSON.parse(nt)))
+      if (nt) setNotes(dropEmptyNotes(purgeExpiredTrash(JSON.parse(nt))))
       // Canvas
       const ca  = localStorage.getItem('lv-canvas-assignments')
       const cc  = localStorage.getItem('lv-canvas-classes')
@@ -1355,6 +1375,18 @@ export default function Home() {
     setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), hidden: false } }))
   }, [])
 
+  /**
+   * Flag an event as important.
+   *
+   * Lives in eventPrefs rather than on the event itself so it works the same for
+   * every source — a Google invite, a Canvas due date, and a class period can
+   * all be marked, and none of those are ours to edit. It rides the existing
+   * eventPrefs sync and backup for free.
+   */
+  const toggleImportantEvent = useCallback((id) => {
+    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), important: !prev[id]?.important } }))
+  }, [])
+
   const setGoogleEventColor = useCallback((id, color) => {
     setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
     setToasts(prev => prev.map(toast => toast.eventId === id
@@ -1386,6 +1418,15 @@ export default function Home() {
     })
     return created
   }, [])
+  /* Is *this occurrence* ticked off? A recurring task records completion per date in
+     completedDates rather than one flag, so the answer differs between Thursday's copy
+     and next Thursday's. Mirrors the id parsing in toggleTodo below. */
+  const isTodoDoneOn = useCallback((todo, instanceId) => {
+    const rMatch = String(instanceId).match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
+    if (rMatch) return (todo.completedDates || []).includes(rMatch[2])
+    return !!todo.completed
+  }, [])
+
   const toggleTodo = useCallback((id) => {
     // Handle recurring instances: id looks like "baseId-r-YYYY-MM-DD"
     const rMatch = id.match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
@@ -1537,6 +1578,44 @@ export default function Home() {
       { icon: 'trash' },
     )
   }, [notes, pushToast])
+
+  /**
+   * Throw away a note nobody wrote in.
+   *
+   * Pressing W (or New) creates the note immediately — that is what makes quick
+   * capture feel instant — so wandering off without typing used to leave an
+   * "Untitled note" in the list forever. Closing one that is still blank now
+   * removes it outright rather than sending it to the trash: there is nothing in
+   * it to undo, and an undo toast for a note with no content is just noise.
+   *
+   * Deferred by a tick on purpose. NoteEditor flushes its pending autosave from
+   * an unmount cleanup, and that flush is what decides whether the note is
+   * actually empty — running the check first would delete a note whose last
+   * keystrokes were still in the debounce.
+   */
+  const discardEmptyNote = useCallback((id) => {
+    if (!id) return
+    setTimeout(() => {
+      setNotes(prev => prev.filter(n => !(n.id === id && !n.trashedAt && isNoteEmpty(n))))
+    }, 0)
+  }, [])
+
+  // Every path that closes a note — picking another, going back to the list,
+  // creating one, trashing one — moves activeNoteId, so watching it covers them
+  // all without each caller having to remember.
+  const prevActiveNoteId = useRef(null)
+  useEffect(() => {
+    const prev = prevActiveNoteId.current
+    prevActiveNoteId.current = activeNoteId
+    if (prev && prev !== activeNoteId) discardEmptyNote(prev)
+  }, [activeNoteId, discardEmptyNote])
+
+  // Leaving the Notes tab counts as closing the note too, even though the
+  // selection survives so coming back lands where you left off.
+  useEffect(() => {
+    if (activeNav === 'notes') return
+    discardEmptyNote(activeNoteId)
+  }, [activeNav]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const restoreNote = useCallback((id) => {
     setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: null, updatedAt: new Date().toISOString() } : n))
@@ -2109,11 +2188,25 @@ export default function Home() {
     }
   }, [])
   const handleEventClick = useCallback((info) => {
+    /* A task on the calendar answers with a small menu rather than the edit form.
+       Most clicks on one are "done", and that was the one thing the form made
+       expensive; delete wasn't reachable from the calendar at all. It also no longer
+       yanks the nav over to the todos tab — the point of clicking a task where it sits
+       is to deal with it without leaving the calendar. */
     if (info.event.extendedProps?.type === 'todo') {
       const todoId = info.event.extendedProps.todoId
       const todo   = todos.find(t => t.id === todoId)
-      if (todo) { setEditingTodo(todo); setShowTodoModal(true) }
-      setActiveNav('todos')
+      if (!todo) return
+      /* `toggleTodo` takes the *instance* id, because a recurring task records each
+         occurrence in completedDates rather than one flag — so ticking off Thursday's
+         copy must not tick off the series. The chip's own id carries it. */
+      const instanceId = String(info.event.id).replace(/^cal-(todo|linked)-/, '') || todo.id
+      setTaskMenu({
+        todoId, instanceId,
+        title: todo.title,
+        done: isTodoDoneOn(todo, instanceId),
+        anchor: info.el?.getBoundingClientRect?.() ?? pointRect(info.jsEvent),
+      })
       return
     }
     // Custom list due-date markers — navigate to that list
@@ -2131,7 +2224,7 @@ export default function Home() {
     // and those deserve the same layout as an own event. Editing, hiding, recoloring
     // and the Canvas deep link are all reachable from in there.
     setDetailEvent(info.event)
-  }, [todos])
+  }, [todos, isTodoDoneOn])
 
   /* ── Merge todos + Google events → calendar events ── */
   const visibleEvents = useMemo(
@@ -2250,7 +2343,17 @@ export default function Home() {
     return markers
   }, [customLists])
 
-  const allCalendarEvents = [
+  function markImportant(list) {
+    return list.map(e => (eventPrefs[e.id]?.important
+      ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
+      : e))
+  }
+
+  /* The important flag is stamped on at the end rather than inside each of the
+     source-specific memos above: it is keyed by event id in eventPrefs, applies
+     to every source alike, and doing it once here means a new source picks it up
+     without remembering to. */
+  const allCalendarEvents = markImportant([
     ...visibleEvents,
     ...visibleGoogleEvents,
     ...hiddenGcalEvents,
@@ -2277,7 +2380,7 @@ export default function Home() {
       }
       return calItems
     }),
-  ]
+  ])
 
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -2953,7 +3056,7 @@ export default function Home() {
                     isMobile={isMobile}
                   >
                     <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                                onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                                onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
                                onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
@@ -2984,7 +3087,7 @@ export default function Home() {
                 isMobile={isMobile}
               >
                 <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
-                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={() => setShowTodoModal(true)}
+                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
                                onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
@@ -3085,6 +3188,8 @@ export default function Home() {
                 onAdoptCourse={adoptCanvasCourse}
                 onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onToggleTodo={toggleTodo}
+                onDeleteTodo={deleteTodo}
+                arrowNavEnabled={!anyModalOpen}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
                 onRescheduleTask={(todo, dueDate) => rescheduleTodo(todo.id, dueDate)}
                 onEventClick={ev => setDetailEvent(ev)}
@@ -3310,12 +3415,36 @@ export default function Home() {
       )}
 
       {/* ── Modals ── */}
+
+      {/* A task clicked on the calendar. Not a modal — it anchors to the chip and the
+          calendar stays readable behind it, which is the point: ticking something off
+          shouldn't cost you the view you were looking at. */}
+      {taskMenu && (
+        <TaskActionMenu
+          anchor={taskMenu.anchor}
+          title={taskMenu.title}
+          done={taskMenu.done}
+          onToggle={() => toggleTodo(taskMenu.instanceId)}
+          onEdit={() => {
+            const todo = todos.find(t => t.id === taskMenu.todoId)
+            if (todo) { setEditingTodo(todo); setShowTodoModal(true) }
+          }}
+          /* Deletes the whole task, series included — the same thing the task list's
+             trash icon does. Dropping a single occurrence of a repeating task is a
+             different operation, and the edit form is where it belongs. */
+          onDelete={() => deleteTodo(taskMenu.todoId)}
+          onClose={() => setTaskMenu(null)}
+        />
+      )}
+
       {detailEvent && (
         <EventDetailModal
           event={detailEvent}
           categories={eventCategories}
           colorOverride={eventPrefs[detailEvent.id]?.color ?? null}
           hidden={!!eventPrefs[detailEvent.id]?.hidden}
+          important={!!eventPrefs[detailEvent.id]?.important}
+          onToggleImportant={toggleImportantEvent}
           onEdit={ev => { setDetailEvent(null); setEventModal({ open: true, event: ev, date: null }) }}
           onDelete={deleteEvent}
           onHide={hideEvent}

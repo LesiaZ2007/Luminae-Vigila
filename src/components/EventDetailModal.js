@@ -20,8 +20,9 @@
  *   categories    — event categories, for the colored category chip
  *   colorOverride — per-event color from eventPrefs, if the user set one
  *   hidden        — whether this event is currently hidden
+ *   important     — whether this event is flagged important (also from eventPrefs)
  *   onEdit, onDelete, onClose
- *   onHide, onUnhide, onRecolor — omit to leave the action out
+ *   onHide, onUnhide, onRecolor, onToggleImportant — omit to leave the action out
  *   allNotes, onOpenNote        — linked notes, same contract as EventModal
  */
 
@@ -29,10 +30,12 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   X, Pencil, Trash2, MapPin, ExternalLink, Clock, CalendarDays, Bell,
   Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus, GraduationCap,
+  Star,
 } from 'lucide-react'
 import { describeLocation } from '@/lib/maps'
 import { toYMDLocal }       from '@/lib/calendarView'
 import { EXAM_COLOR }       from '@/lib/classInstances'
+import ColorSwatches        from '@/components/ColorSwatches'
 
 const SOURCE_LABELS = {
   google:         'Google Calendar',
@@ -169,8 +172,8 @@ function ReadonlyBlock({ children }) {
 }
 
 export default function EventDetailModal({
-  event, categories = [], colorOverride, hidden = false,
-  onEdit, onDelete, onClose, onHide, onUnhide, onRecolor,
+  event, categories = [], colorOverride, hidden = false, important = false,
+  onEdit, onDelete, onClose, onHide, onUnhide, onRecolor, onToggleImportant,
   allNotes = [], onOpenNote,
   // Class schedule meetings only: call off this one occurrence, or drop a one-off
   // that was added. Omit either to leave the action out.
@@ -254,6 +257,12 @@ export default function EventDetailModal({
           {hidden && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>
               <EyeOff size={12} /> Hidden from the calendar
+            </div>
+          )}
+
+          {important && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--amber, #f59e0b)' }}>
+              <Star size={12} fill="currentColor" /> Important — sits on top of anything it overlaps
             </div>
           )}
 
@@ -352,13 +361,23 @@ export default function EventDetailModal({
           {/* Canvas deep link */}
           {ev.htmlUrl && <ActionLink href={ev.htmlUrl} accent={accent} icon={ExternalLink} label="Open in Canvas" />}
 
-          {/* Color — mirrors the calendar's right-click recolor, which mobile can't reach */}
+          {/* Color — mirrors the calendar's right-click recolor, which mobile can't reach.
+              Applies on the spot: there is no save button on a detail view to apply it. */}
           {onRecolor && (
             <div>
-              <Label icon={Pencil}>Color</Label>
-              <input type="color" value={toHexInput(colorOverride || ev.color)} onChange={e => onRecolor(ev.id, e.target.value)}
-                     aria-label="Event color"
-                     style={{ width: 46, height: 28, padding: 0, border: '1px solid var(--border)', borderRadius: 7, background: 'none', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Label icon={Pencil}>Color</Label>
+                {colorOverride && (
+                  <button type="button" onClick={() => onRecolor(ev.id, null)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, padding: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
+                    Use original color
+                  </button>
+                )}
+              </div>
+              <ColorSwatches value={colorOverride || ev.color} onChange={c => onRecolor(ev.id, c)}
+                             label="Color this event" />
             </div>
           )}
         </div>
@@ -376,6 +395,15 @@ export default function EventDetailModal({
           {onNewEvent && (
             <FooterButton icon={CalendarPlus} label="New event"
                           onClick={() => { onNewEvent(ev.start ?? null); handleClose() }} />
+          )}
+
+          {/* Stays open on purpose, unlike the actions around it: this one is a
+              toggle, and closing the popup would hide the badge that confirms it
+              took. */}
+          {onToggleImportant && (
+            <FooterButton icon={Star} iconFilled={important} highlight={important}
+                          label={important ? 'Not important' : 'Mark important'}
+                          onClick={() => onToggleImportant(ev.id)} />
           )}
 
           {hidden
@@ -423,11 +451,6 @@ export default function EventDetailModal({
       </div>
     </div>
   )
-}
-
-/** `<input type="color">` only accepts #rrggbb, so anything else has to fall back. */
-function toHexInput(value) {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : '#3a6fa8'
 }
 
 /**
@@ -481,20 +504,27 @@ function solid(accent) {
   return typeof accent === 'string' && accent.startsWith('#') ? accent : '#3a6fa8'
 }
 
-function FooterButton({ icon: Icon, label, onClick, danger }) {
+/**
+ * `highlight` is for the on state of a toggle — the button has to say which way
+ * round it currently is, which a plain outlined row cannot.
+ */
+function FooterButton({ icon: Icon, label, onClick, danger, highlight, iconFilled }) {
+  const amber = 'var(--amber, #f59e0b)'
+  const idle  = highlight ? 'rgba(245,158,11,.1)' : 'transparent'
   return (
     <button onClick={onClick}
+            aria-pressed={highlight === undefined ? undefined : !!highlight}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '9px 14px', borderRadius: 10, cursor: 'pointer',
-              border: '1px solid var(--border)', background: 'transparent',
-              color: danger ? 'var(--red)' : 'var(--text-2)',
+              border: `1px solid ${highlight ? amber : 'var(--border)'}`, background: idle,
+              color: danger ? 'var(--red)' : highlight ? amber : 'var(--text-2)',
               fontFamily: 'inherit', fontSize: '0.8rem', fontWeight: 600,
               transition: 'background .13s, border-color .13s',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(239,68,68,.08)' : 'var(--surface2)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
-      <Icon size={13} /> {label}
+            onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(239,68,68,.08)' : highlight ? 'rgba(245,158,11,.18)' : 'var(--surface2)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = idle }}>
+      <Icon size={13} fill={iconFilled ? 'currentColor' : 'none'} /> {label}
     </button>
   )
 }

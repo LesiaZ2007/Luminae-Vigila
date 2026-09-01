@@ -677,6 +677,7 @@ export default function ClassesPanel({
   onAdoptCourse,
   onTodoClick,
   onToggleTodo,
+  onDeleteTodo,
   onAddTask,
   onRescheduleTask,
   onEventClick,
@@ -687,6 +688,9 @@ export default function ClassesPanel({
   onTagSession,
   onSyncCanvas,
   onOpenCanvasSettings,
+  // Off while a modal is open above the tab, so the month calendar's arrow keys
+  // don't page underneath one. ANDed with this panel's own popups below.
+  arrowNavEnabled = true,
   isMobile = false,
 }) {
   // One clock for the whole panel, ticking once a minute. Per-card intervals would
@@ -841,6 +845,13 @@ export default function ClassesPanel({
     else                            setDetailAssign(item.ref)
   }
 
+  /* Only tasks. An assignment lives in Canvas — deleting it here would mean deleting
+     it there, which this tab has no business doing — and an exam is a calendar event
+     with its own detail view. */
+  function deleteItem(item) {
+    if (item.kind === 'task') onDeleteTodo?.(item.ref.id)
+  }
+
   function toggleItem(item) {
     if (item.kind === 'task')            onToggleTodo?.(item.ref.id)
     else if (item.kind === 'assignment') onToggleAssignment?.(item.ref.id)
@@ -980,6 +991,8 @@ export default function ClassesPanel({
                 todayStr={todayStr}
                 onSelectItem={openItem}
                 onToggleItem={toggleItem}
+                onDeleteItem={onDeleteTodo ? deleteItem : undefined}
+                arrowNavEnabled={arrowNavEnabled && !detailAssign}
                 onReschedule={onRescheduleTask ? (item, date) => onRescheduleTask(item.ref, date) : undefined}
                 isMobile={isMobile}
               />

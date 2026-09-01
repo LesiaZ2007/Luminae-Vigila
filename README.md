@@ -34,6 +34,11 @@ Works fully offline without an account. Sign in to sync across devices or manual
   - Thresholds are deliberately conservative — roughly 90 minutes before the first line appears, more on mobile where narrow columns wrap the title further. A single clipped half-line of grey text reads as a rendering bug; showing nothing reads as a normal calendar
   - Linked task rows are subtracted from the budget, capped at 6 lines, and all-day events are skipped (their lane is a fixed short row laid out horizontally)
 - **Overlapping events** — when events start at the same time the shorter one is indented; same-duration events get a stable stagger so both are always visible
+- **Flag an event as important** — mark the one thing on a crowded day that must not be missed, from the event's detail view. An important event gets an amber ring, a small star beside its title, and it **breaks a few pixels out of its column and sits on top of whatever it overlaps** — the events underneath keep their own width, so they stay readable rather than being covered
+  - Stored in `eventPrefs` alongside hide and recolor, keyed by event id — so it works for *every* source. A Google invite, a Canvas due date, and a class period can all be flagged even though none of them are yours to edit, and the flag rides the existing sync and backup
+  - The break-out is negative margin on FullCalendar's harness, not a wider column. FullCalendar has already packed each overlapping cluster into columns, and taking width *from* the neighbours would be the ordinary layout doing what it always does. Overhanging them is what makes the block read as lifted rather than merely bigger
+  - The ring lives on the event and so appears in every view — month, week, day, and the all-day row. The break-out lives on the harness and so exists only in the time grid, which is the only place events actually collide
+  - Toggling it leaves the popup open, unlike the actions around it: it's a toggle, and closing would hide the badge that confirms it took
 - **Recurring event edit scope** — clicking a repeating event asks whether to edit *this occurrence only* or *all events in the series*; choosing "all" reopens the full form pre-populated with the original recurrence config (type, days, end date) and the series start date so every occurrence is regenerated
 - **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
 
@@ -45,7 +50,11 @@ On mobile a tap used to only lift the event to the front of its overlap column �
 
 Tapping used to drop straight into the edit form, which is the wrong default: most taps are *"what is this / where is it / when does it end"*, not *"change it"*. A form also answers those questions badly — a column of inputs reads as work to do rather than information to take in, and the thing you wanted is one line buried among eight controls.
 
-The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a color picker — mobile has no right-click, so this is the only way to reach the recolor that desktop gets from the calendar's context menu.
+The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Mark important**, **Hide/Unhide**, **Delete** (two-press confirm), plus a color picker — mobile has no right-click, so this is the only way to reach the recolor that desktop gets from the calendar's context menu. It is the shared swatch grid, not a native color input; see **Event Recolor** for why that matters.
+
+**A task chip on the calendar gets a menu, not the detail view and not the form.** An event has a lot to read; a task on a calendar has a title and a due date, and what you almost always want is to tick it off. So clicking one opens three rows — **Mark done**, **Edit task**, **Delete task** — anchored to the chip, with the calendar still readable behind it. Two things fall out of that: it no longer yanks the nav across to the To-Do tab, because the point of clicking a task where it sits is to deal with it *without* leaving the calendar; and **Mark done** ticks off the occurrence you clicked, not the series, since a repeating task records completion per date. Delete removes the whole task, series included — the same thing the task list's trash icon does; dropping a single occurrence is a different operation and belongs in the form.
+
+Right-click on a task chip now opens that same menu. It used to open the **recolor** popover, because a task chip has no `source` and so passed for a user event — but that was always a dead end: a task takes its colour from its category, and the per-event override it wrote is a preference the task list never reads.
 
 **Imported events get the same treatment.** Google and both Canvas feeds used to answer a tap with a toast, which can only ever be a line of text — yet those are precisely the events carrying a location and a description worth reading. They now open the same view, minus Edit and Delete (they belong to Google and Canvas), plus **Open in Canvas** where a deep link exists. A source badge marks them read-only, and it's suppressed when the heading already says the same thing.
 
@@ -284,11 +293,14 @@ The tab is one scrolling page: a **coursework month** at the top — every deadl
 
 The cards answer *"what is the state of Physics?"*. They cannot answer the question that crosses classes — *"what is coming at me, and when?"* — because finding out that three things land on Thursday means opening five cards and holding five lists in your head. So the month grid is what the tab opens on, and the cards sit **underneath it on the same page** rather than behind a switch: *"Thursday is brutal"* is followed immediately by *"what* is *all that?"*, and a tab switch would make that a round trip.
 
-- **Exams, Canvas assignments and your own class tasks**, colour-coded by class, each chip clicking through to the detail view it already had — the task editor, the assignment modal, the event detail. It's a *view*, not a fourth place coursework can be edited
+- **Exams, Canvas assignments and your own class tasks**, colour-coded by class. An assignment or an exam chip clicks through to the detail view it already had — the assignment modal, the event detail. It's a *view*, not a fourth place coursework can be edited
+- **A task chip opens a small menu instead: done, edit, delete.** Clicking one used to go straight to the task editor, which is the wrong default for the same reason it was wrong for events — most clicks on a task are *"done"*, and that was the one thing the form made expensive. Delete wasn't reachable from the grid at all. The menu grows out of the chip you clicked rather than opening at the pointer, which on a dense grid is what connects it to the right task. Editing is still the existing task editor, one click inside the menu. An assignment keeps its old behaviour: deleting it here would mean deleting it in Canvas, which this tab has no business doing
 - **Ordinary class meetings are deliberately absent.** A calendar of every lecture is the Calendar tab; here forty recurring meetings would bury the four things that actually have deadlines
 - **A strip under the grid shows the week ahead.** At rest it's **Coming up** — the next 7 days, each labelled *Today*, *Tomorrow* or *Fri, Mar 6*, with only the days that actually have something on them: a week with work on two days should be two rows, not seven with five apologies. A single day was too narrow a default under a grid showing a whole month — *"nothing due today"* is a poor answer when the useful one is that two things land tomorrow
 - **Overdue work leads the strip**, above everything upcoming, because it has no day left to belong to. Filing it under the date it *was* due puts it behind you on a list about what's ahead — exactly where it gets forgotten
-- **Click a day to narrow to it**, which is what makes `+2 more` and the phone's dots readable, and is where a day gets worked rather than glanced at. Click it again, or hit **Coming up**, to widen back out. Tick a task or an assignment off from either view. An exam has no checkbox: it isn't something you complete, it happens to you
+- **Click a day and it floats above the grid**, anchored to its own cell, listing everything due that day. It also narrows the strip below to the same day — the two never disagree, so dismissing the panel loses nothing. The panel exists because the strip alone wasn't enough: on anything short of a tall desktop it's below the fold, so clicking Thursday looked like it did nothing at all. On a phone it's worse, where the cells are colour dots and the strip is the only thing that *names* them. Tick a task or an assignment off from the panel, the strip, or the grid. An exam has no checkbox: it isn't something you complete, it happens to you. Click the day again, close the panel, or hit **Coming up** to widen back out — and a panel is dismissed when the month changes under it, since it belongs to a cell that just left
+- **The month slides rather than snapping.** Changing months used to repaint on the same frame as the click, which reads as a flicker rather than a movement — nothing told you whether you'd gone forwards or back. Now the grid leaves in the direction you pushed it, the content swaps at the midpoint while it's faded out, and the new month arrives from the other side. Only the grid moves; the nav and the weekday header are fixed furniture, and sliding those would make the whole tab lurch. It reuses the calendar tab's own `.cal-nav-*` animations and timings verbatim (140ms out, 260ms in) because this is the same gesture in two places and shouldn't feel like two different apps
+- **Swipe, trackpad, and ← / → all page the month.** A horizontal drag of at least 60px, a horizontal wheel flick, or the arrow keys. A mostly-vertical drag is left alone so the tab can still scroll, the trackpad is rate-limited so one momentum flick doesn't skip three months, and the arrow keys stand down for modifier combos, for any focused text field, and while a modal is open above the tab — otherwise typing a class name would page the calendar underneath the form
 - **An empty week says when the next thing lands** — *"Nothing due in the next 7 days. Next up Fri, Mar 20."* Without that, a clear week reads as *no work exists* when the truth is it's a fortnight out
 - **Overdue is a red dot on the day and a red mark on the chip.** Completed work is never overdue, however old
 - **A count of what's still outstanding in the month on screen** — the number that says whether this month is calm or brutal, which no single cell can
@@ -588,6 +600,11 @@ A full rich-text notepad, in the same place as everything else. Press `W` anywhe
   - A note that is *only* an image previews as "Image" rather than a blank card, and its reminder push says "Image" rather than sending an empty body.
 - **Link to a course, event, or task** — attach a note to a Canvas course, calendar event, or open task. The linked item's name appears on the note's meta bar and a link icon shows in the list row.
 - **Soft delete with undo** — deleting moves a note to **Trash** and raises an undo toast. Trashed notes are restorable or permanently deletable from the Trash filter, and are purged automatically after **30 days**. Because the trash flag syncs, deleting on one device removes it on the others too.
+- **Empty notes delete themselves** — pressing `W` (or **New**) creates the note immediately, which is what makes quick capture feel instant, but it also meant wandering off without typing left an "Untitled note" in the list forever. Closing a note that is still blank now removes it outright.
+  - **Removed, not trashed.** There is nothing in it to undo, and an undo toast for a note with no content is noise. Blanks left over from before this existed are cleared on load.
+  - **"Empty" is strict on purpose.** A tag, a reminder, a link, a star, a pin, or a pasted image all count as content even when the body is blank — every one of those is something you did deliberately, and throwing the note away for it would be a nasty surprise. What this catches is the note nobody wrote.
+  - **Runs a tick late, deliberately.** The editor flushes its pending autosave from an unmount cleanup, and that flush is what decides whether the note is really empty — checking first would delete a note whose last keystrokes were still inside the 400 ms debounce.
+  - Every way of closing a note goes through the same path (picking another, going back to the list, creating one, leaving the Notes tab), because they all move the active note id — so no caller has to remember.
 - **Autosave** — the body saves 400 ms after you stop typing, and flushes on note switch and on unmount so nothing is lost mid-sentence. A "Saved" / "2m ago" indicator sits in the meta bar.
 - **Search integration** — a **Notes** scope in the search popup, plus notes in "All" results. Titles, body text, and tags are all searched; clicking a result opens that note. Notes ignore the upcoming/done status filter since they have no completion state.
 - **Import / Export** — notes are included in the JSON backup and in JSON import (with the same skip / replace / keep-both duplicate handling as events and tasks). An export containing only notes is a valid import file.
@@ -613,6 +630,7 @@ Tasks already had a category *and* a separate optional link to a class, and neit
 - **A task filed under a class no longer shows the class chip twice.** The category already names the course in its own color; the chip stays for the older shape, where a task has an ordinary category *and* a class link
 - **A deleted or disabled class leaves its tasks intact.** They point at a category that no longer resolves, so the row simply renders without a category chip — the same thing an unrecognised stored category has always done, rather than an error
 - If you hand-made a category whose id starts with `class:`, yours wins rather than being silently shadowed
+- **A new task inherits the category you're filtered to.** Narrow the list to one chip and hit **Add**, and that category is already selected — you were looking at Physics, so that's what the new task is for. With two or more chips active there is no one answer, so it falls back to the usual default, which deliberately never auto-picks a class
 
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
@@ -814,6 +832,36 @@ The glow is **blurred and spread, not offset**. Hard `0 -1px` / `0 1px` shadows 
 - Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
 - Select from 10 preset swatches — change applies immediately and persists across sessions
 - Google Calendar and Canvas events cannot be recolored
+
+**The color control is the same grid everywhere** — `src/components/ColorSwatches.js`,
+which also owns the palette so the three entry points cannot drift apart. It replaced
+two pickers that were both poor on a phone. The detail view used a bare
+`<input type="color">`, which hands the whole job to the OS color wheel: it paints as a
+black chip against the app's own palette, looks nothing like the rest of the chrome, and
+answers *"which of my ten colors is this"* with a gradient square. The event modal's own
+swatch row was 26px circles in a wrap, a tap target well under half what a thumb needs.
+The cells are now a `minmax(44px, 1fr)` grid and the **whole padded cell** is the target,
+not the dot inside it — which is what buys the touch size without making the dots
+cartoonish on a desktop. Selection reads as a ring *and* a tick, because a ring alone is
+subtle in a ten-color grid.
+
+**Color is now part of creating an event, not just editing one.** The row used to be
+gated on editing, and the calendar's right-click recolor is explicitly disabled on touch
+— so on a phone there was no way to color a new event at all.
+
+**Where the color lives.** An event the app stores owns its own `color` field, and that
+is what the modal's picker edits — so the choice is saved with the event like every other
+field. `eventPrefs` overrides stay the mechanism for imported Google and Canvas events,
+which have nowhere to keep a color of their own, and for the calendar's right-click
+popover. The two used to be able to disagree: an override wins at render time, so editing
+the stored color underneath a stale override looked like it did nothing. Saving the modal
+now clears any override on that event, handing authority back to the event itself.
+
+**`null` means "follow the category", and that distinction matters.** An untouched event
+stores its category's color, so seeding the picker with that value verbatim would quietly
+promote it to a deliberate override — and then changing the category would keep the old
+hue. The form tracks an explicit pick separately, which is why changing the category
+still recolors an event you never hand-colored, and stops doing so the moment you do.
 
 ### 🗓 Date & Time Popovers Stay On Screen
 
@@ -1272,7 +1320,9 @@ src/
 │   ├── TodoPanel.js                  # To-do list panel (sidebar strip + full-page)
 │   ├── CustomListPanel.js            # Custom list switcher tabs + checklist body
 │   ├── ClassesPanel.js               # My Classes tab — coursework month + one card per class
-│   ├── ClassCalendar.js              # The coursework month grid + selected-day strip
+│   ├── ClassCalendar.js              # The coursework month grid + floating day + strip
+│   ├── TaskActionMenu.js             # Done / edit / delete for a task clicked on a calendar
+│   ├── ColorSwatches.js              # The shared event colour grid + the event palette
 │   ├── ClassRemindersEditor.js       # Per-class reminder rules (tasks / exams)
 │   ├── AssignmentRow.js              # One Canvas assignment, as a row
 │   ├── StudyTimeCard.js              # Focus-timer hours per course, this week vs last

@@ -721,6 +721,39 @@ select option {
   z-index: 10 !important;
 }
 
+/* ── Important events ───────────────────────────────────────────────────────
+   Flagged from the event's detail popup, stored in eventPrefs.important.
+
+   Two parts, deliberately: the ring is on the event and works in every view
+   (month, week, day, the all-day row), while the break-out is on the harness
+   and only exists in the time grid, where events actually collide.
+
+   The break-out is a few pixels of negative margin rather than a wider column.
+   FullCalendar has already packed the cluster into columns; nudging the edges
+   out lets the important block sit *over* its neighbours while they keep their
+   own width, so they stay readable underneath instead of being covered. */
+.fc .lv-important-event {
+  outline: 2px solid var(--amber, #f59e0b);
+  outline-offset: -2px;
+  /* Own shadow rather than the hairline gap the columns mode gives everything —
+     it is what makes the block read as lifted off the ones it covers. */
+  box-shadow: 0 2px 9px rgba(0,0,0,.32), 0 0 0 1px var(--surface);
+  /* Month view and the all-day row have no harness to raise. */
+  position: relative;
+  z-index: 4;
+}
+
+.lv-overlap-columns .fc .lv-important-harness,
+.lv-overlap-cascade .fc .lv-important-harness {
+  z-index: 6 !important;
+}
+/* Inset only: a harness with nothing beside it already spans its column, and
+   widening it would just hang the block over the day divider for no reason. */
+.lv-overlap-columns .fc .lv-important-harness.fc-timegrid-event-harness-inset {
+  margin-left: -6px;
+  margin-right: -6px;
+}
+
 /* Hidden (semi-transparent) Google Calendar events */
 .fc .lv-hidden-event { opacity: 0.38 !important; filter: grayscale(0.2); }
 .fc .lv-hidden-event:hover { opacity: 0.6 !important; filter: none; }
