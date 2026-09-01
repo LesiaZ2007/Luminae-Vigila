@@ -20,8 +20,9 @@
  *   categories    — event categories, for the colored category chip
  *   colorOverride — per-event color from eventPrefs, if the user set one
  *   hidden        — whether this event is currently hidden
+ *   important     — whether this event is flagged important (also from eventPrefs)
  *   onEdit, onDelete, onClose
- *   onHide, onUnhide, onRecolor — omit to leave the action out
+ *   onHide, onUnhide, onRecolor, onToggleImportant — omit to leave the action out
  *   allNotes, onOpenNote        — linked notes, same contract as EventModal
  */
 
@@ -29,6 +30,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   X, Pencil, Trash2, MapPin, ExternalLink, Clock, CalendarDays, Bell,
   Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus, GraduationCap,
+  Star,
 } from 'lucide-react'
 import { describeLocation } from '@/lib/maps'
 import { toYMDLocal }       from '@/lib/calendarView'
@@ -170,8 +172,8 @@ function ReadonlyBlock({ children }) {
 }
 
 export default function EventDetailModal({
-  event, categories = [], colorOverride, hidden = false,
-  onEdit, onDelete, onClose, onHide, onUnhide, onRecolor,
+  event, categories = [], colorOverride, hidden = false, important = false,
+  onEdit, onDelete, onClose, onHide, onUnhide, onRecolor, onToggleImportant,
   allNotes = [], onOpenNote,
   // Class schedule meetings only: call off this one occurrence, or drop a one-off
   // that was added. Omit either to leave the action out.
@@ -255,6 +257,12 @@ export default function EventDetailModal({
           {hidden && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-3)' }}>
               <EyeOff size={12} /> Hidden from the calendar
+            </div>
+          )}
+
+          {important && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, color: 'var(--amber, #f59e0b)' }}>
+              <Star size={12} fill="currentColor" /> Important — sits on top of anything it overlaps
             </div>
           )}
 
@@ -389,6 +397,15 @@ export default function EventDetailModal({
                           onClick={() => { onNewEvent(ev.start ?? null); handleClose() }} />
           )}
 
+          {/* Stays open on purpose, unlike the actions around it: this one is a
+              toggle, and closing the popup would hide the badge that confirms it
+              took. */}
+          {onToggleImportant && (
+            <FooterButton icon={Star} iconFilled={important} highlight={important}
+                          label={important ? 'Not important' : 'Mark important'}
+                          onClick={() => onToggleImportant(ev.id)} />
+          )}
+
           {hidden
             ? onUnhide && <FooterButton icon={Eye}    label="Unhide" onClick={() => { onUnhide(ev.id); handleClose() }} />
             : onHide   && <FooterButton icon={EyeOff} label="Hide"   onClick={() => { onHide(ev.id);   handleClose() }} />}
@@ -487,20 +504,27 @@ function solid(accent) {
   return typeof accent === 'string' && accent.startsWith('#') ? accent : '#3a6fa8'
 }
 
-function FooterButton({ icon: Icon, label, onClick, danger }) {
+/**
+ * `highlight` is for the on state of a toggle — the button has to say which way
+ * round it currently is, which a plain outlined row cannot.
+ */
+function FooterButton({ icon: Icon, label, onClick, danger, highlight, iconFilled }) {
+  const amber = 'var(--amber, #f59e0b)'
+  const idle  = highlight ? 'rgba(245,158,11,.1)' : 'transparent'
   return (
     <button onClick={onClick}
+            aria-pressed={highlight === undefined ? undefined : !!highlight}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '9px 14px', borderRadius: 10, cursor: 'pointer',
-              border: '1px solid var(--border)', background: 'transparent',
-              color: danger ? 'var(--red)' : 'var(--text-2)',
+              border: `1px solid ${highlight ? amber : 'var(--border)'}`, background: idle,
+              color: danger ? 'var(--red)' : highlight ? amber : 'var(--text-2)',
               fontFamily: 'inherit', fontSize: '0.8rem', fontWeight: 600,
               transition: 'background .13s, border-color .13s',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(239,68,68,.08)' : 'var(--surface2)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
-      <Icon size={13} /> {label}
+            onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(239,68,68,.08)' : highlight ? 'rgba(245,158,11,.18)' : 'var(--surface2)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = idle }}>
+      <Icon size={13} fill={iconFilled ? 'currentColor' : 'none'} /> {label}
     </button>
   )
 }
