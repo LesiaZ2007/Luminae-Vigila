@@ -2343,6 +2343,12 @@ export default function Home() {
     return markers
   }, [customLists])
 
+  function markImportant(list) {
+    return list.map(e => (eventPrefs[e.id]?.important
+      ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
+      : e))
+  }
+
   /* The important flag is stamped on at the end rather than inside each of the
      source-specific memos above: it is keyed by event id in eventPrefs, applies
      to every source alike, and doing it once here means a new source picks it up
@@ -3437,6 +3443,8 @@ export default function Home() {
           categories={eventCategories}
           colorOverride={eventPrefs[detailEvent.id]?.color ?? null}
           hidden={!!eventPrefs[detailEvent.id]?.hidden}
+          important={!!eventPrefs[detailEvent.id]?.important}
+          onToggleImportant={toggleImportantEvent}
           onEdit={ev => { setDetailEvent(null); setEventModal({ open: true, event: ev, date: null }) }}
           onDelete={deleteEvent}
           onHide={hideEvent}

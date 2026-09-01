@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash,
   notePlainText, noteDisplayTitle, notePreview, noteHasImage, sortNotes, noteMatches,
-  TRASH_RETENTION_MS, sharedTextToHtml,
+  TRASH_RETENTION_MS, sharedTextToHtml, isNoteEmpty, dropEmptyNotes,
 } from './notes'
 
 const at = iso => iso
@@ -246,5 +246,65 @@ describe('sharedTextToHtml', () => {
     expect(sharedTextToHtml('')).toBe('')
     expect(sharedTextToHtml('   ')).toBe('')
     expect(sharedTextToHtml(null)).toBe('')
+  })
+})
+
+describe('isNoteEmpty', () => {
+  const empty = () => makeNote()
+
+  it('treats a freshly created note as empty', () => {
+    expect(isNoteEmpty(empty())).toBe(true)
+  })
+
+  it('treats an editor-flavoured blank document as empty', () => {
+    // Tiptap never hands back a truly empty string — a cleared document is a
+    // single empty paragraph, and that is what the autosave writes.
+    expect(isNoteEmpty(makeNote({ html: '<p></p>' }))).toBe(true)
+    expect(isNoteEmpty(makeNote({ html: '<p><br></p>' }))).toBe(true)
+    expect(isNoteEmpty(makeNote({ html: '<p>&nbsp;</p>' }))).toBe(true)
+  })
+
+  it('is not empty once there is body text or a title', () => {
+    expect(isNoteEmpty(makeNote({ html: '<p>hi</p>' }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ title: 'Chem' }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ title: '   ' }))).toBe(true)
+  })
+
+  it('counts an image-only note as content', () => {
+    expect(isNoteEmpty(makeNote({ html: '<p><img src="/x.png"></p>' }))).toBe(false)
+  })
+
+  it('counts deliberate metadata as content', () => {
+    expect(isNoteEmpty(makeNote({ tags: ['chem'] }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ reminder: { at: '2026-01-01T09:00:00' } }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ linkedTo: { type: 'event', id: 'e1', label: 'Lab' } }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ starred: true }))).toBe(false)
+    expect(isNoteEmpty(makeNote({ pinned: true }))).toBe(false)
+  })
+
+  it('says no for a missing note rather than claiming it is empty', () => {
+    expect(isNoteEmpty(null)).toBe(false)
+    expect(isNoteEmpty(undefined)).toBe(false)
+  })
+})
+
+describe('dropEmptyNotes', () => {
+  it('removes empty notes and keeps the rest', () => {
+    const kept = dropEmptyNotes([
+      makeNote({ id: 'a' }),
+      makeNote({ id: 'b', html: '<p>real</p>' }),
+      makeNote({ id: 'c', html: '<p></p>' }),
+    ])
+    expect(kept.map(n => n.id)).toEqual(['b'])
+  })
+
+  it('leaves trashed notes alone, empty or not', () => {
+    const trashed = makeNote({ id: 't', trashedAt: '2026-01-01T00:00:00Z' })
+    expect(dropEmptyNotes([trashed]).map(n => n.id)).toEqual(['t'])
+  })
+
+  it('tolerates nullish input', () => {
+    expect(dropEmptyNotes(null)).toEqual([])
+    expect(dropEmptyNotes(undefined)).toEqual([])
   })
 })
