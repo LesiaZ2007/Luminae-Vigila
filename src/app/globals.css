@@ -725,6 +725,13 @@ select option {
 .fc .lv-hidden-event { opacity: 0.38 !important; filter: grayscale(0.2); }
 .fc .lv-hidden-event:hover { opacity: 0.6 !important; filter: none; }
 
+/* Completed tasks stay on the calendar as a record of the term rather than
+   disappearing, so they have to recede: struck through (in renderEventContent) and
+   faded here. Hover brings one back to near-full strength, because "what was that
+   thing I finished" is a real question and a 45%-opacity title is hard to read. */
+.fc .lv-done-event { opacity: 0.45 !important; filter: grayscale(0.35); }
+.fc .lv-done-event:hover { opacity: 0.85 !important; filter: none; }
+
 .fc .fc-day-today .fc-col-header-cell-cushion { color: var(--blue); }
 .fc .fc-day-today.fc-col-header-cell { background: var(--blue-bg); }
 

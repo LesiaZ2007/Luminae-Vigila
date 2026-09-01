@@ -2259,20 +2259,26 @@ export default function Home() {
     ...visibleCanvasIcsEvents,
     ...canvasAssignmentTasks,
     ...customListCalEvents,
-    ...todos.filter(t => !t.completed).flatMap(t => {
+    /* Completed tasks stay on the calendar instead of vanishing. A day you have
+       finished emptying out reads as "nothing was ever due here", which is the
+       opposite of the truth and makes the calendar a poor record of the term. They
+       render struck through and faded, so "done" is still obvious at a glance —
+       see `done` in extendedProps, which WeeklyCalendar styles on. */
+    ...todos.flatMap(t => {
       const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
       const instances = expandRecurringTodo(t)
+      const done = Boolean(t.completed)
       const calItems = instances.map(inst => ({
         id: `cal-todo-${inst.id}`, title: inst.title, start: inst.dueDate, allDay: true,
         color: todoCatColor,
-        extendedProps: { type: 'todo', todoId: t.id, priority: t.priority },
+        extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
       }))
       if (t.linkedEventId && !t.recurrence) {
         const ev = visibleEvents.find(e => e.id === t.linkedEventId)
         if (ev) calItems.push({
           id: `cal-linked-${t.id}`, title: `↳ ${t.title}`, start: (ev.start || '').slice(0, 10),
           allDay: true, color: todoCatColor,
-          extendedProps: { type: 'todo', todoId: t.id, priority: t.priority },
+          extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
         })
       }
       return calItems
@@ -2579,11 +2585,16 @@ export default function Home() {
 
   const nextEventToday = useMemo(() => {
     if (!mounted) return null
-    const todayStr    = clockTime.toISOString().slice(0, 10)
+    // Local, not UTC: event starts are naive local strings, so comparing them
+    // against a UTC date meant the card jumped to tomorrow every evening.
+    const todayStr    = toYMDLocal(clockTime)
     const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
-    const tomorrowStr = tomorrowDt.toISOString().slice(0, 10)
-    // Merge local + Google Calendar events for the sidebar preview
-    const allVisible = [...visibleEvents, ...visibleGoogleEvents]
+    const tomorrowStr = toYMDLocal(tomorrowDt)
+    // Merge local + Google Calendar events + class meetings for the sidebar
+    // preview. Class periods are the most predictable thing on a student's day,
+    // which is exactly why leaving them out made the card feel wrong: it would
+    // announce a 4pm club meeting while saying nothing about the 9am lecture.
+    const allVisible = [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents]
     // First: soonest remaining event today
     const todayNext = allVisible
       .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
@@ -2593,7 +2604,7 @@ export default function Home() {
     return allVisible
       .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
       .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
-  }, [visibleEvents, visibleGoogleEvents, clockTime, mounted])
+  }, [visibleEvents, visibleGoogleEvents, canvasClassEvents, clockTime, mounted])
 
   function timeUntil(start) {
     const diff = new Date(start) - clockTime
@@ -2716,10 +2727,13 @@ export default function Home() {
           )}
 
           {nextEventToday && (() => {
-            const todayStr   = clockTime.toISOString().slice(0, 10)
+            const todayStr   = toYMDLocal(clockTime)
             const isTomorrow = !nextEventToday.start?.startsWith(todayStr)
             const until      = isTomorrow ? null : timeUntil(nextEventToday.start)
             const label      = isTomorrow ? 'Tomorrow' : until ? `In ${until}` : null
+            // Where to be matters more than what it is called for a class period,
+            // so the room rides along when the item carries one.
+            const where      = nextEventToday.location || nextEventToday.extendedProps?.location || ''
             return label ? (
               <div style={{ marginTop: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(96,165,250,.14)', borderLeft: '2.5px solid rgba(96,165,250,.5)' }}>
                 <div style={{ fontSize: '0.6rem', color: 'rgba(147,197,253,.6)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
@@ -2728,6 +2742,11 @@ export default function Home() {
                 <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {nextEventToday.title}
                 </div>
+                {where && (
+                  <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.6)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {where}
+                  </div>
+                )}
               </div>
             ) : null
           })()}

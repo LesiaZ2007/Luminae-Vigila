@@ -37,6 +37,18 @@ Works fully offline without an account. Sign in to sync across devices or manual
 - **Recurring event edit scope** — clicking a repeating event asks whether to edit *this occurrence only* or *all events in the series*; choosing "all" reopens the full form pre-populated with the original recurrence config (type, days, end date) and the series start date so every occurrence is regenerated
 - **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
 
+### ✅ Completed tasks stay on the calendar, struck through
+
+A task you tick off used to disappear from the calendar entirely. That makes the calendar a poor record of your term: a week you actually got through empties out and reads as *nothing was ever due here*, which is the opposite of what happened — and there was no way to check from the calendar whether you'd already handled the thing due Tuesday.
+
+Completed tasks now stay in the **Tasks** row where they always were, **struck through and faded**, and come back to near-full opacity on hover so you can still read one.
+
+- **Only the text is struck through**, not the priority dot or the `G` source badge — a line drawn across a coloured dot reads as a rendering glitch rather than as "done"
+- **The fade is on the whole block** (`.lv-done-event`, alongside the existing `.lv-hidden-event`) so the background colour recedes too, not just the label. It also gets a light desaturation, which is what keeps a finished red high-priority task from still shouting
+- **A recurring task is done or not as a whole**, since completion is one flag on the task rather than per-occurrence. Every generated occurrence therefore shows the same state
+- **This is the calendar only.** The Tasks tab, the class coursework list, and `/today` already collapse or hide completed work — those are working lists, where the point is what's left, and a growing pile of struck-through rows is exactly the clutter they're built to avoid. The calendar is a record, so it keeps them
+- **Canvas assignments marked done and checked-off custom-list items still drop off the calendar.** Those aren't tasks in the app's own vocabulary, and a term of finished Canvas assignments is a lot of grey text — worth revisiting, but a separate decision
+
 ### 👁 Tap an event, get an answer — not a form
 
 Tapping or long-pressing an event opens a **detail view**, on every device. Its footer offers **Edit this event** and **New event** side by side — the two are easy to confuse once a popup is already open on top of an existing event, so both are named explicitly rather than left to inference. **New event** starts on the day you were looking at, not today.
@@ -850,6 +862,15 @@ The full grid spends a third of its height on hours you're asleep for, which squ
 - Only the time-grid views have a time axis, so it's inert in month view; it still records the preference for when you switch back
 - The preference is saved the moment you toggle rather than on the next navigation. Changing the slot range doesn't renavigate, so FullCalendar has no reason to fire `datesSet`, and waiting for it would lose the setting if you changed tabs straight afterwards
 - Anything starting before 7am or ending after 10pm is outside the visible window in this mode — switch back to the full grid to see it
+
+### ⏭ Up next in the sidebar — classes included
+
+Under the sidebar clock sits a small card naming **the next thing you have to be at**: *In 12m — Organic Chemistry*, with the room underneath when the item carries a location. It looks at the rest of today first, and falls back to the first timed thing tomorrow (labelled *Tomorrow*) so the card isn't blank all evening.
+
+- **Class periods count.** The card originally merged only your own events and Google Calendar, which made it quietly wrong for the item most likely to be next: it would announce a 4pm club meeting while saying nothing about the 9am lecture. Class schedule entries are already expanded into individual meetings for the calendar (`canvasClassEvents` — cancellations dropped, one-offs and exams folded in), so the card now reads that same list. Anything hidden from the calendar is hidden here too, by construction
+- **The room rides along**, because *where* is the useful half of "you have Chem in 10 minutes". It's pulled from the event's own `location` or the class entry's, whichever is there
+- **All-day items are deliberately excluded.** "In 4h" is meaningless for something with no time, and an all-day marker would sit in the card all day pushing the real next thing out of it
+- **Today is decided locally, not in UTC.** The card used to compute today's date with `toISOString()`, which rolls over mid-evening for anyone west of UTC — so after about 8pm Eastern it would compare tonight's events against tomorrow's date, find nothing, and jump to the *Tomorrow* fallback while you still had an event to get to. It uses the local date now
 
 ### 📆 Mini Month Navigator *(desktop / tablet)*
 - Compact month grid in the sidebar for fast date jumping
