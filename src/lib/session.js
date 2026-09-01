@@ -1,7 +1,17 @@
 /**
  * Stateless JWT session management.
  * Sessions are stored in a signed, httpOnly cookie.
- * The cookie contains only { userId, expiresAt } — no sensitive data.
+ * The cookie contains only { userId, email, expiresAt } — no sensitive data.
+ *
+ * `email` rides along so /api/auth/me, which every page load calls before it can
+ * do anything else, can answer from the signed cookie instead of waking the
+ * database to re-read a column that cannot change. Neon bills compute time, and a
+ * query on every page load is a query that keeps the compute endpoint awake for
+ * every visit. It is the user's own address, already sitting in an httpOnly cookie
+ * the browser cannot read, so nothing is exposed by carrying it.
+ *
+ * Cookies issued before this existed have no `email` claim, so consumers must
+ * tolerate its absence rather than assume it — see /api/auth/me.
  */
 import 'server-only'
 import { SignJWT, jwtVerify } from 'jose'
@@ -37,10 +47,15 @@ export async function decrypt(token) {
   }
 }
 
-/** Write a new session cookie for the given userId. */
-export async function createSession(userId) {
+/**
+ * Write a new session cookie for the given userId.
+ *
+ * @param {string} userId
+ * @param {string} [email] Stored as a claim so /api/auth/me needs no query.
+ */
+export async function createSession(userId, email) {
   const expiresAt = new Date(Date.now() + MAX_AGE * 1000)
-  const token     = await encrypt({ userId, expiresAt: expiresAt.toISOString() })
+  const token     = await encrypt({ userId, email, expiresAt: expiresAt.toISOString() })
   const jar       = await cookies()
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -51,14 +66,18 @@ export async function createSession(userId) {
   })
 }
 
-/** Read and verify the current session.  Returns { userId } or null. */
+/**
+ * Read and verify the current session.
+ * Returns `{ userId, email }` or null. `email` is undefined on cookies issued
+ * before it became a claim.
+ */
 export async function getSession() {
   try {
     const jar     = await cookies()
     const token   = jar.get(COOKIE)?.value
     const payload = await decrypt(token)
     if (!payload?.userId) return null
-    return { userId: payload.userId }
+    return { userId: payload.userId, email: payload.email }
   } catch {
     return null
   }

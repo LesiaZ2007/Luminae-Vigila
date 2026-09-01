@@ -24,6 +24,20 @@
  * cost and abuse vector for no extra diagnostic value: a 401 loop and a dead
  * pinger both show up here as "last success was ages ago", and the fix starts the
  * same way either way.
+ *
+ * ## Why the heartbeat is optional
+ *
+ * Neon bills compute *time*, and a write is a write: stamping the heartbeat on
+ * every ping of a per-minute cron keeps the compute endpoint awake around the
+ * clock all by itself, which is the entire cost the reminder job now goes out of
+ * its way to avoid (see lib/reminderWindow). A diagnostic that costs more than the
+ * job it describes is not worth having, so `requireCron(req, path, {heartbeat:
+ * false})` authenticates without touching the database and the caller stamps it
+ * with `stampCronPing` on the ticks where it was doing real work anyway.
+ *
+ * The heartbeat then means "the cron last got through *and scanned* at …", which
+ * is still exactly what /api/push/status needs — it just has to allow for the
+ * scan cadence rather than the ping cadence.
  */
 import sql from '@/lib/db'
 import { ddlOnce } from '@/lib/ddlOnce'
@@ -40,14 +54,36 @@ function ensurePingTable() {
 }
 
 /**
- * Verify the Bearer token and record the heartbeat.
+ * Stamp the heartbeat for one cron path. Best-effort: a heartbeat failure must
+ * never fail the job it is describing.
+ *
+ * @param {string} path Identifier stored in `cron_pings`, e.g. 'reminders'.
+ */
+export async function stampCronPing(path) {
+  try {
+    await ensurePingTable()
+    await sql`
+      INSERT INTO cron_pings (path, last_success)
+      VALUES (${path}, NOW())
+      ON CONFLICT (path) DO UPDATE
+        SET last_success  = NOW(),
+            success_count = cron_pings.success_count + 1
+    `
+  } catch {}
+}
+
+/**
+ * Verify the Bearer token and, unless told otherwise, record the heartbeat.
  *
  * @param {Request} request
  * @param {string}  path  Identifier stored in `cron_pings`, e.g. 'reminders'.
+ * @param {{heartbeat?: boolean}} [opts] Pass `heartbeat: false` to authenticate
+ *   without any database access, and call `stampCronPing` yourself once the job
+ *   has decided it is doing real work this tick.
  * @returns {Promise<Response|null>} A 401/503 Response to return immediately,
  *   or null when the caller is authorised and should proceed.
  */
-export async function requireCron(request, path) {
+export async function requireCron(request, path, opts = {}) {
   const authHeader = request.headers.get('authorization') ?? ''
   const token      = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
 
@@ -64,17 +100,7 @@ export async function requireCron(request, path) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Best-effort: a heartbeat failure must never fail the job it is describing.
-  try {
-    await ensurePingTable()
-    await sql`
-      INSERT INTO cron_pings (path, last_success)
-      VALUES (${path}, NOW())
-      ON CONFLICT (path) DO UPDATE
-        SET last_success  = NOW(),
-            success_count = cron_pings.success_count + 1
-    `
-  } catch {}
+  if (opts.heartbeat !== false) await stampCronPing(path)
 
   return null
 }

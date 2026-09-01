@@ -16,6 +16,8 @@
 import { getSession }        from '@/lib/session'
 import { reapOrphanImages }  from '@/lib/noteImages'
 import { ddlOnce }           from '@/lib/ddlOnce'
+import { toUpsertRows }      from '@/lib/syncRows'
+import { invalidateReminderWindow } from '@/lib/reminderWindow'
 import sql                   from '@/lib/db'
 
 /**
@@ -38,16 +40,88 @@ const REAP_EVERY_MS = 60 * 60 * 1000 // 1 hour
  * something writes a timestamp once.
  *
  * This deliberately does *not* read the row's `updated_at` column, even though one
- * exists. POST replaces every row on every sync, so that column means "time of the
- * last full sync", not "time this event was edited" — an unrelated push from another
- * device would refresh it and let a stale copy outrank a real edit. Stamping at
- * insert instead freezes a value that then round-trips through the client unchanged,
- * so only an actual edit moves it.
+ * exists. That column tracks when the server last *wrote* the row, which is not the
+ * same question: a device pushing a collection it merged from the cloud can move it
+ * without anyone having edited anything. Stamping inside the JSONB instead freezes a
+ * value that then round-trips through the client unchanged, so only an actual edit
+ * moves it. (It used to be even further from the truth — POST rewrote every row on
+ * every sync, so `updated_at` meant "time of the last full sync" for the whole
+ * table. The set-based upsert below only writes rows that actually differ.)
  */
 function withFallbackTimestamp(item, nowIso) {
   return item.updatedAt ? item : { ...item, updatedAt: nowIso }
 }
 let lastReapAt = 0
+
+/**
+ * The synced collections, in the order the payload names them.
+ *
+ * `updatedAt` says whether the table carries an `updated_at` column — the two
+ * category tables never did (see schema.sql), and naming it in a SET clause for
+ * them would be an error rather than a no-op. `stamp` marks the collections whose
+ * rows get a fallback `updatedAt` inside their JSONB; see withFallbackTimestamp for
+ * why only those three.
+ */
+const COLLECTIONS = [
+  { key: 'events',          table: 'events',           updatedAt: true,  stamp: true  },
+  { key: 'todos',           table: 'todos',            updatedAt: true,  stamp: true  },
+  { key: 'todoCategories',  table: 'todo_categories',  updatedAt: false, stamp: false },
+  { key: 'eventCategories', table: 'event_categories', updatedAt: false, stamp: false },
+  { key: 'classSchedule',   table: 'class_schedule',   updatedAt: true,  stamp: false },
+  { key: 'studySessions',   table: 'study_sessions',   updatedAt: true,  stamp: false },
+  { key: 'customLists',     table: 'custom_lists',     updatedAt: true,  stamp: false },
+  { key: 'notes',           table: 'notes',            updatedAt: true,  stamp: false },
+]
+
+/**
+ * The two statements that make one table match one array.
+ *
+ * Both take the collection as a single JSONB parameter and let Postgres do the
+ * matching, instead of the previous delete-everything-then-insert-each-row. What
+ * that buys, in order of how much it matters:
+ *
+ *   1. `WHERE … data IS DISTINCT FROM EXCLUDED.data` — a row whose JSONB is
+ *      unchanged is not written. The old form rewrote every row of a collection on
+ *      every push, so a one-character note edit produced a new tuple for every note
+ *      the account owned, WAL for all of them, and that many dead tuples for
+ *      autovacuum to clean up afterwards.
+ *   2. Two statements instead of N+1. The Neon HTTP driver batches a transaction
+ *      into one round trip either way, but Postgres still parses, plans and
+ *      executes each statement, so the old form's cost grew with the user's
+ *      history rather than with what they changed.
+ *
+ * The DELETE is what makes this a replacement rather than a merge, which is the
+ * contract the client relies on: a row the payload does not mention has been
+ * deleted locally and must go. `NOT IN` over an empty payload is true for every
+ * row, so an empty array still clears the table — same as before.
+ *
+ * The table name is interpolated raw because a tagged template cannot parameterise
+ * an identifier. It comes from COLLECTIONS above and can never be request data.
+ */
+function replaceCollection(table, userId, rows, hasUpdatedAt) {
+  const t    = sql.unsafe(table)
+  const json = JSON.stringify(rows)
+  const setClause = sql.unsafe(
+    hasUpdatedAt ? 'data = EXCLUDED.data, updated_at = NOW()' : 'data = EXCLUDED.data',
+  )
+
+  return [
+    sql`
+      INSERT INTO ${t} (id, user_id, data)
+      SELECT x.id, ${userId}::uuid, x.data
+      FROM jsonb_to_recordset(${json}::jsonb) AS x(id text, data jsonb)
+      ON CONFLICT (id, user_id) DO UPDATE SET ${setClause}
+      WHERE ${t}.data IS DISTINCT FROM EXCLUDED.data
+    `,
+    sql`
+      DELETE FROM ${t}
+      WHERE user_id = ${userId}
+        AND id NOT IN (
+          SELECT x.id FROM jsonb_to_recordset(${json}::jsonb) AS x(id text, data jsonb)
+        )
+    `,
+  ]
+}
 
 function ensureSyncTables() {
   return ddlOnce('syncTables', () => sql.transaction([
@@ -101,29 +175,45 @@ export async function GET() {
 
   await ensureSyncTables()
 
-  const [evRows, tdRows, catRows, clsRows, prefRows, ssRows, clRows, nRows, evCatRows] = await Promise.all([
-    sql`SELECT data FROM events          WHERE user_id = ${userId}`,
-    sql`SELECT data FROM todos           WHERE user_id = ${userId}`,
-    sql`SELECT data FROM todo_categories WHERE user_id = ${userId}`,
-    sql`SELECT data FROM class_schedule  WHERE user_id = ${userId}`,
-    sql`SELECT data FROM event_prefs     WHERE user_id = ${userId}`,
-    sql`SELECT data FROM study_sessions  WHERE user_id = ${userId}`,
-    sql`SELECT data FROM custom_lists    WHERE user_id = ${userId}`,
-    sql`SELECT data FROM notes           WHERE user_id = ${userId}`,
-    sql`SELECT data FROM event_categories WHERE user_id = ${userId}`,
-  ])
+  /* One round trip for all nine collections.
+     This was nine concurrent queries. Same rows either way, but the Neon HTTP
+     driver sends each query as its own request, so a pull that reads a few hundred
+     small rows was opening nine of them — and an open tab pulls every few minutes
+     for as long as it is open. A UNION ALL tagged with the collection name costs one.
+     Safe as a single statement because ensureSyncTables above has already
+     guaranteed every one of these tables exists; a UNION fails whole, not
+     per-branch. */
+  const rows = await sql`
+    SELECT 'events'          AS kind, data FROM events           WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'todos'           AS kind, data FROM todos            WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'todoCategories'  AS kind, data FROM todo_categories  WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'eventCategories' AS kind, data FROM event_categories WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'classSchedule'   AS kind, data FROM class_schedule   WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'studySessions'   AS kind, data FROM study_sessions   WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'customLists'     AS kind, data FROM custom_lists     WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'notes'           AS kind, data FROM notes            WHERE user_id = ${userId}
+    UNION ALL
+    SELECT 'eventPrefs'      AS kind, data FROM event_prefs      WHERE user_id = ${userId}
+  `
 
-  return Response.json({
-    events:         evRows.map(r => r.data),
-    todos:          tdRows.map(r => r.data),
-    todoCategories: catRows.map(r => r.data),
-    classSchedule:  clsRows.map(r => r.data),
-    eventPrefs:     prefRows[0]?.data ?? {},
-    studySessions:  ssRows.map(r => r.data),
-    customLists:    clRows.map(r => r.data),
-    notes:          nRows.map(r => r.data),
-    eventCategories: evCatRows.map(r => r.data),
-  })
+  const out = {
+    events: [], todos: [], todoCategories: [], eventCategories: [],
+    classSchedule: [], studySessions: [], customLists: [], notes: [],
+  }
+  let eventPrefs = {}
+  for (const row of rows) {
+    if (row.kind === 'eventPrefs') eventPrefs = row.data ?? {}
+    else out[row.kind].push(row.data)
+  }
+
+  return Response.json({ ...out, eventPrefs })
 }
 
 export async function POST(request) {
@@ -142,85 +232,37 @@ export async function POST(request) {
   // partial data wipes. Only categories present in the request body are included.
   const queries = []
   const nowIso  = new Date().toISOString()
+  const payload = { events, todos, todoCategories, eventCategories, classSchedule, studySessions, customLists, notes }
 
-  if (Array.isArray(events)) {
-    queries.push(sql`DELETE FROM events WHERE user_id = ${userId}`)
-    for (const ev of events) {
-      if (!ev?.id) continue
-      const row = withFallbackTimestamp(ev, nowIso)
-      queries.push(sql`INSERT INTO events (id, user_id, data) VALUES (${ev.id}, ${userId}, ${JSON.stringify(row)})`)
-    }
+  for (const c of COLLECTIONS) {
+    const items = payload[c.key]
+    if (!Array.isArray(items)) continue          // absent means "unchanged" — don't touch the table
+    const rows = toUpsertRows(items, c.stamp ? (item => withFallbackTimestamp(item, nowIso)) : undefined)
+    queries.push(...replaceCollection(c.table, userId, rows, c.updatedAt))
   }
 
-  if (Array.isArray(todos)) {
-    queries.push(sql`DELETE FROM todos WHERE user_id = ${userId}`)
-    for (const td of todos) {
-      if (!td?.id) continue
-      const row = withFallbackTimestamp(td, nowIso)
-      queries.push(sql`INSERT INTO todos (id, user_id, data) VALUES (${td.id}, ${userId}, ${JSON.stringify(row)})`)
-    }
-  }
-
-  if (Array.isArray(todoCategories)) {
-    queries.push(sql`DELETE FROM todo_categories WHERE user_id = ${userId}`)
-    for (const cat of todoCategories) {
-      if (!cat?.id) continue
-      queries.push(sql`INSERT INTO todo_categories (id, user_id, data) VALUES (${cat.id}, ${userId}, ${JSON.stringify(cat)})`)
-    }
-  }
-
-  if (Array.isArray(classSchedule)) {
-    queries.push(sql`DELETE FROM class_schedule WHERE user_id = ${userId}`)
-    for (const cls of classSchedule) {
-      if (!cls?.id) continue
-      queries.push(sql`INSERT INTO class_schedule (id, user_id, data) VALUES (${cls.id}, ${userId}, ${JSON.stringify(cls)})`)
-    }
-  }
-
-  // eventPrefs is a single JSON object per user — upsert the whole thing
+  // eventPrefs is a single JSON object per user — upsert the whole thing. Guarded
+  // the same way as the collections above: an identical object is not rewritten.
   if (eventPrefs !== undefined && eventPrefs !== null && typeof eventPrefs === 'object') {
+    const json = JSON.stringify(eventPrefs)
     queries.push(sql`
       INSERT INTO event_prefs (user_id, data)
-      VALUES (${userId}, ${JSON.stringify(eventPrefs)})
-      ON CONFLICT (user_id) DO UPDATE SET data = ${JSON.stringify(eventPrefs)}, updated_at = NOW()
+      VALUES (${userId}, ${json})
+      ON CONFLICT (user_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+      WHERE event_prefs.data IS DISTINCT FROM EXCLUDED.data
     `)
-  }
-
-  if (Array.isArray(studySessions)) {
-    queries.push(sql`DELETE FROM study_sessions WHERE user_id = ${userId}`)
-    for (const ss of studySessions) {
-      if (!ss?.id) continue
-      queries.push(sql`INSERT INTO study_sessions (id, user_id, data) VALUES (${ss.id}, ${userId}, ${JSON.stringify(ss)})`)
-    }
-  }
-
-  if (Array.isArray(customLists)) {
-    queries.push(sql`DELETE FROM custom_lists WHERE user_id = ${userId}`)
-    for (const cl of customLists) {
-      if (!cl?.id) continue
-      queries.push(sql`INSERT INTO custom_lists (id, user_id, data) VALUES (${cl.id}, ${userId}, ${JSON.stringify(cl)})`)
-    }
-  }
-
-  if (Array.isArray(notes)) {
-    queries.push(sql`DELETE FROM notes WHERE user_id = ${userId}`)
-    for (const n of notes) {
-      if (!n?.id) continue
-      queries.push(sql`INSERT INTO notes (id, user_id, data) VALUES (${n.id}, ${userId}, ${JSON.stringify(n)})`)
-    }
-  }
-
-  if (Array.isArray(eventCategories)) {
-    queries.push(sql`DELETE FROM event_categories WHERE user_id = ${userId}`)
-    for (const c of eventCategories) {
-      if (!c?.id) continue
-      queries.push(sql`INSERT INTO event_categories (id, user_id, data) VALUES (${c.id}, ${userId}, ${JSON.stringify(c)})`)
-    }
   }
 
   // Execute all writes atomically — all succeed or all roll back.
   if (queries.length > 0) {
     await sql.transaction(queries)
+  }
+
+  /* A write is the only way a reminder can come into existence, so it is the only
+     thing that can make the reminder cron's cached "nothing is due until …" wrong
+     early. Free, in-process, and best-effort — see lib/reminderWindow. */
+  if (Array.isArray(events) || Array.isArray(todos) || Array.isArray(notes) || Array.isArray(classSchedule)) {
+    invalidateReminderWindow()
   }
 
   // A full notes POST is the only moment the server sees every note this user has,
