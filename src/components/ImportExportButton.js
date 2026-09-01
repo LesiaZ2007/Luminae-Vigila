@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * ImportExportButton — floating circle button for JSON import/export of local data.
+ * ImportExportButton — JSON backup and ICS export of local data.
  *
  * Import is non-destructive by default:
  *   - New items (ID not found locally) are always added
@@ -10,86 +10,94 @@
  *       Replace  — overwrite your local version with the imported one
  *       Keep both — import gets a new ID and is added alongside yours
  *
+ * ## Why this is driven by a list
+ *
+ * Every collection used to be named by hand — `newEvents`, `conflictTodos`,
+ * `mergedCats` — in six places each. Adding a collection meant remembering all six,
+ * and twice running nobody did: the class schedule went missing from what called
+ * itself a backup, and so did event categories, custom lists and study sessions.
+ *
+ * So the collections come from `BACKUP_COLLECTIONS` in lib/backup.js and everything
+ * here loops over it. Adding one to that list is now the whole change.
+ *
  * Props:
- *   events         — array of local calendar events
- *   todos          — array of local todos
- *   todoCategories — array of todo category objects
- *   notes          — array of notes (rich-text notes from the Notes tab)
- *   classSchedule  — array of class entries (the My Classes tab's classes)
- *   classMeetings  — those classes expanded into dated meetings, for the ICS.
- *                    Passed in rather than derived: the app already expands them for
- *                    the calendar, and re-doing it here would mean a second copy of
- *                    the recurrence and exception rules to keep in step.
- *   onImport       — (data: { events, todos, todoCategories, notes, classSchedule }) => void
- *                    receives the fully-merged final arrays (not just the imported data)
- *   inline         — bool: render export/import controls inline (no FAB, no popup)
- *                    used in the mobile Settings tab so no floating circle appears
+ *   collections   — { events, todos, todoCategories, eventCategories, notes,
+ *                     classSchedule, customLists, studySessions } — raw arrays,
+ *                   tombstones included, so a restore does not resurrect deletions
+ *   eventPrefs    — { [eventId]: { hidden, color } }, a settings blob rather than a list
+ *   classMeetings — the class schedule expanded into dated meetings, for the ICS.
+ *                   Passed in rather than derived: the app already expands them for
+ *                   the calendar, and redoing it here would mean a second copy of the
+ *                   recurrence and exception rules to keep in step.
+ *   onImport      — ({ collections, eventPrefs, preferences }) => void
+ *                   receives the fully-merged final state, not just what was imported
+ *   inline        — render controls inline (no FAB), used in the mobile Settings tab
  */
 
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
-import { parseIcs } from '@/lib/ics'
+import { parseIcs }     from '@/lib/ics'
 import { serializeIcs } from '@/lib/icsExport'
+import {
+  BACKUP_COLLECTIONS, buildBackup, readBackup, looksLikeBackup,
+  readLocalPrefs, applyLocalPrefs,
+} from '@/lib/backup'
 
-// status shape:
-//   null              — idle
-//   'done'            — finished (auto-closes)
-//   { error: string } — parse error
-//   { reviewing: true, source: 'json' | 'ics', parsed, newEvents, newTodos, newCats,
-//     conflictEvents, conflictTodos, conflictCats }
-//                     — showing merge summary, waiting for user choice
+const EMPTY = []
+
+/** The one place that knows where the settings blobs live, guarded for SSR. */
+function storage() {
+  return typeof window !== 'undefined' ? window.localStorage : null
+}
 
 export default function ImportExportButton({
-  events, todos, todoCategories, notes = [],
-  classSchedule = [], classMeetings = [],
+  collections = {},
+  eventPrefs = {},
+  classMeetings = EMPTY,
   onImport, isMobile, inline,
 }) {
   const [open,             setOpen]             = useState(false)
   const [status,           setStatus]           = useState(null)
-  const [conflictStrategy, setConflictStrategy] = useState('skip') // 'skip' | 'replace' | 'keepBoth'
+  const [conflictStrategy, setConflictStrategy] = useState('skip')
   const fileRef = useRef(null)
 
   function reset() { setStatus(null); setConflictStrategy('skip') }
 
-  function initiateExport(format = 'json') {
-    if (format === 'ics') {
-      /* Class meetings are expanded from the schedule rather than stored, so an
-         export of `events` alone contained none of them — a term of classes was
-         simply missing from the file. Exams went with them, being a transform of a
-         meeting rather than an event of their own. */
-      const icsData = serializeIcs([...events, ...classMeetings])
-      const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `luminae-vigila-${new Date().toISOString().slice(0, 10)}.ics`
-      a.click()
-      URL.revokeObjectURL(url)
-      setStatus('done')
-      setTimeout(() => { reset(); setOpen(false) }, 1800)
-      return
-    }
+  const listOf = key => (Array.isArray(collections[key]) ? collections[key] : EMPTY)
 
-    const data = {
-      /* Bumped because the shape gained a key. Older files have no `classSchedule`
-         and import exactly as they did before — the reader defaults it. */
-      version:    2,
-      exportedAt: new Date().toISOString(),
-      events,
-      todos,
-      todoCategories,
-      notes,
-      classSchedule,
-    }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
+  function download(blob, extension) {
+    const url = URL.createObjectURL(blob)
+    const a   = document.createElement('a')
     a.href     = url
-    a.download = `luminae-vigila-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `luminae-vigila-${new Date().toISOString().slice(0, 10)}.${extension}`
     a.click()
     URL.revokeObjectURL(url)
     setStatus('done')
     setTimeout(() => { reset(); setOpen(false) }, 1800)
+  }
+
+  function initiateExport(format = 'json') {
+    if (format === 'ics') {
+      /* Class meetings are expanded from the schedule rather than stored, so an
+         export of `events` alone contained none of them. Deleted events drop out: a
+         tombstone records a deletion, and no calendar wants to import one. */
+      const events = listOf('events').filter(e => !e?.deletedAt)
+      download(
+        new Blob([serializeIcs([...events, ...classMeetings])], { type: 'text/calendar;charset=utf-8' }),
+        'ics',
+      )
+      return
+    }
+
+    const data = buildBackup({
+      collections,
+      eventPrefs,
+      /* Read at export time rather than held in state: several components write these
+         blobs straight to localStorage, so storage is the only source never behind. */
+      prefs: readLocalPrefs(storage()),
+      exportedAt: new Date().toISOString(),
+    })
+    download(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'json')
   }
 
   /* ── File picked → parse & analyse conflicts ── */
@@ -100,56 +108,42 @@ export default function ImportExportButton({
     const reader = new FileReader()
     reader.onload = (ev) => {
       try {
-        const text = ev.target.result
+        const text  = ev.target.result
         const isIcs = file.name.toLowerCase().endsWith('.ics') || file.type === 'text/calendar'
-        let importedEvents = []
-        let importedTodos = []
-        let importedCats = []
-        let importedNotes = []
-        let importedClasses = []
-        let parsed = null
+
+        let imported = {}
+        let eventPrefsIn
+        let preferencesIn
 
         if (isIcs) {
-          importedEvents = parseIcs(text)
-          if (!importedEvents.length) throw new Error('No calendar events were found in this ICS file.')
-          parsed = { source: 'ics', events: importedEvents }
+          const events = parseIcs(text)
+          if (!events.length) throw new Error('No calendar events were found in this ICS file.')
+          imported = { events }
         } else {
-          parsed = JSON.parse(text)
-          // `notes` alone is a valid export (a backup taken before any events
-          // or tasks existed), so accept a file that only carries notes.
-          // A backup taken before any events or tasks existed is still a backup —
-          // and a schedule-only one is now possible too.
-          if (!parsed.events && !parsed.todos && !parsed.notes && !parsed.classSchedule)
-            throw new Error('This file doesn\'t look like a luminaeVigila export.')
-
-          importedEvents   = Array.isArray(parsed.events)         ? parsed.events         : []
-          importedTodos    = Array.isArray(parsed.todos)          ? parsed.todos          : []
-          importedCats     = Array.isArray(parsed.todoCategories) ? parsed.todoCategories : []
-          importedNotes    = Array.isArray(parsed.notes)          ? parsed.notes          : []
-          importedClasses  = Array.isArray(parsed.classSchedule)  ? parsed.classSchedule  : []
+          const parsed = JSON.parse(text)
+          if (!looksLikeBackup(parsed)) throw new Error('This file doesn\'t look like a luminaeVigila export.')
+          const read    = readBackup(parsed)
+          imported      = read.collections
+          eventPrefsIn  = read.eventPrefs
+          preferencesIn = read.preferences
         }
 
-        const localEventIds = new Set(events.map(x => x.id))
-        const localTodoIds  = new Set(todos.map(x => x.id))
-        const localCatIds   = new Set(todoCategories.map(x => x.id))
-        const localNoteIds  = new Set(notes.map(x => x.id))
-        const localClassIds = new Set(classSchedule.map(x => x.id))
+        // Diff every collection the same way, so none can be forgotten.
+        const groups = {}
+        let newTotal = 0, conflictTotal = 0
+        for (const { key } of BACKUP_COLLECTIONS) {
+          const incoming = Array.isArray(imported[key]) ? imported[key] : EMPTY
+          const localIds = new Set(listOf(key).map(x => x?.id))
+          const fresh    = incoming.filter(x => !localIds.has(x?.id))
+          const clashing = incoming.filter(x =>  localIds.has(x?.id))
+          groups[key] = { fresh, clashing }
+          newTotal      += fresh.length
+          conflictTotal += clashing.length
+        }
 
-        const newEvents       = importedEvents.filter(x => !localEventIds.has(x.id))
-        const conflictEvents  = importedEvents.filter(x =>  localEventIds.has(x.id))
-        const newTodos        = importedTodos.filter( x => !localTodoIds.has(x.id))
-        const conflictTodos   = importedTodos.filter( x =>  localTodoIds.has(x.id))
-        const newCats         = importedCats.filter(  x => !localCatIds.has(x.id))
-        const conflictCats    = importedCats.filter(  x =>  localCatIds.has(x.id))
-        const newNotes        = importedNotes.filter( x => !localNoteIds.has(x.id))
-        const conflictNotes   = importedNotes.filter( x =>  localNoteIds.has(x.id))
-        const newClasses      = importedClasses.filter(x => !localClassIds.has(x.id))
-        const conflictClasses = importedClasses.filter(x =>  localClassIds.has(x.id))
+        const hasSettings = !!eventPrefsIn || !!preferencesIn
 
-        const hasConflicts = conflictEvents.length + conflictTodos.length + conflictCats.length
-                           + conflictNotes.length + conflictClasses.length > 0
-
-        if (!hasConflicts && newEvents.length + newTodos.length + newCats.length + newNotes.length + newClasses.length === 0) {
+        if (newTotal + conflictTotal === 0 && !hasSettings) {
           setStatus({ error: 'Nothing new to import — all items already exist locally.' })
           return
         }
@@ -157,12 +151,9 @@ export default function ImportExportButton({
         setStatus({
           reviewing: true,
           source: isIcs ? 'ics' : 'json',
-          parsed,
-          newEvents, conflictEvents,
-          newTodos,  conflictTodos,
-          newCats,   conflictCats,
-          newNotes,  conflictNotes,
-          newClasses, conflictClasses,
+          groups, newTotal, conflictTotal,
+          eventPrefs:  eventPrefsIn,
+          preferences: preferencesIn,
         })
       } catch (err) {
         setStatus({ error: err.message || 'Invalid file format.' })
@@ -175,54 +166,57 @@ export default function ImportExportButton({
   /* ── Apply merge with chosen strategy ── */
   function handleConfirmImport() {
     if (!status?.reviewing) return
-    const { newEvents, conflictEvents, newTodos, conflictTodos, newCats, conflictCats } = status
-    // ICS imports carry neither notes nor classes, so default these rather than assuming.
-    const newNotes        = status.newNotes        ?? []
-    const conflictNotes   = status.conflictNotes   ?? []
-    const newClasses      = status.newClasses      ?? []
-    const conflictClasses = status.conflictClasses ?? []
 
-    function mergeList(localList, newItems, conflictItems, strategy) {
-      let result = [...localList]
-
-      // Always add brand-new items
-      result = [...result, ...newItems]
-
-      // Handle conflicts
-      for (const item of conflictItems) {
-        if (strategy === 'skip') {
-          // Keep local — don't touch it
-        } else if (strategy === 'replace') {
-          result = result.map(x => x.id === item.id ? item : x)
+    function mergeList(local, fresh, clashing, strategy) {
+      let result = [...local, ...fresh]
+      for (const item of clashing) {
+        if (strategy === 'replace') {
+          result = result.map(x => (x.id === item.id ? item : x))
         } else if (strategy === 'keepBoth') {
-          // Give the imported item a fresh ID and append it
           result = [...result, { ...item, id: `imported-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }]
         }
+        // 'skip' keeps the local copy untouched.
       }
       return result
     }
 
-    const mergedEvents = mergeList(events,        newEvents, conflictEvents, conflictStrategy)
-    const mergedTodos  = mergeList(todos,          newTodos,  conflictTodos,  conflictStrategy)
-    const mergedCats   = mergeList(todoCategories, newCats,   conflictCats,   conflictStrategy)
-    const mergedNotes   = mergeList(notes,         newNotes,   conflictNotes,   conflictStrategy)
-    const mergedClasses = mergeList(classSchedule, newClasses, conflictClasses, conflictStrategy)
+    const merged = {}
+    for (const { key } of BACKUP_COLLECTIONS) {
+      const { fresh, clashing } = status.groups[key] ?? { fresh: EMPTY, clashing: EMPTY }
+      merged[key] = mergeList(listOf(key), fresh, clashing, conflictStrategy)
+    }
+
+    // Settings restore wholesale — merging them record-by-record is meaningless.
+    if (status.preferences) applyLocalPrefs(status.preferences, storage())
 
     onImport({
-      events: mergedEvents, todos: mergedTodos, todoCategories: mergedCats,
-      notes: mergedNotes, classSchedule: mergedClasses,
+      collections: merged,
+      /* Left undefined when the file said nothing about them, so a silent {} cannot
+         wipe hidden-event settings the file simply had no opinion on. */
+      eventPrefs:  status.eventPrefs,
+      preferences: status.preferences,
     })
     setStatus('done')
     setTimeout(() => { reset(); setOpen(false) }, 1800)
   }
 
   /* ── Render ── */
-  const isReviewing = status?.reviewing
-  const safeArray = (arr) => Array.isArray(arr) ? arr : []
-  const hasConflicts = isReviewing &&
-    (safeArray(status.conflictEvents).length  + safeArray(status.conflictTodos).length +
-     safeArray(status.conflictCats).length    + safeArray(status.conflictNotes).length +
-     safeArray(status.conflictClasses).length > 0)
+  const isReviewing  = status?.reviewing
+  const hasConflicts = isReviewing && status.conflictTotal > 0
+
+  const summaryRows = isReviewing
+    ? BACKUP_COLLECTIONS
+        .map(({ key, label }) => ({ label, ...(status.groups[key] ?? { fresh: EMPTY, clashing: EMPTY }) }))
+        .filter(row => row.fresh.length > 0 || row.clashing.length > 0)
+    : EMPTY
+
+  const settingsRestored = isReviewing && (!!status.eventPrefs || !!status.preferences)
+
+  const strategyOptions = [
+    { value: 'skip',     label: 'Keep mine',    desc: 'Ignore imported duplicates' },
+    { value: 'replace',  label: 'Replace mine', desc: 'Overwrite with imported version' },
+    { value: 'keepBoth', label: 'Keep both',    desc: 'Add imported as a new copy' },
+  ]
 
   /* Inline mode: render controls directly in the layout, no floating button */
   if (inline) {
@@ -248,20 +242,11 @@ export default function ImportExportButton({
         {isReviewing && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {(status.newEvents.length > 0 || status.conflictEvents.length > 0) && (
-                <SummaryRow label="Events" newCount={status.newEvents.length} conflictCount={status.conflictEvents.length} />
-              )}
-              {(status.newTodos.length > 0 || status.conflictTodos.length > 0) && (
-                <SummaryRow label="Tasks" newCount={status.newTodos.length} conflictCount={status.conflictTodos.length} />
-              )}
-              {(status.newCats.length > 0 || status.conflictCats.length > 0) && (
-                <SummaryRow label="Categories" newCount={status.newCats.length} conflictCount={status.conflictCats.length} />
-              )}
-              {(safeArray(status.newNotes).length > 0 || safeArray(status.conflictNotes).length > 0) && (
-                <SummaryRow label="Notes" newCount={safeArray(status.newNotes).length} conflictCount={safeArray(status.conflictNotes).length} />
-              )}
-              {(safeArray(status.newClasses).length > 0 || safeArray(status.conflictClasses).length > 0) && (
-                <SummaryRow label="Classes" newCount={safeArray(status.newClasses).length} conflictCount={safeArray(status.conflictClasses).length} />
+              {summaryRows.map(row => (
+                <SummaryRow key={row.label} label={row.label} newCount={row.fresh.length} conflictCount={row.clashing.length} />
+              ))}
+              {settingsRestored && (
+                <div style={{ fontSize: '0.7rem', color: 'rgba(147,197,253,.6)' }}>Settings will be restored.</div>
               )}
             </div>
             {hasConflicts && (
@@ -269,11 +254,7 @@ export default function ImportExportButton({
                 <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(147,197,253,.5)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                   For duplicates
                 </div>
-                {[
-                  { value: 'skip',     label: 'Keep mine',    desc: 'Ignore imported duplicates' },
-                  { value: 'replace',  label: 'Replace mine', desc: 'Overwrite with imported version' },
-                  { value: 'keepBoth', label: 'Keep both',    desc: 'Add imported as a new copy' },
-                ].map(opt => (
+                {strategyOptions.map(opt => (
                   <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer', marginBottom: 5 }}>
                     <input type="radio" name="conflictStrategy" value={opt.value}
                            checked={conflictStrategy === opt.value}
@@ -342,6 +323,10 @@ export default function ImportExportButton({
           boxShadow: 'var(--shadow-modal)',
           width: isReviewing ? 260 : 200,
           maxWidth: 'calc(100vw - 32px)',
+          /* The summary can now run to eight rows plus the duplicate picker, which is
+             taller than the old four ever were. */
+          maxHeight: 'calc(100vh - 140px)',
+          overflowY: 'auto',
           backdropFilter: 'blur(8px)',
           transition: 'width .2s',
         }}>
@@ -400,32 +385,12 @@ export default function ImportExportButton({
           {isReviewing && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-              {/* Summary rows */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {(status.newEvents.length > 0 || status.conflictEvents.length > 0) && (
-                  <SummaryRow label="Events"
-                    newCount={status.newEvents.length}
-                    conflictCount={status.conflictEvents.length} />
-                )}
-                {(status.newTodos.length > 0 || status.conflictTodos.length > 0) && (
-                  <SummaryRow label="Tasks"
-                    newCount={status.newTodos.length}
-                    conflictCount={status.conflictTodos.length} />
-                )}
-                {(status.newCats.length > 0 || status.conflictCats.length > 0) && (
-                  <SummaryRow label="Categories"
-                    newCount={status.newCats.length}
-                    conflictCount={status.conflictCats.length} />
-                )}
-                {(safeArray(status.newNotes).length > 0 || safeArray(status.conflictNotes).length > 0) && (
-                  <SummaryRow label="Notes"
-                    newCount={safeArray(status.newNotes).length}
-                    conflictCount={safeArray(status.conflictNotes).length} />
-                )}
-                {(safeArray(status.newClasses).length > 0 || safeArray(status.conflictClasses).length > 0) && (
-                  <SummaryRow label="Classes"
-                    newCount={safeArray(status.newClasses).length}
-                    conflictCount={safeArray(status.conflictClasses).length} />
+                {summaryRows.map(row => (
+                  <SummaryRow key={row.label} label={row.label} newCount={row.fresh.length} conflictCount={row.clashing.length} />
+                ))}
+                {settingsRestored && (
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-3)' }}>Settings will be restored.</div>
                 )}
               </div>
 
@@ -435,11 +400,7 @@ export default function ImportExportButton({
                   <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                     For duplicates
                   </div>
-                  {[
-                    { value: 'skip',     label: 'Keep mine',    desc: 'Ignore imported duplicates' },
-                    { value: 'replace',  label: 'Replace mine', desc: 'Overwrite with imported version' },
-                    { value: 'keepBoth', label: 'Keep both',    desc: 'Add imported as a new copy' },
-                  ].map(opt => (
+                  {strategyOptions.map(opt => (
                     <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer', marginBottom: 5 }}>
                       <input
                         type="radio"
