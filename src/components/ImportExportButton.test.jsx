@@ -247,3 +247,123 @@ describe('JSON import', () => {
     expect(collections.studySessions).toEqual(FULL.studySessions)
   })
 })
+
+describe('Replace everything', () => {
+  async function importFile(container, contents, name = 'backup.json') {
+    const input = container.querySelector('input[type="file"]')
+    const file  = new File([contents], name, { type: 'application/json' })
+    const original = global.FileReader
+    global.FileReader = class {
+      readAsText() { this.result = contents; this.onload({ target: { result: contents } }) }
+    }
+    await userEvent.upload(input, file)
+    global.FileReader = original
+  }
+
+  const INCOMING = {
+    ...Object.fromEntries(BACKUP_COLLECTIONS.map(c => [c.key, []])),
+    events: [{ id: 'x1', title: 'Only this', start: '2026-03-09T10:00:00' }],
+  }
+
+  async function chooseReplace() {
+    await userEvent.click(screen.getByRole('radio', { name: /Replace everything/ }))
+  }
+
+  // A destructive default is how a restore happens by accident.
+  it('defaults to merging, not replacing', async () => {
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    expect(screen.getByRole('radio', { name: /Add to what I have/ })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Import' })).toBeInTheDocument()
+  })
+
+  it('names how many records it will delete before it can be run', async () => {
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    await chooseReplace()
+    // Eight collections, one record each in the fixture.
+    expect(screen.getByText(/Deletes/)).toBeInTheDocument()
+    expect(screen.getByText('8')).toBeInTheDocument()
+    expect(screen.getByText(/cannot be undone/)).toBeInTheDocument()
+  })
+
+  it('renames the action so the button itself says what it does', async () => {
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    await chooseReplace()
+    expect(screen.getByRole('button', { name: 'Replace everything' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Import' })).not.toBeInTheDocument()
+  })
+
+  it('leaves the device holding exactly what the file said', async () => {
+    const onImport = vi.fn()
+    const { container } = renderExporter({ onImport })
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    await chooseReplace()
+    await userEvent.click(screen.getByRole('button', { name: 'Replace everything' }))
+    const { collections, mode } = onImport.mock.calls[0][0]
+    expect(mode).toBe('replace')
+    expect(collections.events).toEqual(INCOMING.events)
+    expect(collections.classSchedule).toEqual([])
+    expect(collections.studySessions).toEqual([])
+  })
+
+  /* Clearing your classes because an ICS says nothing about classes would be data
+     loss dressed up as a restore. */
+  it('keeps collections the file does not mention, and says which', async () => {
+    const onImport = vi.fn()
+    const { container } = renderExporter({ onImport })
+    await importFile(container, JSON.stringify({
+      version: 1, events: [{ id: 'x1', title: 'Old', start: '2026-03-09T10:00:00' }],
+    }))
+    await chooseReplace()
+    expect(screen.getByText(/Not in this file, so kept as-is:/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Replace everything' }))
+    const { collections } = onImport.mock.calls[0][0]
+    expect(collections.events).toHaveLength(1)
+    expect(collections.classSchedule).toEqual(CLASSES)
+    expect(collections.studySessions).toEqual(FULL.studySessions)
+  })
+
+  it('does not ask about duplicates — a replace has none to resolve', async () => {
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({ version: 3, ...FULL }))
+    expect(screen.getByText('For duplicates')).toBeInTheDocument()
+    await chooseReplace()
+    expect(screen.queryByText('For duplicates')).not.toBeInTheDocument()
+  })
+
+  it('takes the settings from the file wholesale', async () => {
+    window.localStorage.setItem(PREF_KEYS.gpa, JSON.stringify({ credits: { 1: 3 }, overrides: { 1: 90 } }))
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({
+      version: 3, ...INCOMING, preferences: { gpa: { credits: { 2: 4 } } },
+    }))
+    await chooseReplace()
+    await userEvent.click(screen.getByRole('button', { name: 'Replace everything' }))
+    expect(JSON.parse(window.localStorage.getItem(PREF_KEYS.gpa))).toEqual({ credits: { 2: 4 } })
+  })
+
+  // Absent because we stripped it on export, not because the user cleared it.
+  it('still keeps the Canvas feed URL a restore was never given', async () => {
+    window.localStorage.setItem(PREF_KEYS.canvas, JSON.stringify({ icsUrl: 'https://keep.me/f.ics', old: 1 }))
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({
+      version: 3, ...INCOMING, preferences: { canvas: { showOnCalendar: true } },
+    }))
+    await chooseReplace()
+    await userEvent.click(screen.getByRole('button', { name: 'Replace everything' }))
+    const after = JSON.parse(window.localStorage.getItem(PREF_KEYS.canvas))
+    expect(after.icsUrl).toBe('https://keep.me/f.ics')
+    expect(after.old).toBeUndefined()
+  })
+
+  it('forgets the choice, so the next import is not silently destructive', async () => {
+    const { container } = renderExporter()
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    await chooseReplace()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await importFile(container, JSON.stringify({ version: 3, ...INCOMING }))
+    expect(screen.getByRole('radio', { name: /Add to what I have/ })).toBeChecked()
+  })
+})
