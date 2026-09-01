@@ -397,9 +397,26 @@ So a 402 is now named. [`lib/dbErrors.js`](src/lib/dbErrors.js) classifies it as
 - Sidebar shows your email and a sign-out button when logged in; a "Sign in to sync" link when not
 
 ### 📦 Import / Export
-- **Export** all local events and tasks as a timestamped JSON file
-- **Import** a previously-exported file to restore or transfer data to any browser or device
-- Only local data is included — Google Calendar and Canvas data re-sync from the source
+
+- **Export JSON** — a full local backup: events, tasks, task categories, notes, **and your class schedule**
+- **Export ICS** — your own calendar events **plus every class meeting of the term**, exams included, openable in Google Calendar / Apple Calendar / Outlook
+- **Import JSON or ICS** — non-destructive. New items are added; duplicates prompt for *Keep mine* / *Replace mine* / *Keep both*
+
+#### The classes were missing from both
+
+Both exports quietly dropped the class schedule, which made "backup" a promise the JSON file did not keep.
+
+- **JSON** never received it. The exporter was handed events, tasks, categories and notes; the schedule was simply not a prop, so a restored backup came back with no classes — and with them, the class categories, per-class reminder rules and exam blocks that hang off them
+- **ICS** was handed `events`, the *stored* events. Class meetings are not stored: they are expanded from the schedule on every render, the same way the calendar draws them. So a term of classes was never in the file. Exams went too, being a transform of a meeting rather than an event of their own
+
+Two more faults surfaced in the same function, both silent:
+
+- **Location and notes were always blank.** It read `event.location` and `event.description`; an event keeps those under `extendedProps`, so every exported event went out without its room or its note
+- **All-day events landed a day early.** `new Date('2026-03-04')` parses as UTC midnight, and writing that as a UTC timestamp puts the event on 3 March for anyone west of Greenwich. An all-day event is a *date*, and iCalendar has `VALUE=DATE` for exactly that — with an exclusive end, so a one-day event now ends on the 5th instead of importing as zero-length
+
+The serializer moved to [`lib/icsExport.js`](src/lib/icsExport.js). It had been a closure inside a render function, which is precisely why three faults could sit in it unnoticed — there was no way to test it. It is now pinned by a round trip back through `parseIcs`, the same reader the Canvas feed uses, so the app can always read what it writes. Lines are folded at 75 octets as the spec requires, and an event with an unusable start is dropped rather than written malformed: one bad `VEVENT` can make a client reject the entire file, taking the valid events with it.
+
+The JSON format is now **version 2**. A version 1 file has no `classSchedule` key and imports exactly as it used to — the reader defaults it, and an ICS import (which carries no classes either) leaves your schedule alone rather than blanking it.
 
 ### 🪶 Corvus AI Assistant
 - Chat-based assistant powered by [Groq](https://groq.com), on `openai/gpt-oss-120b` by default
