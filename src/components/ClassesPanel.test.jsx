@@ -495,11 +495,54 @@ describe('ClassesPanel — the calendar is the main spread', () => {
     expect(strip().getAllByText('Midterm').length).toBeGreaterThan(0)
   })
 
-  it('opens a task in the task editor rather than a view of its own', async () => {
+  /* A task chip answers with a small menu now — ticking off is what most clicks on one
+     want, and the editor made that the expensive option. Editing is still in there, and
+     still the existing task editor rather than a fourth place to edit coursework. */
+  it('offers a task menu, with the task editor one click inside it', async () => {
     const onTodoClick = vi.fn()
     renderPanel({ todos, onTodoClick })
+
     await userEvent.click(screen.getByTitle(/Lab report/))
+    expect(onTodoClick).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit task' }))
     expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
+  })
+
+  it('ticks a task off from its chip without opening anything', async () => {
+    const onToggleTodo = vi.fn()
+    renderPanel({ todos, onToggleTodo })
+
+    await userEvent.click(screen.getByTitle(/Lab report/))
+    await userEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+
+    expect(onToggleTodo).toHaveBeenCalledWith('t1')
+  })
+
+  it('offers delete from the chip menu, which the grid had no way to reach before', async () => {
+    const onDeleteTodo = vi.fn()
+    renderPanel({ todos, onDeleteTodo })
+
+    await userEvent.click(screen.getByTitle(/Lab report/))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+
+    expect(onDeleteTodo).toHaveBeenCalledWith('t1')
+  })
+
+  it('leaves delete out when the tab was given no way to do it', async () => {
+    renderPanel({ todos })
+    await userEvent.click(screen.getByTitle(/Lab report/))
+    expect(screen.queryByRole('button', { name: 'Delete task' })).toBeNull()
+  })
+
+  /* An assignment lives in Canvas and an exam is a calendar event; both keep going
+     straight to the detail view that already owns their actions. */
+  it('keeps the menu to tasks — an exam still opens its detail view', async () => {
+    const onEventClick = vi.fn()
+    renderPanel({ canvasClassEvents: events, onEventClick })
+    await userEvent.click(screen.getByTitle(/Midterm/))
+    expect(screen.queryByRole('button', { name: 'Mark done' })).toBeNull()
+    expect(onEventClick).toHaveBeenCalled()
   })
 
   it('opens an exam in the event detail view', async () => {
@@ -517,12 +560,96 @@ describe('ClassesPanel — the calendar is the main spread', () => {
     expect(onToggleTodo).toHaveBeenCalledWith('t1')
   })
 
+  /* The month now slides rather than snapping, so the swap lands at the midpoint of the
+     animation instead of on the click — hence `findByText` rather than `getByText`. */
   it('pages to another month and back to today', async () => {
     renderPanel()
     await userEvent.click(screen.getByRole('button', { name: 'Next month' }))
-    expect(screen.getByText('April 2026')).toBeInTheDocument()
+    expect(await screen.findByText('April 2026')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Today' }))
+    expect(await screen.findByText('March 2026')).toBeInTheDocument()
+  })
+
+  it('pages the month with the arrow keys', async () => {
+    renderPanel()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(await screen.findByText('April 2026')).toBeInTheDocument()
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(await screen.findByText('March 2026')).toBeInTheDocument()
+  })
+
+  /* A field's own caret has to win, or typing a class name pages the calendar
+     underneath the form. */
+  it('leaves the arrow keys alone while a field has focus', async () => {
+    renderPanel()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    await userEvent.keyboard('{ArrowRight}')
     expect(screen.getByText('March 2026')).toBeInTheDocument()
+    input.remove()
+  })
+
+  it('does not page the month when the tab says not to', async () => {
+    renderPanel({ arrowNavEnabled: false })
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByText('March 2026')).toBeInTheDocument()
+  })
+
+  /* Clicking a day filled only the strip at the bottom of the tab, which on anything
+     short of a tall desktop is below the fold — the click looked like it did nothing.
+     On a phone it is worse: the cells are colour dots, so the strip was the only thing
+     that named them. */
+  it('floats the day above the grid, and keeps the strip in step', async () => {
+    renderPanel({ todos })
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+
+    const panel = within(screen.getByRole('dialog', { name: /March 12/ }))
+    expect(panel.getByText('Lab report')).toBeInTheDocument()
+    // Same day, still shown below — dismissing the panel loses nothing.
+    expect(strip().getByText('Lab report')).toBeInTheDocument()
+  })
+
+  /* An empty day is just a header — saying "nothing due" twice in a panel this small
+     reads as a bug, so the header carries it alone. */
+  it('says so once in the floating day when nothing is due', async () => {
+    renderPanel({ todos })
+    await userEvent.click(calendar().getByTitle(/2026-03-05/))
+    const panel = within(screen.getByRole('dialog'))
+    expect(panel.getByText(/nothing due/i)).toBeInTheDocument()
+    expect(panel.queryAllByText(/nothing due/i)).toHaveLength(1)
+  })
+
+  it('closes the floating day but leaves the strip on that day', async () => {
+    renderPanel({ todos })
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+    await userEvent.click(screen.getByRole('button', { name: 'Close day' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(strip().getByText('Lab report')).toBeInTheDocument()
+  })
+
+  it('ticks a task off from the floating day', async () => {
+    const onToggleTodo = vi.fn()
+    renderPanel({ todos, onToggleTodo })
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+
+    const panel = within(screen.getByRole('dialog'))
+    await userEvent.click(panel.getByRole('button', { name: 'Mark done' }))
+
+    expect(onToggleTodo).toHaveBeenCalledWith('t1')
+  })
+
+  /* The panel is anchored to a cell in the month that is leaving. */
+  it('dismisses the floating day when the month changes under it', async () => {
+    renderPanel({ todos })
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next month' }))
+    await screen.findByText('April 2026')
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('counts what is still outstanding in the month on screen', () => {

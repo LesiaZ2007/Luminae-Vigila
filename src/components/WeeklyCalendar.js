@@ -158,7 +158,12 @@ export default function WeeklyCalendar({
 
     requestAnimationFrame(() => updateOverlapClasses(info.view.calendar))
 
-    const isUserEvent = !info.event.extendedProps?.source
+    /* A task chip has no `source` either, so it used to pass for a user event and got
+       the recolor popover. That was always a dead end: a task takes its colour from its
+       category, and the per-event override it wrote is a preference the task list never
+       reads. Right-click on one now does what left-click does. */
+    const isTodo      = info.event.extendedProps?.type === 'todo'
+    const isUserEvent = !info.event.extendedProps?.source && !isTodo
 
     const el = info.el
 
@@ -166,9 +171,10 @@ export default function WeeklyCalendar({
     function onContextMenu(e) {
       e.preventDefault()
       e.stopPropagation()
+      if (isTodo) { onEventClick?.(info); return }
       setColorPopover({ eventId: info.event.id, x: e.clientX, y: e.clientY })
     }
-    if (isUserEvent && onRecolorEvent && !isMobile) {
+    if ((isUserEvent && onRecolorEvent && !isMobile) || (isTodo && !isMobile)) {
       el.addEventListener('contextmenu', onContextMenu)
     }
 
