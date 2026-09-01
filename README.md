@@ -45,7 +45,7 @@ On mobile a tap used to only lift the event to the front of its overlap column �
 
 Tapping used to drop straight into the edit form, which is the wrong default: most taps are *"what is this / where is it / when does it end"*, not *"change it"*. A form also answers those questions badly — a column of inputs reads as work to do rather than information to take in, and the thing you wanted is one line buried among eight controls.
 
-The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a color picker — mobile has no right-click, so this is the only way to reach the recolor that desktop gets from the calendar's context menu.
+The detail view shows everything the edit form holds, laid out to be read: title, category, the full when (collapsing a same-day range to `Wednesday, August 19 · 2:00 – 3:15 PM`), recurrence in words (*"Weekly on Mon, Wed, until Dec 10"*), reminder, location, notes, and any linked notes as buttons that jump to them. Actions sit in one footer: **Edit**, **Hide/Unhide**, **Delete** (two-press confirm), plus a color picker — mobile has no right-click, so this is the only way to reach the recolor that desktop gets from the calendar's context menu. It is the shared swatch grid, not a native color input; see **Event Recolor** for why that matters.
 
 **Imported events get the same treatment.** Google and both Canvas feeds used to answer a tap with a toast, which can only ever be a line of text — yet those are precisely the events carrying a location and a description worth reading. They now open the same view, minus Edit and Delete (they belong to Google and Canvas), plus **Open in Canvas** where a deep link exists. A source badge marks them read-only, and it's suppressed when the heading already says the same thing.
 
@@ -814,6 +814,36 @@ The glow is **blurred and spread, not offset**. Hard `0 -1px` / `0 1px` shadows 
 - Right-click (desktop) or long-press 500 ms (mobile) any user-created calendar event to open a color picker
 - Select from 10 preset swatches — change applies immediately and persists across sessions
 - Google Calendar and Canvas events cannot be recolored
+
+**The color control is the same grid everywhere** — `src/components/ColorSwatches.js`,
+which also owns the palette so the three entry points cannot drift apart. It replaced
+two pickers that were both poor on a phone. The detail view used a bare
+`<input type="color">`, which hands the whole job to the OS color wheel: it paints as a
+black chip against the app's own palette, looks nothing like the rest of the chrome, and
+answers *"which of my ten colors is this"* with a gradient square. The event modal's own
+swatch row was 26px circles in a wrap, a tap target well under half what a thumb needs.
+The cells are now a `minmax(44px, 1fr)` grid and the **whole padded cell** is the target,
+not the dot inside it — which is what buys the touch size without making the dots
+cartoonish on a desktop. Selection reads as a ring *and* a tick, because a ring alone is
+subtle in a ten-color grid.
+
+**Color is now part of creating an event, not just editing one.** The row used to be
+gated on editing, and the calendar's right-click recolor is explicitly disabled on touch
+— so on a phone there was no way to color a new event at all.
+
+**Where the color lives.** An event the app stores owns its own `color` field, and that
+is what the modal's picker edits — so the choice is saved with the event like every other
+field. `eventPrefs` overrides stay the mechanism for imported Google and Canvas events,
+which have nowhere to keep a color of their own, and for the calendar's right-click
+popover. The two used to be able to disagree: an override wins at render time, so editing
+the stored color underneath a stale override looked like it did nothing. Saving the modal
+now clears any override on that event, handing authority back to the event itself.
+
+**`null` means "follow the category", and that distinction matters.** An untouched event
+stores its category's color, so seeding the picker with that value verbatim would quietly
+promote it to a deliberate override — and then changing the category would keep the old
+hue. The form tracks an explicit pick separately, which is why changing the category
+still recolors an event you never hand-colored, and stops doing so the moment you do.
 
 ### 🗓 Date & Time Popovers Stay On Screen
 
