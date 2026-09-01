@@ -1433,19 +1433,34 @@ CREATE INDEX IF NOT EXISTS idx_class_schedule_user   ON class_schedule(user_id);
 `class_schedule` was missed when that list was first written, and it is the one the
 reminder cron reads on every scan to resolve per-class reminder rules.
 
-### Two settings only you can change
+### What the numbers look like on the Free plan
 
-Neither of these is in the repo, and the code changes above are worth much less
-without the first one:
+The Free plan pins **autosuspend at 5 minutes** and does not let you edit it — the
+control is greyed out, and scale-to-zero is always on. That is the number the design
+above targets, and there is nothing to configure. It is also why the cron mattered so
+much: 5 minutes is a short window, and a query a minute meant it never once elapsed.
 
-1. **Neon Console → your project → Branches → Compute → Autosuspend.** This is the
-   idle timeout that decides how long the endpoint stays awake after the last query,
-   and it is now the number that sets the bill: the cron scans about every 30
-   minutes, so a 5-minute autosuspend means ~17% duty cycle where a 30-minute one
-   would mean 100% and undo the whole thing. Set it as low as your plan allows.
-2. **cron-job.org → the reminder job.** Keep it at 1 minute. The endpoint is cheap
-   to ping now, and the ping interval is still what sets reminder accuracy — there
-   is no longer a reason to trade one for the other.
+At 0.25 CU (the smallest compute) against the Free plan's ~191.9 CU-hour allowance:
+
+| | Compute awake | Cost |
+|:---|:---|:---|
+| Before — a query every minute | ~100% of the month | **~183 CU-h**, ~95% of the allowance, spent finding nothing due |
+| After — scans at least every 30 min | ~17% (5 min awake per scan) | **~31 CU-h** |
+| Plus a **visible** tab's pull loop | while you are actually looking at it | ~20–25 CU-h at a few hours a day |
+
+Call it **50–60 CU-hours a month**, against 191.9. Roughly 3× headroom where there
+used to be 5%.
+
+Note the word *visible* in that last row. The pull loop stops entirely when the tab is
+hidden or the window is minimised (`visibilitychange`), so a browser left open for a
+week costs nothing unless you are looking at it — and when you are, freshness is
+what you want. What is left is proportional to real use, which is the right shape.
+
+One setting outside the repo:
+
+- **cron-job.org → the reminder job.** Keep it at 1 minute. The endpoint is cheap to
+  ping now, and the ping interval is still what sets reminder accuracy — there is no
+  longer a reason to trade one for the other.
 
 ### If you need a bigger cut
 
@@ -1453,10 +1468,11 @@ without the first one:
    often the database is woken when nothing is happening, traded directly against
    how late a just-created reminder can be when the app is closed.
 2. **Lengthen the idle poll back-off.** `AUTO_SYNC_IDLE_MAX_MS` in `src/app/page.js`
-   caps how far apart a left-open tab's pulls get (10 minutes). A tab open all day is
-   the other thing that keeps the endpoint awake; raising this to 30 minutes costs
-   only how stale another device's edits can look before you refocus the tab, which
-   already triggers a catch-up pull.
+   caps how far apart a *visible* tab's pulls get (10 minutes). Since 10 minutes is
+   longer than the 5-minute autosuspend, an idle visible tab already gets to sleep
+   between pulls; raising it to 30 would roughly halve what is left of that. Weigh it
+   against the case the constant exists for — a tab you are looking at, waiting for
+   the edit you just made on your phone. Deliberately left at 10.
 3. **Move the watermark out of process memory.** The 30-minute cache expiry exists
    only because module state dies with a serverless instance. A watermark in
    something that doesn't bill compute-hours (Upstash Redis' free tier covers this
