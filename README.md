@@ -400,7 +400,20 @@ So a 402 is now named. [`lib/dbErrors.js`](src/lib/dbErrors.js) classifies it as
 
 - **Export JSON** — a complete local backup: events, tasks, task *and* event categories, notes, your class schedule, custom lists, study sessions, per-event display settings, and your Canvas/Google/GPA preferences
 - **Export ICS** — your own calendar events **plus every class meeting of the term**, exams included, openable in Google Calendar / Apple Calendar / Outlook
-- **Import JSON or ICS** — non-destructive. New items are added; duplicates prompt for *Keep mine* / *Replace mine* / *Keep both*
+- **Import JSON or ICS** — in one of two modes:
+  - **Add to what I have** *(default)* — non-destructive. New items are added; duplicates prompt for *Keep mine* / *Replace mine* / *Keep both*
+  - **Replace everything** — a full restore. The collections the file carries become exactly what it says, and what you had in them is gone
+
+#### Restoring, without a footgun
+
+*Replace everything* is the one genuinely destructive thing in the app, so it is guarded rather than offered casually:
+
+- **It is never the default.** Merge is preselected every time, and the choice resets after each import — a destructive default is how a restore happens by accident
+- **It states the damage as a number, before you can run it.** *"Deletes 47 items currently on this device. This cannot be undone."* "This is destructive" is a shrug; a count is a decision. Tombstones aren't counted — saying *412 items* when 300 are old deletions would be scaremongering rather than informing
+- **The button renames itself** to *Replace everything*, in red. The last thing you click says what it does
+- **It only clears what the file actually contains.** Wiping your classes because an ICS import — or a backup written before classes existed — says nothing about classes would be data loss dressed up as a restore. Anything the file doesn't mention is kept, and the warning lists it by name
+- **The duplicate picker disappears**, because a replace has no duplicates to resolve
+- **Your Canvas feed URL survives even a replace.** It's absent from the file because *we* stripped it on the way out, not because you cleared it — deleting it as a side effect of protecting it would be the worst of both outcomes. A replace means "everything the file was allowed to carry"
 
 #### What "backup" used to mean
 

@@ -3,12 +3,17 @@
 /**
  * ImportExportButton — JSON backup and ICS export of local data.
  *
- * Import is non-destructive by default:
- *   - New items (ID not found locally) are always added
- *   - Duplicate items (same ID) show a merge prompt:
- *       Skip     — keep your local version, discard the imported one
- *       Replace  — overwrite your local version with the imported one
- *       Keep both — import gets a new ID and is added alongside yours
+ * Import has two modes.
+ *
+ * **Merge** (the default) is non-destructive: new items are added, and a duplicate id
+ * asks whether to keep yours, take theirs, or keep both.
+ *
+ * **Replace everything** is a restore: the collections the file carries become exactly
+ * what the file says, and whatever you had in them is gone. It is guarded rather than
+ * offered casually — it names the number of records it will delete before you can run
+ * it, and it only touches collections the file actually contains. Clearing your
+ * classes because an ICS import says nothing about classes would be data loss dressed
+ * up as a restore.
  *
  * ## Why this is driven by a list
  *
@@ -59,9 +64,12 @@ export default function ImportExportButton({
   const [open,             setOpen]             = useState(false)
   const [status,           setStatus]           = useState(null)
   const [conflictStrategy, setConflictStrategy] = useState('skip')
+  // 'merge' | 'replace'. Always resets to merge — a destructive default is how a
+  // restore happens by accident.
+  const [mode,             setMode]             = useState('merge')
   const fileRef = useRef(null)
 
-  function reset() { setStatus(null); setConflictStrategy('skip') }
+  function reset() { setStatus(null); setConflictStrategy('skip'); setMode('merge') }
 
   const listOf = key => (Array.isArray(collections[key]) ? collections[key] : EMPTY)
 
@@ -114,6 +122,8 @@ export default function ImportExportButton({
         let imported = {}
         let eventPrefsIn
         let preferencesIn
+        // Which collections the file actually carried. An ICS carries events, nothing else.
+        let presentIn = ['events']
 
         if (isIcs) {
           const events = parseIcs(text)
@@ -126,6 +136,7 @@ export default function ImportExportButton({
           imported      = read.collections
           eventPrefsIn  = read.eventPrefs
           preferencesIn = read.preferences
+          presentIn     = read.present
         }
 
         // Diff every collection the same way, so none can be forgotten.
@@ -152,6 +163,7 @@ export default function ImportExportButton({
           reviewing: true,
           source: isIcs ? 'ics' : 'json',
           groups, newTotal, conflictTotal,
+          present: presentIn,
           eventPrefs:  eventPrefsIn,
           preferences: preferencesIn,
         })
@@ -180,14 +192,19 @@ export default function ImportExportButton({
       return result
     }
 
+    const present = new Set(status.present ?? EMPTY)
+
     const merged = {}
     for (const { key } of BACKUP_COLLECTIONS) {
       const { fresh, clashing } = status.groups[key] ?? { fresh: EMPTY, clashing: EMPTY }
-      merged[key] = mergeList(listOf(key), fresh, clashing, conflictStrategy)
+      merged[key] = replacing
+        // Only what the file carries is replaced; a collection it never mentions is
+        // left exactly as it is rather than being emptied.
+        ? (present.has(key) ? [...fresh, ...clashing] : listOf(key))
+        : mergeList(listOf(key), fresh, clashing, conflictStrategy)
     }
 
-    // Settings restore wholesale — merging them record-by-record is meaningless.
-    if (status.preferences) applyLocalPrefs(status.preferences, storage())
+    if (status.preferences) applyLocalPrefs(status.preferences, storage(), { replace: replacing })
 
     onImport({
       collections: merged,
@@ -195,6 +212,7 @@ export default function ImportExportButton({
          wipe hidden-event settings the file simply had no opinion on. */
       eventPrefs:  status.eventPrefs,
       preferences: status.preferences,
+      mode,
     })
     setStatus('done')
     setTimeout(() => { reset(); setOpen(false) }, 1800)
@@ -211,6 +229,67 @@ export default function ImportExportButton({
     : EMPTY
 
   const settingsRestored = isReviewing && (!!status.eventPrefs || !!status.preferences)
+
+  /* The number a destructive action has to state before it runs. Counts only live
+     records in the collections the file would overwrite — tombstones are already
+     deleted, and saying "this removes 412 items" when 300 are old deletions would be
+     scaremongering rather than informing. */
+  const replaceRemoves = isReviewing
+    ? (status.present ?? EMPTY).reduce(
+        (n, key) => n + listOf(key).filter(x => !x?.deletedAt && !x?.trashedAt).length, 0)
+    : 0
+
+  const replaceKeeps = isReviewing
+    ? BACKUP_COLLECTIONS
+        .filter(({ key }) => !(status.present ?? EMPTY).includes(key) && listOf(key).length > 0)
+        .map(({ label }) => label)
+    : EMPTY
+
+  const replacing = mode === 'replace'
+
+  const modePicker = (
+    <div role="radiogroup" aria-label="Import mode" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      {[
+        { value: 'merge',   label: 'Add to what I have', desc: 'Nothing is deleted' },
+        { value: 'replace', label: 'Replace everything', desc: 'Wipe and restore from this file' },
+      ].map(opt => (
+        <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer' }}>
+          <input type="radio" name="importMode" value={opt.value}
+                 checked={mode === opt.value}
+                 onChange={() => setMode(opt.value)}
+                 style={{ marginTop: 2, accentColor: opt.value === 'replace' ? 'var(--red)' : 'var(--blue)', flexShrink: 0 }} />
+          <div>
+            <div style={{
+              fontSize: '0.76rem', fontWeight: 600, lineHeight: 1.2,
+              color: mode === opt.value ? (opt.value === 'replace' ? 'var(--red)' : 'var(--text)') : 'var(--text-2)',
+            }}>
+              {opt.label}
+            </div>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', lineHeight: 1.3 }}>{opt.desc}</div>
+          </div>
+        </label>
+      ))}
+    </div>
+  )
+
+  /* Stated before the button can be pressed, with a number. "This is destructive" is
+     a shrug; "this deletes 47 things" is a decision. */
+  const replaceWarning = replacing && (
+    <div style={{
+      fontSize: '0.7rem', lineHeight: 1.5, color: 'var(--red)',
+      background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.25)',
+      borderRadius: 8, padding: '7px 9px',
+    }}>
+      {replaceRemoves > 0
+        ? <>Deletes <strong>{replaceRemoves}</strong> item{replaceRemoves !== 1 ? 's' : ''} currently on this device. This cannot be undone.</>
+        : <>Replaces everything in this file. This cannot be undone.</>}
+      {replaceKeeps.length > 0 && (
+        <div style={{ color: 'var(--text-3)', marginTop: 4 }}>
+          Not in this file, so kept as-is: {replaceKeeps.join(', ')}.
+        </div>
+      )}
+    </div>
+  )
 
   const strategyOptions = [
     { value: 'skip',     label: 'Keep mine',    desc: 'Ignore imported duplicates' },
@@ -249,7 +328,11 @@ export default function ImportExportButton({
                 <div style={{ fontSize: '0.7rem', color: 'rgba(147,197,253,.6)' }}>Settings will be restored.</div>
               )}
             </div>
-            {hasConflicts && (
+            {modePicker}
+            {replaceWarning}
+
+            {/* Only meaningful when merging — a replace has no duplicates to resolve. */}
+            {hasConflicts && !replacing && (
               <div>
                 <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(147,197,253,.5)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                   For duplicates
@@ -278,8 +361,8 @@ export default function ImportExportButton({
                 Cancel
               </button>
               <button onClick={handleConfirmImport}
-                      style={{ flex: 1.5, padding: '8px 10px', borderRadius: 8, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>
-                Import
+                      style={{ flex: 1.5, padding: '8px 10px', borderRadius: 8, border: 'none', background: replacing ? 'var(--red)' : 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>
+                {replacing ? 'Replace everything' : 'Import'}
               </button>
             </div>
           </div>
@@ -394,8 +477,11 @@ export default function ImportExportButton({
                 )}
               </div>
 
-              {/* Conflict strategy picker */}
-              {hasConflicts && (
+              {modePicker}
+              {replaceWarning}
+
+              {/* Conflict strategy picker — a replace has no duplicates to resolve. */}
+              {hasConflicts && !replacing && (
                 <div>
                   <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
                     For duplicates
@@ -430,8 +516,12 @@ export default function ImportExportButton({
                   Cancel
                 </button>
                 <button onClick={handleConfirmImport}
-                        style={{ ...btnStyle('var(--blue-text)', 'var(--blue-bg)'), flex: 1.5, justifyContent: 'center', fontWeight: 700, border: '1px solid var(--blue-ring)' }}>
-                  Import
+                        style={{
+                          ...btnStyle(replacing ? '#fff' : 'var(--blue-text)', replacing ? 'var(--red)' : 'var(--blue-bg)'),
+                          flex: 1.5, justifyContent: 'center', fontWeight: 700,
+                          border: replacing ? '1px solid var(--red)' : '1px solid var(--blue-ring)',
+                        }}>
+                  {replacing ? 'Replace everything' : 'Import'}
                 </button>
               </div>
             </div>

@@ -1589,7 +1589,7 @@ export default function Home() {
 
   // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
   // We just set state directly — the existing localStorage sync effects will persist them.
-  const handleImport = useCallback(({ collections: merged, eventPrefs: importedPrefs }) => {
+  const handleImport = useCallback(({ collections: merged, eventPrefs: importedPrefs, mode }) => {
     /* Every collection the backup carries, restored by the same rule: the component
        has already merged each one against what is here, so these are final arrays.
        A collection the file said nothing about arrives unchanged, which is what lets
@@ -1607,6 +1607,15 @@ export default function Home() {
        different from it saying you have none — only the latter should overwrite. */
     if (importedPrefs && typeof importedPrefs === 'object') {
       setEventPrefs(prev => ({ ...prev, ...importedPrefs }))
+    }
+
+    /* A restore replaces rather than adds, so counting what grew would describe it
+       backwards — "+0 events" for a file that just reinstated forty of them. */
+    if (mode === 'replace') {
+      const live = arr => (Array.isArray(arr) ? arr.filter(x => !x?.deletedAt && !x?.trashedAt).length : 0)
+      const total = Object.values(merged ?? {}).reduce((n, arr) => n + live(arr), 0)
+      pushToast('Restored from backup', `This device now matches the file — ${total} item${total !== 1 ? 's' : ''}.`)
+      return
     }
 
     const grew = (after, before) => (Array.isArray(after) ? after.length - before.length : 0)

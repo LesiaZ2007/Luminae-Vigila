@@ -184,3 +184,50 @@ describe('looksLikeBackup', () => {
     expect(looksLikeBackup('a string')).toBe(false)
   })
 })
+
+describe('applyLocalPrefs — replace', () => {
+  it('drops fields the file does not mention', () => {
+    const storage = fakeStorage({ [PREF_KEYS.gpa]: JSON.stringify({ credits: { 1: 3 }, overrides: { 1: 90 } }) })
+    applyLocalPrefs({ gpa: { credits: { 2: 4 } } }, storage, { replace: true })
+    expect(JSON.parse(storage.dump()[PREF_KEYS.gpa])).toEqual({ credits: { 2: 4 } })
+  })
+
+  /* The feed URL is absent because *we* stripped it on the way out, not because the
+     user cleared it — deleting it as a side effect of protecting it would be the
+     worst of both. */
+  it('still keeps a redacted field, which the file was never allowed to carry', () => {
+    const storage = fakeStorage({
+      [PREF_KEYS.canvas]: JSON.stringify({ icsUrl: 'https://keep.me/f.ics', showOnCalendar: false, stale: true }),
+    })
+    applyLocalPrefs({ canvas: { showOnCalendar: true } }, storage, { replace: true })
+    const after = JSON.parse(storage.dump()[PREF_KEYS.canvas])
+    expect(after.icsUrl).toBe('https://keep.me/f.ics')
+    expect(after.showOnCalendar).toBe(true)
+    expect(after.stale).toBeUndefined()
+  })
+
+  it('leaves a blob alone when the file has nothing for it', () => {
+    const storage = fakeStorage({ [PREF_KEYS.gpa]: JSON.stringify({ credits: { 1: 3 } }) })
+    applyLocalPrefs({ canvas: { a: 1 } }, storage, { replace: true })
+    expect(JSON.parse(storage.dump()[PREF_KEYS.gpa])).toEqual({ credits: { 1: 3 } })
+  })
+})
+
+describe('readBackup — which collections the file actually carried', () => {
+  it('lists every collection of a full backup', () => {
+    const data = buildBackup({ collections: { events: [] } })
+    expect(readBackup(data).present).toHaveLength(BACKUP_COLLECTIONS.length)
+  })
+
+  /* A full restore must only clear what the file has an opinion about; wiping
+     classes because an old backup predates them would be data loss dressed up. */
+  it('lists only what an older file has', () => {
+    const read = readBackup({ version: 1, events: [{ id: 'e1' }], todos: [] })
+    expect(read.present.sort()).toEqual(['events', 'todos'])
+    expect(read.present).not.toContain('classSchedule')
+  })
+
+  it('is empty for a file with no collections at all', () => {
+    expect(readBackup({ preferences: {} }).present).toEqual([])
+  })
+})
