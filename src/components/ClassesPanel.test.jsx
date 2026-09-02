@@ -803,3 +803,156 @@ describe('ClassesPanel — header summary', () => {
     expect(screen.getByText(/1 class · 1 open/)).toBeInTheDocument()
   })
 })
+
+// ── A lab linked into its lecture ───────────────────────────────────────────
+// One class, one card — with each section's meeting pattern inside it. The stored
+// tasks are untouched, so the card has to resolve them on read. See lib/classLinks.js.
+
+const LECTURE = makeClass({ id: 'chem', courseName: 'Organic Chemistry', section: '001' })
+const LAB     = makeClass({
+  id: 'chem_lab', courseName: 'Organic Chemistry Lab', section: 'L02',
+  linkedToClassId: 'chem', days: [4], startTime: '14:00', endTime: '16:50',
+  location: 'Bench 7, Sci Annex',
+})
+
+function renderLinked(props = {}) {
+  return renderPanel({ canvasClasses: [LECTURE, LAB], ...props })
+}
+
+describe('ClassesPanel — linked sections', () => {
+  it('shows one card for the class, not one per section', () => {
+    renderLinked()
+    expect(cards().queryByText('Organic Chemistry Lab')).not.toBeInTheDocument()
+    expect(cards().getByText('Organic Chemistry')).toBeInTheDocument()
+  })
+
+  it('says how many sections there are while the card is shut', () => {
+    renderLinked()
+    expect(cards().getByText(/\+1 section/)).toBeInTheDocument()
+  })
+
+  it('lists each section with its own pattern once opened', () => {
+    renderLinked()
+    openCard('Organic Chemistry')
+    // Each meets at its own hour — the reason it was a separate entry at all.
+    expect(cards().getByText('Sections')).toBeInTheDocument()
+    expect(cards().getAllByText(/MWF · 9:00 AM–9:50 AM/).length).toBeGreaterThan(0)
+    expect(cards().getByText(/2:00 PM–4:50 PM/)).toBeInTheDocument()
+    expect(cards().getByText(/Bench 7, Sci Annex/)).toBeInTheDocument()
+    // The main entry is marked as such, so it is clear which one the class is named for.
+    expect(cards().getByText('main')).toBeInTheDocument()
+  })
+
+  it('offers an Edit per section, and calls back with that section', async () => {
+    const onEditClass = vi.fn()
+    renderLinked({ onEditClass })
+    openCard('Organic Chemistry')
+    const edits = cards().getAllByRole('button', { name: /^Edit$/ })
+    expect(edits).toHaveLength(2)   // one per section, main included
+    await userEvent.click(cards().getByTitle('Edit Organic Chemistry Lab'))
+    expect(onEditClass).toHaveBeenCalledWith(expect.objectContaining({ id: 'chem_lab' }))
+  })
+
+  it("shows the lab's tasks on the class card, without moving them", () => {
+    // Filed under `class:chem_lab` before the link existed. Nothing rewrote it.
+    renderLinked({ todos: [{ id: 't1', title: 'Titration write-up', category: 'class:chem_lab', dueDate: '2026-03-05' }] })
+    openCard('Organic Chemistry')
+    expect(cards().getByText('Titration write-up')).toBeInTheDocument()
+  })
+
+  it('counts the lab’s work in the class’s open badge', () => {
+    renderLinked({
+      todos: [
+        { id: 't1', title: 'Lecture reading', category: 'class:chem',     dueDate: '2026-03-05' },
+        { id: 't2', title: 'Lab report',      category: 'class:chem_lab', dueDate: '2026-03-06' },
+      ],
+    })
+    expect(cards().getByText('2 open')).toBeInTheDocument()
+  })
+
+  it("shows both sections' meetings under Coming up", () => {
+    renderLinked({
+      canvasClassEvents: [
+        meeting('2026-03-04', {
+          title: 'Organic Chemistry (001)',
+          extendedProps: { source: 'canvas-class', classId: 'chem', courseName: 'Organic Chemistry' },
+        }),
+        meeting('2026-03-05', {
+          id: 'canvascls_chem_lab_2026-03-05', title: 'Organic Chemistry Lab (L02)',
+          start: '2026-03-05T14:00:00', end: '2026-03-05T16:50:00',
+          extendedProps: { source: 'canvas-class', classId: 'chem_lab', courseName: 'Organic Chemistry Lab' },
+        }),
+      ],
+    })
+    openCard('Organic Chemistry')
+    expect(cards().getByText('Organic Chemistry (001)')).toBeInTheDocument()
+    expect(cards().getByText('Organic Chemistry Lab (L02)')).toBeInTheDocument()
+  })
+
+  it('says the reminder rules cover every section', () => {
+    renderLinked()
+    openCard('Organic Chemistry')
+    expect(cards().getByText('These cover every section of this class.')).toBeInTheDocument()
+  })
+
+  it('gives the lab its own card back when the link is broken', () => {
+    renderPanel({ canvasClasses: [LECTURE, { ...LAB, linkedToClassId: null }] })
+    expect(cards().getByText('Organic Chemistry Lab')).toBeInTheDocument()
+    expect(cards().queryByText(/\+1 section/)).not.toBeInTheDocument()
+  })
+
+  it('leaves an ordinary class with no Sections block at all', () => {
+    renderPanel()
+    openCard()
+    expect(cards().queryByText('Sections')).not.toBeInTheDocument()
+    // ...and it keeps its footer Edit, which the Sections block replaces.
+    expect(cards().getByRole('button', { name: /Edit class/ })).toBeInTheDocument()
+  })
+})
+
+// ── How much of a day is behind you ─────────────────────────────────────────
+
+describe('ClassesPanel — the day counter', () => {
+  /* Three tasks on one day, one of them ticked off. The counter is the only complete
+     count on a busy cell, since the chips themselves are cut off at three. */
+  const MIXED = [
+    { id: 'a', title: 'Aardvark reading', category: 'class:c1', dueDate: '2026-03-12', completed: true },
+    { id: 'm', title: 'Midterm essay',    category: 'class:c1', dueDate: '2026-03-12' },
+    { id: 'z', title: 'Zebra problem set', category: 'class:c1', dueDate: '2026-03-12' },
+  ]
+
+  it('shows done out of total on the day box', () => {
+    renderPanel({ todos: MIXED })
+    expect(calendar().getByTitle('1 of 3 done')).toHaveTextContent('1/3')
+  })
+
+  it('puts a day with nothing on it out of the counter entirely', () => {
+    renderPanel({ todos: MIXED })
+    // A "0/0" on thirty empty cells would be noise, not information.
+    expect(calendar().queryByTitle('0 of 0 done')).not.toBeInTheDocument()
+  })
+
+  it('reads as complete once the whole day is done', () => {
+    renderPanel({ todos: MIXED.map(t => ({ ...t, completed: true })) })
+    expect(calendar().getByTitle('3 of 3 done')).toHaveTextContent('3/3')
+  })
+
+  it('never reads as complete while an exam sits on the day', () => {
+    renderPanel({
+      todos: [{ id: 't', title: 'Review', category: 'class:c1', dueDate: '2026-03-12', completed: true }],
+      canvasClassEvents: [meeting('2026-03-12', {
+        title: 'Physics midterm',
+        extendedProps: { source: 'canvas-class', classId: 'c1', courseName: 'Physics 101', isExam: true },
+      })],
+    })
+    expect(calendar().getByTitle('1 of 2 done')).toBeInTheDocument()
+  })
+
+  it('orders what is left to do ahead of what is finished', () => {
+    renderPanel({ todos: MIXED })
+    // Alphabetically 'Aardvark reading' would lead; it is done, so it comes last.
+    const chips = calendar().getAllByTitle(/reading|essay|problem set/)
+      .map(el => el.getAttribute('title'))
+    expect(chips[chips.length - 1]).toMatch(/Aardvark reading/)
+  })
+})

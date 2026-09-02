@@ -24,7 +24,7 @@ import {
   ChevronLeft, ChevronRight, GraduationCap, BookOpen, CircleCheck, Circle, AlertCircle, X,
 } from 'lucide-react'
 import {
-  monthGrid, groupByDate, isOverdue, describeDay,
+  monthGrid, groupByDate, isOverdue, describeDay, dayProgress,
   bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule, LOAD_LABELS,
   overdueItems, upcomingDays, nextDateAfter, addDays,
 } from '@/lib/classCalendar'
@@ -539,6 +539,8 @@ export default function ClassCalendar({
           const extra      = dayItems.length - shown.length
           const level      = loadLevel(dayLoad(dayItems, cutoffs))
           const isDropZone = dragOver === cell.date
+          const progress   = dayProgress(dayItems)
+          const allDone    = progress.total > 0 && progress.done === progress.total
 
           return (
             <div
@@ -578,6 +580,26 @@ export default function ClassCalendar({
                 </span>
                 {anyOverdue && (
                   <span title="Something here is overdue" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--red)' }} />
+                )}
+
+                {/* How much of the day is behind you. Sits opposite the date because it
+                    is a fact about the whole cell rather than about any one chip — and
+                    because the chips themselves are cut off at three, so on a busy day
+                    this is the only complete count. Turns green only when everything
+                    is actually done; see `dayProgress` on why an exam never lets it. */}
+                {progress.total > 0 && (
+                  <span
+                    title={`${progress.done} of ${progress.total} done`}
+                    style={{
+                      marginLeft: 'auto', flexShrink: 0,
+                      fontSize: isMobile ? '0.58rem' : '0.62rem',
+                      fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                      color: allDone ? 'var(--green)' : 'var(--text-3)',
+                      opacity: progress.done > 0 || !isMobile ? 1 : 0.6,
+                    }}
+                  >
+                    {progress.done}/{progress.total}
+                  </span>
                 )}
               </div>
 

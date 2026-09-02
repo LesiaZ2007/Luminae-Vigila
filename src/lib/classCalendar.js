@@ -28,6 +28,7 @@ import { toYMDLocal }      from '@/lib/calendarView'
 import { isDateStr }       from '@/lib/classInstances'
 import { classIdForTodo }  from '@/lib/classReminders'
 import { getCourseColor }  from '@/lib/courseColors'
+import { classLinksFor, canonicalClassId } from '@/lib/classLinks'
 import { isCompleted }     from '@/components/AssignmentRow'
 
 const DEFAULT_COLOR = '#3a6fa8'
@@ -58,10 +59,17 @@ export function localDayOf(value) {
 export function buildCourseworkItems({
   classes = [], todos = [], assignments = [], classEvents = [], courseColors = {},
 } = {}) {
-  const byId     = new Map(classes.filter(c => c?.id).map(c => [String(c.id), c]))
+  const byId  = new Map(classes.filter(c => c?.id).map(c => [String(c.id), c]))
+  const links = classLinksFor(classes)
+
+  /* A linked section's work is filed under the class it merges into — same name, same
+     colour, one entry in the legend. The meeting *times* stay separate, which is the
+     calendar tab's business; this calendar only ever showed things with deadlines. */
+  const merged = id => byId.get(canonicalClassId(links, id))
+
   const byCourse = new Map()
   for (const c of classes) {
-    if (c?.canvasCourseId != null) byCourse.set(String(c.canvasCourseId), c)
+    if (c?.canvasCourseId != null) byCourse.set(String(c.canvasCourseId), merged(c.id) ?? c)
   }
 
   const items = []
@@ -69,7 +77,7 @@ export function buildCourseworkItems({
   // ── Tasks filed under a class ──
   for (const td of todos) {
     if (!td?.id || td.deletedAt || !td.dueDate) continue
-    const classId = classIdForTodo(td)
+    const classId = classIdForTodo(td, classes)
     if (!classId) continue
     const cls = byId.get(classId)
     // A task pointing at a class that was deleted keeps its own colour rather than
@@ -111,7 +119,9 @@ export function buildCourseworkItems({
     if (!ev?.extendedProps?.isExam) continue
     const date = localDayOf(ev.start)
     if (!date) continue
-    const classId = ev.extendedProps.classId != null ? String(ev.extendedProps.classId) : null
+    const classId = ev.extendedProps.classId != null
+      ? canonicalClassId(links, ev.extendedProps.classId)
+      : null
     items.push({
       id:        `exam:${ev.id}`,
       kind:      'exam',
@@ -125,11 +135,33 @@ export function buildCourseworkItems({
     })
   }
 
+  /* Within a day: what is still outstanding, then what is finished.
+     Ahead of the kind order, deliberately. A day cell shows the first few items and
+     hides the rest behind "+3 more", so with finished work sorted in among the rest a
+     day where you had already done the reading could show three ticked-off chips and
+     hide the essay. What is left to do is the question the grid is being asked.
+     Exams are never done, so they keep their place at the front of the outstanding
+     ones rather than being displaced by this. */
   return items.sort((a, b) =>
     a.date.localeCompare(b.date) ||
+    Number(!!a.done) - Number(!!b.done) ||
     KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
     a.title.localeCompare(b.title),
   )
+}
+
+/**
+ * How much of a day's work is behind you: `{ done, total }`.
+ *
+ * Exams are counted in the total but can never be done — you do not tick off an exam,
+ * it happens to you — so a day holding one never reads 3/3. That is honest rather than
+ * annoying: the exam is still ahead of you, and a day that claims to be finished while
+ * an exam sits on it would be the wrong kind of reassurance.
+ */
+export function dayProgress(items = []) {
+  let done = 0
+  for (const it of items) if (it?.done) done++
+  return { done, total: (items ?? []).length }
 }
 
 /** The same items keyed by day, which is how a month grid wants them. */
