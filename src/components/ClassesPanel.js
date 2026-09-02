@@ -26,6 +26,15 @@
  * A Canvas course is not silently dropped just because it was never typed in — that
  * would have been the old Courses tab quietly losing rows. It gets a card that offers
  * to become a real class, which is the one action that makes the rest of it work.
+ *
+ * ## Sections
+ *
+ * A lab or studio linked into another class does not get a card of its own. It is the
+ * same class, so it is the same card: one name, one grade, one list of coursework, one
+ * set of reminder rules — with each section's meeting pattern listed inside, and its own
+ * Edit beside it. Two cards would have been the redundancy linking exists to remove,
+ * and a card for the lab showing an empty task list would be actively misleading, since
+ * the work is all filed on the class. See lib/classLinks.js.
  */
 
 import { useState, useMemo, useEffect } from 'react'
@@ -45,6 +54,7 @@ import { CanvasLogo }        from '@/components/CanvasSettingsModal'
 import { EXAM_COLOR }        from '@/lib/classInstances'
 import { classIdForTodo }    from '@/lib/classReminders'
 import { classCategoryId }   from '@/lib/classCategories'
+import { classLinksFor, isLinkedSection, linkedSectionIds } from '@/lib/classLinks'
 import { courseGradeSummary, gradeColor } from '@/lib/grades'
 import { getCourseColor, CANVAS_COLOR }   from '@/lib/courseColors'
 import { describeLocation }  from '@/lib/maps'
@@ -306,6 +316,16 @@ function ClassCard({
   const color = isCanvasOnly ? entry.color : (cls.color || DEFAULT_COLOR)
   const name  = isCanvasOnly ? entry.courseName : cls.courseName
 
+  /* The class's own entry first, then any lab or studio linked into it. One element
+     for an ordinary class, so everything below reads the same either way. Memoised
+     because the fallback mints a fresh array, which would otherwise re-run every
+     `useMemo` downstream of it on every render. */
+  const sections = useMemo(
+    () => (isCanvasOnly ? [] : (entry.sections ?? [cls])),
+    [isCanvasOnly, entry.sections, cls],
+  )
+  const extraSections = sections.slice(1)
+
   const openTasks = todos.filter(t => !t.completed)
   const doneTasks = todos.filter(t => t.completed)
 
@@ -330,15 +350,21 @@ function ClassCard({
   )
 
   // Study time is keyed by the *Canvas* course id, which is why it only appears for a
-  // linked class — the Focus Timer has never known about schedule entries.
-  const canvasCourseId = isCanvasOnly ? entry.courseId : cls.canvasCourseId
+  // linked class — the Focus Timer has never known about schedule entries. Every
+  // section's course counts: an hour logged against the lab is an hour on the class.
+  const canvasCourseIds = useMemo(() => (
+    isCanvasOnly
+      ? (entry.courseId == null ? [] : [String(entry.courseId)])
+      : [...new Set(sections.map(c => c?.canvasCourseId).filter(id => id != null).map(String))]
+  ), [isCanvasOnly, entry.courseId, sections])
+
   const studySec = useMemo(() => {
-    if (canvasCourseId == null) return 0
+    if (canvasCourseIds.length === 0) return 0
     const weekAgo = now - 7 * 86_400_000
     return (studySessions ?? [])
-      .filter(s => String(s.courseId) === String(canvasCourseId) && new Date(`${s.date}T00:00:00`).getTime() >= weekAgo)
+      .filter(s => canvasCourseIds.includes(String(s.courseId)) && new Date(`${s.date}T00:00:00`).getTime() >= weekAgo)
       .reduce((sum, s) => sum + (s.durationSec ?? 0), 0)
-  }, [studySessions, canvasCourseId, now])
+  }, [studySessions, canvasCourseIds, now])
 
   // "This week" filters the two lists of *work*, which is what the filter is for.
   // Meetings and the grade are left alone.
@@ -408,6 +434,9 @@ function ClassCard({
                 ? `From Canvas · ${openAssignments.length} open`
                 : <>
                     {daysLabel(cls.days)} · {fmt12(cls.startTime)}
+                    {/* Collapsed, the card has room for the count but not the times —
+                        the pattern of each section is one line down, once it is open. */}
+                    {extraSections.length > 0 && ` · +${extraSections.length} section${extraSections.length === 1 ? '' : 's'}`}
                     {nextMeeting && ` · next ${new Date(nextMeeting.start).toLocaleDateString('en-US', { weekday: 'short' })} ${untilLabel(new Date(nextMeeting.start).getTime() - now)}`}
                   </>}
             </span>
@@ -477,9 +506,64 @@ function ClassCard({
               {cls.semesterStart && cls.semesterEnd && (
                 <MetaChip icon={CalendarDays}>{shortDate(cls.semesterStart)} – {shortDate(cls.semesterEnd)}</MetaChip>
               )}
-              {cls.canvasCourseId != null && (
+              {canvasCourseIds.length > 0 && (
                 <MetaChip icon={BookOpen} title="Linked to a Canvas course">Canvas linked</MetaChip>
               )}
+            </div>
+          )}
+
+          {/* ── The other sections of this class ──
+                 A lab meets at its own hour in its own room, which is exactly why it
+                 was typed in separately — so each pattern is stated rather than
+                 averaged into one misleading line. Each keeps its own Edit: its days,
+                 its room and its one-off exceptions are still its own, even though the
+                 coursework below is shared. */}
+          {extraSections.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <SectionHeading icon={Link2} count={sections.length}>Sections</SectionHeading>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {sections.map((sec, i) => {
+                  const secLoc = describeLocation(sec.location)
+                  return (
+                    <div key={sec.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
+                      padding: '7px 10px', borderRadius: 8,
+                      background: 'var(--surface2)', border: '1px solid var(--border)',
+                    }}>
+                      <span style={{ minWidth: 0, flex: '1 1 180px' }}>
+                        <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {sec.courseName}
+                          {sec.section && <span style={{ fontWeight: 500, color: 'var(--text-3)' }}> · {sec.section}</span>}
+                          {i === 0 && (
+                            <span style={{ marginLeft: 6, fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-3)' }}>
+                              main
+                            </span>
+                          )}
+                        </span>
+                        <span style={{ display: 'block', fontSize: '0.71rem', color: 'var(--text-3)', marginTop: 1 }}>
+                          {daysLabel(sec.days)} · {fmt12(sec.startTime)}–{fmt12(sec.endTime)}
+                          {secLoc.kind !== 'empty' && ` · ${secLoc.text}`}
+                        </span>
+                      </span>
+                      {onEdit && (
+                        <button
+                          onClick={() => onEdit(sec)}
+                          title={`Edit ${sec.courseName}`}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                            padding: isMobile ? '6px 11px' : '4px 9px', borderRadius: 7,
+                            border: '1px solid var(--border)', background: 'var(--surface)',
+                            color: 'var(--text-3)', fontFamily: 'inherit', fontSize: '0.72rem',
+                            fontWeight: 700, cursor: 'pointer',
+                          }}
+                        >
+                          <Pencil size={11} /> Edit
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
 
@@ -614,7 +698,10 @@ function ClassCard({
             <div style={{ marginBottom: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
               <LinkedNotes
                 notes={notes}
-                targetId={String(cls.id)}
+                /* Every section's id, so a note filed against the lab before it was
+                   linked is still reachable from the class it now belongs to. New ones
+                   are filed against the main entry — the first id. */
+                targetId={sections.map(c => String(c.id))}
                 onOpenNote={onOpenNote}
                 onCreate={onCreateLinkedNote
                   ? () => onCreateLinkedNote({ type: 'class', id: String(cls.id), label: cls.courseName })
@@ -633,11 +720,22 @@ function ClassCard({
                 color={color}
                 onChange={reminders => onSaveReminders?.(cls, reminders)}
               />
+              {/* One rule, one class. Said out loud because the rules editor sits on the
+                  main entry and there is otherwise nothing to tell you it also governs
+                  the lab's deadlines. */}
+              {extraSections.length > 0 && (
+                <p style={{ margin: '6px 0 0', fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.45 }}>
+                  These cover every section of this class.
+                </p>
+              )}
             </div>
           )}
 
-          {/* ── Footer ── */}
-          {!isCanvasOnly && (
+          {/* ── Footer ──
+                 Only when there is no Sections block above: that already offers an Edit
+                 per section, the main entry included, and a second button doing the
+                 same thing is a question about which one to press. */}
+          {!isCanvasOnly && extraSections.length === 0 && (
             <div style={{ display: 'flex', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
               <button
                 onClick={() => onEdit?.(cls)}
@@ -726,11 +824,17 @@ export default function ClassesPanel({
     exitSelect()
   }
 
+  /* The link structure, read by everything below. Memoised on the classes array
+     upstream of here, so this is a map lookup rather than a rebuild. */
+  const links = classLinksFor(canvasClasses)
+
   // ── Index the surrounding data by class, once ──
+  /* Keyed by the *merged* class id throughout, which is what puts the lab's tasks and
+     the lecture's tasks in one list on one card without either being moved. */
   const todosByClass = useMemo(() => {
     const map = new Map()
     for (const td of todos) {
-      const id = classIdForTodo(td)
+      const id = classIdForTodo(td, canvasClasses)
       if (!id) continue
       if (!map.has(id)) map.set(id, [])
       map.get(id).push(td)
@@ -746,20 +850,24 @@ export default function ClassesPanel({
       })
     }
     return map
-  }, [todos])
+  }, [todos, canvasClasses])
 
+  /* Both sections' meetings, in one chronological list. "Coming up" wants to answer
+     "when do I next have Chemistry" — and the answer is Thursday's lab as readily as
+     Tuesday's lecture. The events themselves are untouched; they keep their own titles
+     and times on the calendar. */
   const meetingsByClass = useMemo(() => {
     const map = new Map()
     for (const ev of canvasClassEvents) {
       const id = ev.extendedProps?.classId
       if (id == null) continue
-      const key = String(id)
+      const key = String(links.parentOf.get(String(id)) ?? id)
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(ev)
     }
     for (const list of map.values()) list.sort((a, b) => new Date(a.start) - new Date(b.start))
     return map
-  }, [canvasClassEvents])
+  }, [canvasClassEvents, links])
 
   const assignmentsByCourse = useMemo(() => {
     const map = new Map()
@@ -781,15 +889,23 @@ export default function ClassesPanel({
    * Order: classes you are taking, then Canvas courses awaiting times, then disabled
    * classes. A disabled class is still yours — it keeps its notes and its history —
    * it just should not sit at the top competing with the ones you are in.
+   *
+   * A linked section gets no entry of its own. It rides along on its parent's, in
+   * `sections`, which is what makes one class one card.
    */
   const entries = useMemo(() => {
     const claimed = new Set()
     const active  = []
     const off     = []
+    const byId    = new Map(canvasClasses.filter(c => c?.id != null).map(c => [String(c.id), c]))
 
     for (const cls of [...canvasClasses].sort((a, b) => (a.courseName ?? '').localeCompare(b.courseName ?? ''))) {
+      // A section's Canvas course counts as claimed by the class it belongs to, so it
+      // does not also show up as an unclaimed Canvas course below.
       if (cls.canvasCourseId != null) claimed.add(String(cls.canvasCourseId))
-      const entry = { kind: 'class', key: String(cls.id), cls }
+      if (isLinkedSection(links, cls.id)) continue
+      const sections = [cls, ...linkedSectionIds(links, cls.id).map(id => byId.get(id)).filter(Boolean)]
+      const entry = { kind: 'class', key: String(cls.id), cls, sections }
       if (cls.enabled === false) off.push(entry)
       else active.push(entry)
     }
@@ -809,7 +925,7 @@ export default function ClassesPanel({
     fromCanvas.sort((a, b) => a.courseName.localeCompare(b.courseName))
 
     return [...active, ...fromCanvas, ...off]
-  }, [canvasClasses, canvasAssignments, courseColors])
+  }, [canvasClasses, canvasAssignments, courseColors, links])
 
   /* Everything dated, from every class, for the month grid. Built from the same
      `todos` / `canvasAssignments` / `canvasClassEvents` the cards read, so the two
@@ -858,10 +974,22 @@ export default function ClassesPanel({
     // An exam is not a thing you tick off; it happens to you.
   }
 
+  /* Every section's Canvas course, not just the parent's — a lab often has a Canvas
+     course of its own, and its assignments belong to the class the same way its tasks
+     do. Deduped by course id in case two sections were pointed at the same one. */
   function assignmentsFor(entry) {
-    const courseId = entry.kind === 'canvas' ? entry.courseId : entry.cls.canvasCourseId
-    if (courseId == null) return []
-    return assignmentsByCourse.get(String(courseId)) ?? []
+    if (entry.kind === 'canvas') {
+      return entry.courseId == null ? [] : (assignmentsByCourse.get(String(entry.courseId)) ?? [])
+    }
+    const courseIds = [...new Set(
+      (entry.sections ?? [entry.cls])
+        .map(c => c?.canvasCourseId)
+        .filter(id => id != null)
+        .map(String),
+    )]
+    if (courseIds.length === 0) return []
+    if (courseIds.length === 1) return assignmentsByCourse.get(courseIds[0]) ?? []
+    return courseIds.flatMap(id => assignmentsByCourse.get(id) ?? [])
   }
 
   // ── Term summary for the subtitle ──

@@ -11,7 +11,11 @@
  * Props
  * ─────
  *  notes      Note[]                   — all notes (trashed ones are skipped)
- *  targetId   string                   — the course / event / task id
+ *  targetId   string | string[]        — the course / event / task id. An array when
+ *                                        one thing has several ids: a class with linked
+ *                                        lab sections is one class, and a note filed
+ *                                        against either half belongs to it. New notes
+ *                                        are created against the first id given.
  *  onOpenNote (noteId) => void         — jump to the Notes tab with it open
  *  onCreate   () => void               — optional: start a note already linked
  *  compact    bool                     — tighter styling for modal bodies
@@ -21,10 +25,11 @@ import { NotebookPen, ChevronRight, Plus } from 'lucide-react'
 import { noteDisplayTitle, notePreview, sortNotes } from '@/lib/notes'
 
 export default function LinkedNotes({ notes = [], targetId, onOpenNote, onCreate, compact = false }) {
-  if (!targetId) return null
+  const targetIds = (Array.isArray(targetId) ? targetId : [targetId]).filter(Boolean).map(String)
+  if (targetIds.length === 0) return null
 
   const linked = sortNotes(
-    notes.filter(n => !n.trashedAt && n.linkedTo?.id === targetId)
+    notes.filter(n => !n.trashedAt && n.linkedTo?.id != null && targetIds.includes(String(n.linkedTo.id)))
   )
 
   // Nothing linked and no way to add one — render nothing rather than an

@@ -111,10 +111,19 @@ CREATE TABLE IF NOT EXISTS todo_categories (
 --   { id, courseName, section, professor, location, days[], startTime, endTime,
 --     semesterStart, semesterEnd, color, enabled, canvasCourseId,
 --     exceptions: { cancelled[], added[], exams[] },   -- see lib/classInstances.js
---     reminders:  { tasks: [{ms,label}], exams: [{ms,label}] } }  -- lib/classReminders.js
+--     reminders:  { tasks: [{ms,label}], exams: [{ms,label}] },   -- lib/classReminders.js
+--     linkedToClassId }                                -- see lib/classLinks.js
 --
 -- `reminders` holds the per-class rules ("remind me 2 days before anything due in
 -- Physics"). Being JSONB, adding it needed no migration — nothing to run here.
+--
+-- `linkedToClassId` is how a lab or studio period declares itself part of another
+-- class. It meets at its own hour, so it is its own row and its own calendar events;
+-- everything that groups by class resolves the id to the parent, so the two sections'
+-- tasks, exams, notes and reminders are one class. The child names the parent, never
+-- the reverse, so there is only one row to keep in step — and a link whose target is
+-- gone is simply not a link. Nothing else is rewritten, which is what makes unlinking
+-- restore both halves exactly. Also JSONB: nothing to run here either.
 CREATE TABLE IF NOT EXISTS class_schedule (
   id         TEXT        NOT NULL,
   user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,

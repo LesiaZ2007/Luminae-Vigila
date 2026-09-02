@@ -41,6 +41,7 @@ import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mer
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
+import { clearLinksTo }        from '@/lib/classLinks'
 import { classReminderCandidates } from '@/lib/classReminders'
 import { toYMDLocal } from '@/lib/calendarView'
 import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
@@ -2047,10 +2048,12 @@ export default function Home() {
       // The edit form rebuilds the entry from its fields, so anything it does not have
       // an input for would be dropped on save. `exceptions` is exactly that: cancelled
       // dates and one-off meetings are managed elsewhere, and editing the room number
-      // must not quietly un-cancel a holiday.
+      // must not quietly un-cancel a holiday. `reminders` is the same story — the rules
+      // are edited on the class card, not in the form.
       const stamped = {
         ...entry,
         exceptions: entry.exceptions ?? existing?.exceptions,
+        reminders:  entry.reminders  ?? existing?.reminders,
         updatedAt:  new Date().toISOString(),
       }
       return existing ? prev.map(c => (c.id === stamped.id ? stamped : c)) : [...prev, stamped]
@@ -2098,7 +2101,11 @@ export default function Home() {
   const deleteCanvasClass = useCallback((id) => {
     // Tombstone rather than drop: an absent row reads as "created on another device"
     // to the merge, so a hard delete came back on the next sync.
-    setCanvasClasses(prev => prev.map(c => (c.id === id ? softDelete(c) : c)))
+    //
+    // Any section linked into this class is stood back on its own at the same time.
+    // The resolver already ignores a link whose target is deleted, so this is not what
+    // makes the delete safe — it is what stops a dead id syncing forever.
+    setCanvasClasses(prev => clearLinksTo(prev.map(c => (c.id === id ? softDelete(c) : c)), id))
   }, [])
 
   /* ── Expand class schedule entries into calendar events ── */
@@ -3572,6 +3579,9 @@ export default function Home() {
              are applied to state immediately, and a stale prop would show the list
              unchanged until the form was reopened. */
           editClass={editingClass ? (canvasClasses.find(c => c.id && c.id === editingClass.id) ?? editingClass) : null}
+          /* The rest of the schedule, so a lab can be declared a section of the
+             lecture it belongs to. */
+          classes={canvasClasses}
           onSave={saveCanvasClass}
           onDelete={deleteCanvasClass}
           onRestoreMeeting={restoreClassMeeting}

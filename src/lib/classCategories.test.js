@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   CLASS_PREFIX, classCategoryId, isClassCategoryId, classIdFromCategoryId,
-  classCategories, mergeCategories, findCategory,
+  classCategories, mergeCategories, findCategory, findCategoryForClasses,
 } from './classCategories'
 
 const CLASSES = [
@@ -102,5 +102,65 @@ describe('findCategory', () => {
     expect(findCategory(all, null)).toBeNull()
     expect(findCategory(all, undefined)).toBeNull()
     expect(findCategory(undefined, 'academic')).toBeNull()
+  })
+})
+
+// ── Linked lab / studio sections ────────────────────────────────────────────
+// A section merged into another class is not a category of its own: one class, one
+// option in every picker. See lib/classLinks.js.
+
+const LINKED_CLASSES = [
+  { id: 'chem',     courseName: 'Organic Chemistry',     color: '#3a6fa8' },
+  { id: 'chem_lab', courseName: 'Organic Chemistry Lab', color: '#10b981', linkedToClassId: 'chem' },
+]
+
+describe('classCategories with linked sections', () => {
+  it('offers the class once, not once per section', () => {
+    const derived = classCategories(LINKED_CLASSES)
+    expect(derived.map(c => c.id)).toEqual(['class:chem'])
+    expect(derived[0].label).toBe('Organic Chemistry')
+  })
+
+  it('names the sections on the surviving option', () => {
+    expect(classCategories(LINKED_CLASSES)[0].sectionIds).toEqual(['chem_lab'])
+  })
+
+  it('leaves an unlinked class with no sectionIds at all', () => {
+    expect(classCategories(CLASSES)[0].sectionIds).toBeUndefined()
+  })
+
+  it('offers both again once the link is broken', () => {
+    const unlinked = [LINKED_CLASSES[0], { ...LINKED_CLASSES[1], linkedToClassId: null }]
+    expect(classCategories(unlinked).map(c => c.id)).toEqual(['class:chem', 'class:chem_lab'])
+  })
+
+  it('offers the section on its own when its class is switched off', () => {
+    // The parent is out of the picker, so resolving onto it would leave the section's
+    // work with no category anywhere.
+    const off = [{ ...LINKED_CLASSES[0], enabled: false }, LINKED_CLASSES[1]]
+    expect(classCategories(off).map(c => c.id)).toEqual(['class:chem_lab'])
+  })
+})
+
+describe('findCategoryForClasses', () => {
+  const all = mergeCategories(STORED, classCategories(LINKED_CLASSES))
+
+  it('resolves a task filed under the lab onto the class it now belongs to', () => {
+    // The stored category is untouched by linking — this is the read that makes the
+    // task keep a chip instead of losing its category.
+    expect(findCategoryForClasses(all, 'class:chem_lab', LINKED_CLASSES).id).toBe('class:chem')
+  })
+
+  it('finds an unmerged class category directly', () => {
+    expect(findCategoryForClasses(all, 'class:chem', LINKED_CLASSES).label).toBe('Organic Chemistry')
+  })
+
+  it('leaves an ordinary category alone', () => {
+    expect(findCategoryForClasses(all, 'academic', LINKED_CLASSES).label).toBe('Academic')
+  })
+
+  it('still returns null for a class that is simply gone', () => {
+    expect(findCategoryForClasses(all, 'class:deleted', LINKED_CLASSES)).toBeNull()
+    expect(findCategoryForClasses(all, null, LINKED_CLASSES)).toBeNull()
   })
 })

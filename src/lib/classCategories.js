@@ -16,7 +16,15 @@
  * The stored side is untouched: a task filed under a class keeps `class:<id>` in its
  * ordinary `category` field, so filtering, grouping and colouring all work with no
  * special case. Only the *options list* is assembled here.
+ *
+ * A section linked into another class contributes no category of its own — one class,
+ * one option, which is the whole point of linking. Its existing tasks still resolve,
+ * through `canonicalCategoryId`; see `classLinks.js`.
  */
+
+import {
+  classLinksFor, isLinkedSection, hasLinkedSections, linkedSectionIds, canonicalCategoryId,
+} from '@/lib/classLinks'
 
 /** Namespaced so a class id can never collide with a user-made category id. */
 export const CLASS_PREFIX = 'class:'
@@ -42,16 +50,24 @@ export function classIdFromCategoryId(categoryId) {
  * Disabled classes are left out: they are already hidden from the calendar, and
  * offering to file new work under a class you have switched off is noise. Tasks
  * already filed under one keep their category — see `findCategory`.
+ *
+ * A linked section is left out for a different reason: it is not a class of its own any
+ * more. Offering both "Organic Chemistry" and "Organic Chemistry Lab" is precisely the
+ * redundancy linking removes, and its `sectionIds` are carried on the surviving option
+ * so callers that need to match a stored `class:<section>` category have them.
  */
 export function classCategories(canvasClasses = []) {
+  const links = classLinksFor(canvasClasses)
   return (canvasClasses ?? [])
     .filter(c => c?.id && c.enabled !== false && !c.deletedAt)
+    .filter(c => !isLinkedSection(links, c.id))
     .map(c => ({
-      id:      classCategoryId(c.id),
-      label:   c.courseName || 'Class',
-      color:   c.color || '#3a6fa8',
-      isClass: true,
-      classId: c.id,
+      id:         classCategoryId(c.id),
+      label:      c.courseName || 'Class',
+      color:      c.color || '#3a6fa8',
+      isClass:    true,
+      classId:    c.id,
+      sectionIds: hasLinkedSections(links, c.id) ? linkedSectionIds(links, c.id) : undefined,
     }))
 }
 
@@ -78,4 +94,22 @@ export function mergeCategories(stored = [], derived = []) {
 export function findCategory(categories = [], categoryId) {
   if (!categoryId) return null
   return (categories ?? []).find(c => c?.id === categoryId) ?? null
+}
+
+/**
+ * `findCategory`, but a `class:<section>` category resolves onto the class it merges
+ * into — so a task filed under the lab before it was linked still shows the lecture's
+ * chip, in the lecture's colour, instead of losing its category the moment the two
+ * became one class.
+ *
+ * Takes the schedule rather than a prepared link map so a caller with a task and a
+ * class list needs nothing else. `classLinksFor` memoises, so this is a map lookup
+ * after the first call per schedule.
+ */
+export function findCategoryForClasses(categories = [], categoryId, canvasClasses = []) {
+  if (!categoryId) return null
+  const direct = findCategory(categories, categoryId)
+  if (direct) return direct
+  if (!isClassCategoryId(categoryId)) return null
+  return findCategory(categories, canonicalCategoryId(classLinksFor(canvasClasses), categoryId))
 }

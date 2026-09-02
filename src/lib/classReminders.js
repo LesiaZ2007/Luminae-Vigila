@@ -39,6 +39,7 @@
 import { reminderLabelForMs }   from '@/lib/reminders'
 import { classIdFromCategoryId } from '@/lib/classCategories'
 import { getExceptions }         from '@/lib/classInstances'
+import { classLinksFor, canonicalClassId, isLinkedSection, sectionIds } from '@/lib/classLinks'
 
 const DAY  = 24 * 60 * 60_000
 const WEEK = 7 * DAY
@@ -99,11 +100,21 @@ export function hasClassRules(cls) {
   return r.tasks.length > 0 || r.exams.length > 0
 }
 
-/** Class rules by class id, for the whole schedule at once. */
+/**
+ * Class rules by class id, for the whole schedule at once.
+ *
+ * A section linked into another class contributes nothing, even if it has rules stored
+ * from before it was linked. The merged class has one set of rules — the parent's —
+ * because "remind me two days before anything due in Chemistry" is one sentence, and
+ * honouring both halves would send two notifications for one deadline whenever the two
+ * sections disagreed. The child's stored rules are left in place, untouched, so
+ * unlinking restores them.
+ */
 export function classRulesById(classes = []) {
+  const links = classLinksFor(classes)
   const map = new Map()
   for (const cls of classes ?? []) {
-    if (!cls?.id) continue
+    if (!cls?.id || isLinkedSection(links, cls.id)) continue
     const rules = getClassRules(cls)
     if (rules.tasks.length || rules.exams.length) map.set(String(cls.id), rules)
   }
@@ -116,11 +127,20 @@ export function classRulesById(classes = []) {
  * `category` is the source of truth and `linkedClassId` is the denormalised cache of
  * it — see `classCategories.js`. Older tasks predate the category and only have the
  * link, so both are consulted, in that order.
+ *
+ * Pass the schedule as `classes` to have a linked section resolved onto the class it
+ * merges into. That is what makes the lab's tasks and the lecture's tasks one list
+ * everywhere they are grouped by class, with nothing rewritten — see `classLinks.js`.
+ * Omitting it gives the raw stored id, which is what a caller wants when it is asking
+ * "which entry did this actually name".
  */
-export function classIdForTodo(todo) {
+export function classIdForTodo(todo, classes) {
   const fromCategory = classIdFromCategoryId(todo?.category)
-  if (fromCategory) return String(fromCategory)
-  return todo?.linkedClassId ? String(todo.linkedClassId) : null
+  const raw = fromCategory ? String(fromCategory)
+            : todo?.linkedClassId ? String(todo.linkedClassId)
+            : null
+  if (!raw || classes === undefined) return raw
+  return canonicalClassId(classLinksFor(classes), raw)
 }
 
 /**
@@ -215,18 +235,23 @@ export function todoDueIso(todo) {
  * @param {object[]} todos       Tasks. Completed and deleted ones are skipped.
  * @param {object[]} assignments Canvas assignments (client only — the server never
  *                               stores them). Matched by the class's `canvasCourseId`.
+ *
+ * Linked sections are resolved throughout: a rule set on the lecture covers the lab's
+ * tasks, the lab's Canvas course and the lab's exams, because they are one class. Only
+ * the parent carries rules (see `classRulesById`), so nothing fires twice.
  */
 export function classReminderCandidates({ classes = [], todos = [], assignments = [] } = {}) {
   const rulesById = classRulesById(classes)
   if (rulesById.size === 0) return []
 
-  const byId = new Map((classes ?? []).filter(c => c?.id).map(c => [String(c.id), c]))
-  const out  = []
+  const links = classLinksFor(classes)
+  const byId  = new Map((classes ?? []).filter(c => c?.id).map(c => [String(c.id), c]))
+  const out   = []
 
   // ── Tasks ──
   for (const td of todos ?? []) {
     if (!td?.id || td.completed || td.deletedAt || td.reminder) continue
-    const classId = classIdForTodo(td)
+    const classId = classIdForTodo(td, classes)
     if (!classId) continue
     const rules = rulesById.get(classId)
     if (!rules?.tasks.length) continue
@@ -246,11 +271,15 @@ export function classReminderCandidates({ classes = [], todos = [], assignments 
   }
 
   // ── Canvas assignments, via the class's optional Canvas link ──
+  // Every section's Canvas course points at the merged class's rules — a lab with its
+  // own Canvas course is still the class the rule was written about.
   const byCanvasCourse = new Map()
   for (const [classId, rules] of rulesById) {
-    const canvasCourseId = byId.get(classId)?.canvasCourseId
-    if (canvasCourseId == null) continue
-    byCanvasCourse.set(String(canvasCourseId), { classId, rules })
+    for (const sectionId of sectionIds(links, classId)) {
+      const canvasCourseId = byId.get(sectionId)?.canvasCourseId
+      if (canvasCourseId == null) continue
+      byCanvasCourse.set(String(canvasCourseId), { classId, rules })
+    }
   }
   if (byCanvasCourse.size > 0) {
     for (const a of assignments ?? []) {
@@ -273,20 +302,24 @@ export function classReminderCandidates({ classes = [], todos = [], assignments 
     }
   }
 
-  // ── Exams ──
+  // ── Exams, from every section of the class ──
   for (const [classId, rules] of rulesById) {
     if (!rules.exams.length) continue
-    const cls = byId.get(classId)
-    for (const exam of examOccurrences(cls)) {
-      for (const rule of rules.exams) {
-        const at = fireTimeFor(rule, exam.startIso)
-        if (at == null) continue
-        out.push({
-          key:   classReminderKey('ex', `${classId}-${exam.date}`, rule.ms, at),
-          at,
-          title: `${exam.className} — ${exam.title}`,
-          body:  rule.label,
-        })
+    for (const sectionId of sectionIds(links, classId)) {
+      for (const exam of examOccurrences(byId.get(sectionId))) {
+        for (const rule of rules.exams) {
+          const at = fireTimeFor(rule, exam.startIso)
+          if (at == null) continue
+          out.push({
+            // Keyed on the *section* the exam sits on, not on the merged class: two
+            // sections can hold an exam on one date, and collapsing the key would
+            // silently drop the second one.
+            key:   classReminderKey('ex', `${sectionId}-${exam.date}`, rule.ms, at),
+            at,
+            title: `${exam.className} — ${exam.title}`,
+            body:  rule.label,
+          })
+        }
       }
     }
   }
