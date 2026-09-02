@@ -3,7 +3,8 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye, GripVertical } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
-import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId, isClassCategoryId as isClassCategory } from '@/lib/classCategories'
+import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId, isClassCategoryId as isClassCategory, findCategoryForClasses } from '@/lib/classCategories'
+import { classLinksFor, canonicalCategoryId, canonicalClassId } from '@/lib/classLinks'
 
 import Confetti from '@/components/Confetti'
 
@@ -131,7 +132,12 @@ export default function TodoPanel({
     if (filter === 'upcoming') return !t.completed
     return true
   }).filter(t =>
-    activeCategories.length === 0 || activeCategories.includes(t.category)
+    /* Resolved, so filtering by a class picks up work filed under its linked sections
+       too — those chips are gone from the bar, and a task that had been filed under the
+       lab must not become unreachable by any filter. An ordinary category passes
+       through `canonicalCategoryId` untouched. */
+    activeCategories.length === 0 ||
+    activeCategories.includes(canonicalCategoryId(classLinksFor(canvasClasses), t.category))
   ).sort((a, b) => {
     // sortOrder takes priority when both items have it
     if (a.sortOrder != null && b.sortOrder != null) return a.sortOrder - b.sortOrder
@@ -568,14 +574,21 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
   const SWIPE_THRESHOLD = 72   // px to trigger action
   const SWIPE_MAX       = 100  // clamp visual travel
 
-  const cat        = todoCategories.find(c => c.id === todo.category)
+  /* Resolved through the class links, so a task filed under a lab before it was linked
+     into its lecture still shows a chip — the lecture's — rather than losing its
+     category the moment the two became one class. */
+  const cat        = findCategoryForClasses(todoCategories, todo.category, canvasClasses)
   const linkedEv   = todo.linkedEventId ? events.find(e => e.id === todo.linkedEventId) : null
-  const linkedClassRaw = todo.linkedClassId ? canvasClasses.find(c => c.id === todo.linkedClassId) : null
+  const linkedClassRaw = todo.linkedClassId
+    ? canvasClasses.find(c => String(c.id) === canonicalClassId(classLinksFor(canvasClasses), todo.linkedClassId))
+    : null
   /* A task filed under a class category already says so, in that category's own colour.
      Showing the class chip as well would print the course name twice on one row. The
      chip stays for the older shape, where a task has an ordinary category *and* a
      class link. */
-  const linkedClass = linkedClassRaw && classIdFromCategoryId(todo.category) === linkedClassRaw.id
+  const categoryClassId = classIdFromCategoryId(todo.category)
+  const linkedClass = linkedClassRaw && categoryClassId &&
+    canonicalClassId(classLinksFor(canvasClasses), categoryClassId) === String(linkedClassRaw.id)
     ? null
     : linkedClassRaw
   const effDate  = effectiveDate(todo, events)

@@ -7,6 +7,7 @@ import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import { isClassCategoryId, classIdFromCategoryId } from '@/lib/classCategories'
+import { classLinksFor, canonicalCategoryId } from '@/lib/classLinks'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
@@ -36,7 +37,12 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
      under that class. Only honoured when the id resolves — a class that has since been
      deleted must not leave the picker showing a category that is not in it. */
   const initialCategoryId = todoCategories.some(c => c.id === initialCategory) ? initialCategory : null
-  const [category,      setCategory]      = useState(editTodo?.category || initialCategoryId || ownCategories[0]?.id || '')
+  /* A task filed under a class that has since become a section of another one: the
+     stored `class:<section>` category is no longer in the picker, so it is resolved
+     onto the class it merges into. Without this, opening such a task showed no class
+     selected — and saving would have quietly unfiled it. */
+  const storedCategory = canonicalCategoryId(classLinksFor(canvasClasses), editTodo?.category)
+  const [category,      setCategory]      = useState(storedCategory || initialCategoryId || ownCategories[0]?.id || '')
   const [dueDate,       setDueDate]       = useState(editTodo?.dueDate || initialDate || '')
   const [priority,      setPriority]      = useState(editTodo?.priority || 'medium')
   const [notes,         setNotes]         = useState(editTodo?.notes || initialNotes || '')

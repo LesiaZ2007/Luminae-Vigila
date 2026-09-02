@@ -372,3 +372,101 @@ describe('CLASS_REMINDER_PRESETS', () => {
     expect(Math.max(...CLASS_REMINDER_PRESETS.exams)).toBeGreaterThan(Math.max(...CLASS_REMINDER_PRESETS.tasks))
   })
 })
+
+// ── Linked lab / studio sections ────────────────────────────────────────────
+// A lab linked into its lecture is one class: the lecture's rules govern its tasks,
+// its Canvas course and its exams, and only the lecture carries rules so nothing
+// fires twice. See lib/classLinks.js.
+
+/** A lecture with rules, and a lab section linked into it. */
+function linkedPair(over = {}) {
+  return [
+    makeClass({ id: 'chem', courseName: 'Chemistry', reminders: { tasks: [{ ms: 2 * DAY, label: '2 days before' }], exams: [{ ms: WEEK, label: '1 week before' }] } }),
+    makeClass({ id: 'chem_lab', courseName: 'Chemistry Lab', linkedToClassId: 'chem', ...over }),
+  ]
+}
+
+describe('classIdForTodo with linked sections', () => {
+  const classes = linkedPair()
+
+  it('resolves a task filed under the lab onto the class it belongs to', () => {
+    expect(classIdForTodo({ category: 'class:chem_lab' }, classes)).toBe('chem')
+    expect(classIdForTodo({ linkedClassId: 'chem_lab' }, classes)).toBe('chem')
+  })
+
+  it('gives the raw stored id when no schedule is passed', () => {
+    // The unresolved answer is what a caller asking "which entry did this name" wants.
+    expect(classIdForTodo({ category: 'class:chem_lab' })).toBe('chem_lab')
+  })
+
+  it('leaves an unlinked class and a missing one alone', () => {
+    expect(classIdForTodo({ category: 'class:chem' }, classes)).toBe('chem')
+    expect(classIdForTodo({ category: 'class:gone' }, classes)).toBe('gone')
+    expect(classIdForTodo({}, classes)).toBeNull()
+  })
+})
+
+describe('classRulesById with linked sections', () => {
+  it('ignores rules stored on a section, so one deadline is one notification', () => {
+    const [lecture, lab] = linkedPair({ reminders: { tasks: [{ ms: DAY, label: '1 day before' }] } })
+    const map = classRulesById([lecture, lab])
+    expect([...map.keys()]).toEqual(['chem'])
+  })
+
+  it('honours them again once the section is unlinked', () => {
+    const [lecture, lab] = linkedPair({ reminders: { tasks: [{ ms: DAY, label: '1 day before' }] } })
+    const map = classRulesById([lecture, { ...lab, linkedToClassId: null }])
+    expect([...map.keys()].sort()).toEqual(['chem', 'chem_lab'])
+  })
+})
+
+describe('classReminderCandidates with linked sections', () => {
+  it("applies the lecture's task rule to a task filed under the lab", () => {
+    const out = classReminderCandidates({
+      classes: linkedPair(),
+      todos:   [{ id: 't1', category: 'class:chem_lab', dueDate: '2026-03-04' }],
+    })
+    expect(out).toHaveLength(1)
+    // Named for the class, not for the section — that is the class the rule is about.
+    expect(out[0].title).toBe('Chemistry — Task')
+  })
+
+  it("applies it to the lab's own Canvas course", () => {
+    const out = classReminderCandidates({
+      classes:     linkedPair({ canvasCourseId: 987 }),
+      assignments: [{ id: 'a1', courseId: 987, title: 'Lab report', dueAt: '2026-03-04T23:59:00' }],
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0].title).toBe('Chemistry — Lab report')
+  })
+
+  it("applies the exam rule to an exam sitting on the lab's calendar", () => {
+    const out = classReminderCandidates({
+      classes: linkedPair({ exceptions: { exams: [{ date: '2026-03-10', title: 'Lab practical', startTime: '14:00' }] } }),
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0].title).toBe('Chemistry Lab — Lab practical')
+  })
+
+  it('keeps two sections’ exams on one date apart', () => {
+    // The dedup key is per section, so collapsing it would silently drop one of them.
+    const [lecture, lab] = linkedPair({ exceptions: { exams: [{ date: '2026-03-10', title: 'Practical', startTime: '14:00' }] } })
+    const out = classReminderCandidates({
+      classes: [
+        { ...lecture, exceptions: { exams: [{ date: '2026-03-10', title: 'Midterm', startTime: '09:00' }] } },
+        lab,
+      ],
+    })
+    expect(out).toHaveLength(2)
+    expect(new Set(out.map(r => r.key)).size).toBe(2)
+  })
+
+  it('sends nothing twice when both halves have rules', () => {
+    const [lecture, lab] = linkedPair({ reminders: { tasks: [{ ms: 2 * DAY, label: '2 days before' }] } })
+    const out = classReminderCandidates({
+      classes: [lecture, lab],
+      todos:   [{ id: 't1', category: 'class:chem_lab', dueDate: '2026-03-04' }],
+    })
+    expect(out).toHaveLength(1)
+  })
+})
