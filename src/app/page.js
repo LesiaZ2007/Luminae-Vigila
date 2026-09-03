@@ -35,9 +35,10 @@ function pointRect(jsEvent) {
 
 import TodoPanel  from '@/components/TodoPanel'
 import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
-import { mergeCustomLists, mergeCustomListsCloudWins, makeList } from '@/lib/customLists'
+import { mergeCustomLists, mergeCustomListsCloudWins, makeList, visibleItems } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, dropEmptyNotes, isNoteEmpty, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
+import { mergeTodos, mergeTodosCloudWins, setCompletionForDate } from '@/lib/todoMerge'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
@@ -503,7 +504,10 @@ export default function Home() {
         // Tombstone-aware: a delete is a change, not an absence, so it wins by
         // timestamp instead of being mistaken for an offline creation.
         const mergedEvents   = purgeTombstones(mergeWithTombstones(cloud.events, localEvents))
-        const mergedTodos    = purgeTombstones(mergeWithTombstones(cloud.todos,  localTodos))
+        /* mergeTodos, not mergeWithTombstones: a recurring task's completion is
+           per-date, so the row cannot be resolved as one unit without letting two
+           devices' unrelated ticks overwrite each other. See lib/todoMerge. */
+        const mergedTodos    = purgeTombstones(mergeTodos(cloud.todos,  localTodos))
         const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
         const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
@@ -723,7 +727,7 @@ export default function Home() {
       if (!cloud) return false
 
       setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
-      setTodos(local  => purgeTombstones(mergeWithTombstones(cloud.todos,  local)))
+      setTodos(local  => purgeTombstones(mergeTodos(cloud.todos,  local)))
       setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
       setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
       setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
@@ -1038,7 +1042,7 @@ export default function Home() {
       }
 
       setEvents(local => mergeCloudWinsWithTombstones(cloud.events, local))
-      setTodos(local => mergeCloudWinsWithTombstones(cloud.todos, local))
+      setTodos(local => mergeTodosCloudWins(cloud.todos, local))
       setTodoCategories(local => {
         const merged = mergeCloudWins(cloud.todoCategories, local)
         return merged.length > 0 ? merged : local
@@ -1050,11 +1054,10 @@ export default function Home() {
       setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
       setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
-      setCustomLists(local => {
-        const deletedLocally = new Set(local.filter(l => l?.deletedAt).map(l => l.id))
-        return mergeCustomListsCloudWins(cloud.customLists ?? [], local)
-          .map(l => (deletedLocally.has(l.id) ? local.find(x => x.id === l.id) : l))
-      })
+      /* The hand-rolled pass that used to re-apply local list tombstones here is
+         gone: mergeCustomListsCloudWins is tombstone-aware now, so a local delete
+         already survives a cloud row that hasn't heard about it. */
+      setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
       setNotes(local => purgeExpiredTrash(mergeNotesCloudWins(cloud.notes ?? [], local)))
 
       pushToast('Synced', 'Latest data pulled from the cloud.')
@@ -1444,12 +1447,13 @@ export default function Home() {
       const [, baseId, dateStr] = rMatch
       setTodos(p => p.map(t => {
         if (t.id !== baseId) return t
-        const completed = t.completedDates || []
-        const wasCompleted = completed.includes(dateStr)
+        const wasCompleted = (t.completedDates || []).includes(dateStr)
         if (!wasCompleted) updateStreak(dateStr)
-        return wasCompleted
-          ? { ...t, completedDates: completed.filter(d => d !== dateStr), updatedAt: now }
-          : { ...t, completedDates: [...completed, dateStr], updatedAt: now }
+        /* setCompletionForDate rather than splicing the array by hand: it stamps
+           this date in completionStamps too, and the two moving together is what
+           lets the merge resolve each occurrence separately — including an untick,
+           which a bare array cannot express. */
+        return { ...setCompletionForDate(t, dateStr, !wasCompleted, now), updatedAt: now }
       }))
     } else {
       setTodos(p => p.map(t => {
@@ -1548,8 +1552,13 @@ export default function Home() {
     setCustomLists(prev => [...prev, list])
   }, [])
 
+  /* The list row resolves by `updatedAt` like everything else, so a rename or a
+     colour change has to stamp it. The item-level helpers in lib/customLists
+     already stamp the list on their way through; this backstop covers the edits
+     that only touch list-level fields (the edit modal, clearing a due date). */
   const updateCustomList = useCallback((updated) => {
-    setCustomLists(prev => prev.map(l => l.id === updated.id ? updated : l))
+    const stamped = { ...updated, updatedAt: new Date().toISOString() }
+    setCustomLists(prev => prev.map(l => l.id === updated.id ? stamped : l))
   }, [])
 
   const deleteCustomList = useCallback((id) => {
@@ -2327,7 +2336,7 @@ export default function Home() {
     const markers = []
     for (const list of customLists) {
       const accent = list.color || '#3a6fa8'
-      const items  = list.items ?? []
+      const items  = visibleItems(list) // tombstoned items are off the list
       const totalCount   = items.length
       const checkedCount = items.filter(i => i.checked).length
       const isComplete   = totalCount > 0 && checkedCount === totalCount
@@ -2457,7 +2466,7 @@ export default function Home() {
     // upcoming/done status filter — a grocery item has no due date, so every
     // status value would exclude it.
     const listItemResults = (query) => customLists.flatMap(list =>
-      (list.items ?? [])
+      visibleItems(list)
         .filter(item => !item.checked && (!query || matchesText(item.text) || matchesText(item.note)))
         .map(item => ({
           kind: 'listItem',

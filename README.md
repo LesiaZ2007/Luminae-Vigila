@@ -388,7 +388,53 @@ Fixed by stamping `updatedAt` on the three task mutators that were missing it �
 
 `tombstones.test.js` now pins the merge behaviour that allowed it, so a future unstamped mutator fails a test instead of quietly losing edits.
 
-> **Known limitation, unchanged by this fix.** Completion resolves last-write-wins on the whole task row. If you complete *Monday's* copy of a recurring task on one device and *Tuesday's* on another while both are offline, the newer row wins entirely and the other date's tick is lost. Fixing that properly means merging `completedDates` as a **union** rather than by timestamp. Custom-list checklists have a broader version of the same gap: [`lib/customLists.js`](src/lib/customLists.js) merges items local-wins with **no timestamps at all**, so a checked list item can still revert across devices.
+### 🔁 Recurring tasks: completion is resolved per date, not per row
+
+Stamping the row fixed completion for ordinary tasks, but a recurring task carries **several independent decisions in one row** — it records completion per date in `completedDates` rather than as one flag. Resolving that row as a single unit makes those decisions compete:
+
+1. Both devices are offline holding the same weekly task
+2. You tick **Monday's** copy off on your phone
+3. You tick **Tuesday's** copy off on your laptop
+4. Whichever row was touched later wins *entirely* — the other day's tick is gone, though the two never actually conflicted
+
+The obvious fix — union the two arrays — trades one bug for a worse one. An add-only set cannot express *"Monday is no longer done"*, so un-ticking on one device gets undone by any device that still remembers the tick.
+
+So completion is now a **per-date last-write-wins register** ([`lib/todoMerge.js`](src/lib/todoMerge.js)). `completedDates` stays the array everything already reads, and a companion `completionStamps` records when each date last changed:
+
+```js
+completedDates:   ['2026-09-07']
+completionStamps: { '2026-09-07': '…T10:00Z', '2026-09-14': '…T11:00Z' }
+```
+
+- **A date in the stamps but absent from the array was deliberately un-ticked.** That's the same idea as a tombstone, and it's what lets an untick beat a stale tick instead of being mistaken for "never done"
+- **Per date, the newer stamp decides.** Monday and Tuesday resolve separately, so both survive step 2 and step 3 above
+- **One side stamped, the other not → the stamped side decides.** A stamp means the date was touched; no stamp means it never was. Same rule the row-level merge applies to `updatedAt`
+- **Neither side stamped → union.** Those rows predate the register, so they carry no record of an untick and there is none to honour; keeping a tick nobody can date beats dropping one somebody made
+- **Un-tick stamps are dropped after the 30-day tombstone window.** They only have to outlive the slowest device, and without that a long-running weekly task would accumulate a stamp per occurrence forever
+- **Ordinary tasks are left alone.** A task with no recurring state doesn't gain an empty `completedDates` — that would change its sync fingerprint and re-push the whole collection for nothing
+
+`setCompletionForDate` is the only writer, so the array and the stamps cannot drift apart.
+
+### 🧾 Custom-list items sync like tasks now
+
+Checklist items had a broader version of the same problem. [`lib/customLists.js`](src/lib/customLists.js) merged **local-wins with no timestamps anywhere**, at both the list and the item level:
+
+- **Checking an item reverted.** The device that had never heard about the check won as "local" and pushed the unchecked copy back — exactly the task bug
+- **Deleting an item brought it back.** Deletion spliced the item out of the array, and an item absent from one side is indistinguishable from one *created* offline, so the merge kept it
+- **Two edits to one list fought.** The whole list was one unit, so checking an item on your phone while renaming a different item on your laptop meant one of the two was discarded
+
+An item is now a **merge unit in its own right**: it carries its own `updatedAt`, and deleting one leaves a `deletedAt` tombstone. That makes items behave exactly like tasks and events, and lets the same [`lib/tombstones.js`](src/lib/tombstones.js) helpers resolve them — the list row resolves name, icon, colour and due date, while items resolve one by one underneath it.
+
+- **Subtasks are deliberately *not* merge units.** A subtask lives inside its item's blob, so the item's timestamp resolves it — which means a subtask change stamps the **item**, and a subtask can be removed outright with no tombstone
+- **Every mutation goes through a helper** in `customLists.js` (`patchItem`, `deleteListItem`, `reorderListItems`, …) rather than being spliced together in the component. Stamping is easy to forget in one branch out of nine, and forgetting it is silent — the edit just loses a merge later, on another device, with nothing to point at
+- **Reordering keeps tombstones.** The old drag handler replaced `list.items` with only the visible items, which would have dropped every tombstone and resurrected the deleted items
+- **Tombstoned items are filtered from every count**, not just the list body — the `3/7` badge, the tab strikethrough, the calendar due-date markers, the agenda, and search all read `visibleItems(list)`
+
+**No database change.** A list is stored as a single JSONB blob, so items ride inside it — nothing to run against Neon.
+
+#### A note on the manual refresh button
+
+The "pull from cloud" merges are cloud-wins at the **row** level, but both now resolve the finer-grained state by timestamp rather than overwriting it: per-date for recurring completion, per-item for list items. The button means *"fetch what my other device did"*, not *"discard what I just did here"* — a tick made seconds ago carries the newer stamp and survives. This mirrors the rule the refresh already followed of never resurrecting a local delete.
 
 ### 💸 Sync writes only what changed
 
@@ -1129,6 +1175,8 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
 - `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
+- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating an older tick (and vice versa), the unstamped-legacy union fallback, stamp expiry, and ordinary tasks not gaining an empty `completedDates`
+- `src/lib/customLists.test.js` — per-item merging: a check winning in either direction, a deleted item staying deleted, two edits to one list both surviving, tombstones surviving a reorder, and the mutation helpers stamping both the item and the list
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
 - `src/lib/localDate.test.js` — local-vs-UTC date derivation, including the exact evening-rollover case that made the badge count tomorrow's work
 - `src/lib/glance.test.js` — the today summary shared by `/today`, the daily push, and the icon badge: overdue/due-today splitting, all-day event ordering, and Canvas assignment inclusion
@@ -1370,7 +1418,9 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
-    ├── customLists.js      # Custom list localStorage helpers + cloud-merge logic
+    ├── customLists.js      # Custom list localStorage helpers + per-item cloud-merge
+    ├── todoMerge.js        # Todo merge: row-level LWW + per-date completion register
+    ├── tombstones.js       # Soft-delete helpers shared by every id-keyed collection
     ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
