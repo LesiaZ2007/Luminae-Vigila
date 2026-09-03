@@ -371,6 +371,25 @@ Server-side, a user with no rules pays exactly one extra query per cron tick (th
 - **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
 - **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.
 
+### ✅ Why ticking a task off didn't stick on the other device
+
+Tasks synced. Whether they were **done** did not — you'd tick something off on your phone, open the laptop, and find it unticked again (or tick it on the laptop and watch the phone undo it on its next sync).
+
+The cause was a single missing line rather than anything wrong with sync itself. Every merge in the app resolves conflicts by `updatedAt` — newest edit wins ([`lib/tombstones.js`](src/lib/tombstones.js)) — and `toggleTodo` was flipping `completed` **without stamping `updatedAt`**. Every other task mutator stamped it; the toggle didn't.
+
+That produced a very specific and misleading symptom:
+
+- Both devices held the same task with the **same** timestamp and a **different** `completed` flag
+- The merge's tie-break is `localT >= cloudT`, so on an exact tie the **local** copy wins — and the local copy was the one that hadn't heard about the toggle
+- The stale copy then got pushed back over the real change, so the completion was undone *everywhere*, not just missed on one device
+- Creating a task was unaffected, because a new id is absent on the other side and merges unconditionally. Only the flag reverted — which is exactly why this read as a display bug ("I can see the task, it just won't stay done") rather than a sync bug
+
+Fixed by stamping `updatedAt` on the three task mutators that were missing it — **completion** (both the one-off `completed` flag and a recurring task's per-date `completedDates`), **subtask checkboxes** (stamped on the parent, since the parent row is what the merge resolves), and **reordering** (order is synced, user-visible state, so it lost the same tie-break).
+
+`tombstones.test.js` now pins the merge behaviour that allowed it, so a future unstamped mutator fails a test instead of quietly losing edits.
+
+> **Known limitation, unchanged by this fix.** Completion resolves last-write-wins on the whole task row. If you complete *Monday's* copy of a recurring task on one device and *Tuesday's* on another while both are offline, the newer row wins entirely and the other date's tick is lost. Fixing that properly means merging `completedDates` as a **union** rather than by timestamp. Custom-list checklists have a broader version of the same gap: [`lib/customLists.js`](src/lib/customLists.js) merges items local-wins with **no timestamps at all**, so a checked list item can still revert across devices.
+
 ### 💸 Sync writes only what changed
 
 Neon bills for **compute time**, and the sync was spending a lot of it saying nothing.
@@ -1109,7 +1128,7 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
-- `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete
+- `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
 - `src/lib/localDate.test.js` — local-vs-UTC date derivation, including the exact evening-rollover case that made the badge count tomorrow's work
 - `src/lib/glance.test.js` — the today summary shared by `/today`, the daily push, and the icon badge: overdue/due-today splitting, all-day event ordering, and Canvas assignment inclusion

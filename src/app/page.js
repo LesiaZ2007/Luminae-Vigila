@@ -1427,7 +1427,17 @@ export default function Home() {
     return !!todo.completed
   }, [])
 
+  /* Ticking a task off is an edit, so it has to stamp `updatedAt` like every other
+     mutator here. It didn't, and that is precisely why completion refused to sync:
+     the sync merge resolves by `updatedAt` (see mergeWithTombstones), and a toggle
+     left the timestamp untouched. So the phone and the laptop held the same task
+     with the same timestamp but a different `completed` flag, the merge hit its
+     `localT >= cloudT` tie-break, and the *local* — stale — copy won and was pushed
+     straight back over the real change. The task itself synced fine, because a new
+     id is absent on the other side and merges unconditionally; only the flag
+     silently reverted, which is what made this look like a display bug. */
   const toggleTodo = useCallback((id) => {
+    const now = new Date().toISOString()
     // Handle recurring instances: id looks like "baseId-r-YYYY-MM-DD"
     const rMatch = id.match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
     if (rMatch) {
@@ -1438,15 +1448,15 @@ export default function Home() {
         const wasCompleted = completed.includes(dateStr)
         if (!wasCompleted) updateStreak(dateStr)
         return wasCompleted
-          ? { ...t, completedDates: completed.filter(d => d !== dateStr) }
-          : { ...t, completedDates: [...completed, dateStr] }
+          ? { ...t, completedDates: completed.filter(d => d !== dateStr), updatedAt: now }
+          : { ...t, completedDates: [...completed, dateStr], updatedAt: now }
       }))
     } else {
       setTodos(p => p.map(t => {
         if (t.id !== id) return t
         const nowCompleting = !t.completed
         if (nowCompleting) updateStreak()
-        return { ...t, completed: nowCompleting }
+        return { ...t, completed: nowCompleting, updatedAt: now }
       }))
     }
   }, [])
@@ -1483,13 +1493,18 @@ export default function Home() {
     ))
   }, [])
 
+  /* Subtasks live inside the parent task's row, so the parent is what the merge
+     resolves — the stamp goes on the parent, and without it a checked subtask
+     reverted across devices for the same reason a checked task did. */
   const toggleSubtask = useCallback((todoId, subtaskId) => {
+    const now = new Date().toISOString()
     setTodos(prev => prev.map(t =>
       t.id !== todoId ? t : {
         ...t,
         subtasks: (t.subtasks || []).map(s =>
           s.id === subtaskId ? { ...s, completed: !s.completed } : s
         ),
+        updatedAt: now,
       }
     ))
   }, [])
@@ -1643,11 +1658,14 @@ export default function Home() {
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
   ].filter(o => o.id && o.label), [canvasClasses, events, todos])
 
-  // Accepts an array of todos already stamped with sortOrder by DraggableList
+  // Accepts an array of todos already stamped with sortOrder by DraggableList.
+  // Stamped like any other edit — order is synced state, so an unstamped reorder
+  // loses the same tie-break that completion used to lose.
   const reorderTodos = useCallback((reordered) => {
+    const now = new Date().toISOString()
     setTodos(prev => {
       const orderMap = Object.fromEntries(reordered.map(t => [t.id, t.sortOrder]))
-      return prev.map(t => t.id in orderMap ? { ...t, sortOrder: orderMap[t.id] } : t)
+      return prev.map(t => t.id in orderMap ? { ...t, sortOrder: orderMap[t.id], updatedAt: now } : t)
     })
   }, [])
 
