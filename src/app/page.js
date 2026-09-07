@@ -486,20 +486,21 @@ export default function Home() {
         const localLists    = readLocal('lv-custom-lists',   '[]')
         const localNotes    = readLocal('lv-notes',          '[]')
 
-        // Merge by id. When both sides carry an updatedAt the newer edit wins;
-        // otherwise local wins (preserves offline edits made before this merge).
-        function mergeById(cloudArr, localArr) {
-          const out = new Map((cloudArr ?? []).map(x => [x.id, x]))
-          for (const item of (localArr ?? [])) {
-            const existing = out.get(item.id)
-            if (existing && existing.updatedAt != null && item.updatedAt != null) {
-              out.set(item.id, item.updatedAt >= existing.updatedAt ? item : existing)
-            } else {
-              out.set(item.id, item) // local wins by default
-            }
-          }
-          return [...out.values()]
-        }
+        /* The hand-rolled mergeById that used to live here is gone. It was the
+           pre-tombstone merge, and it survived here long after the collections it
+           touched had moved on — so one collection was resolved three different
+           ways depending on how you arrived: this at sign-in, mergeWithTombstones
+           on the background pull, mergeCloudWinsWithTombstones on the refresh
+           button. Three implementations of one rule is three places to miss it,
+           which is how the class-resurrection bug survived.
+
+           It also carried the defect tombstones.js documents: local wins whenever
+           *either* side lacks updatedAt. A study session tagged on a laptop stamps
+           updatedAt precisely so it wins that merge (see updateStudySession), but
+           the phone's untouched copy has no stamp at all — so the phone won as
+           "local" and pushed the untagged copy back, undoing the tag on sign-in.
+           And it compared updatedAt as raw strings rather than parsed dates, so a
+           timestamp written in any other shape ordered wrong. */
 
         // Tombstone-aware: a delete is a change, not an absence, so it wins by
         // timestamp instead of being mistaken for an offline creation.
@@ -508,19 +509,18 @@ export default function Home() {
            per-date, so the row cannot be resolved as one unit without letting two
            devices' unrelated ticks overwrite each other. See lib/todoMerge. */
         const mergedTodos    = purgeTodos(mergeTodos(cloud.todos,  localTodos))
-        const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
+        const mergedCatsRaw  = mergeWithTombstones(cloud.todoCategories, localCats)
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
-        const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
+        const mergedEvCatsRaw = mergeWithTombstones(cloud.eventCategories, localEvCats)
         const mergedEvCats    = mergedEvCatsRaw.length > 0 ? mergedEvCatsRaw : DEFAULT_EVENT_CATEGORIES
-        /* mergeWithTombstones rather than mergeById: this is the same merge the
-           background pull at autoSync already uses for classes, and the two
-           disagreeing meant a class could arrive on a later poll but not on the
-           sign-in that should have fetched it. mergeById prefers local whenever
-           timestamps are missing, which is every class written before the stamp
-           above existed. */
+        /* Classes were the first collection moved off the old hand-rolled mergeById
+           and onto this one: the two disagreeing meant a class could arrive on a
+           later background poll but not on the sign-in that should have fetched it.
+           Everything here now uses the same merge, so that class of divergence is
+           gone rather than fixed one collection at a time. */
         const mergedClasses  = purgeTombstones(mergeWithTombstones(cloud.classSchedule, localClasses))
         const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
-        const mergedSessions = mergeById(cloud.studySessions,  localSessions)
+        const mergedSessions = mergeWithTombstones(cloud.studySessions,  localSessions)
         const mergedLists    = purgeTombstones(mergeCustomLists(cloud.customLists ?? [], localLists))
         // Notes resolve strictly by updatedAt — a note body is one blob, so
         // "local wins" would silently drop edits made on another device.
