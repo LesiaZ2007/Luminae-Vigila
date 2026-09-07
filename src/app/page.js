@@ -38,7 +38,7 @@ import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList, visibleItems } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, dropEmptyNotes, isNoteEmpty, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
-import { mergeTodos, mergeTodosCloudWins, setCompletionForDate } from '@/lib/todoMerge'
+import { mergeTodos, mergeTodosCloudWins, setCompletionForDate, purgeTodos } from '@/lib/todoMerge'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
@@ -507,7 +507,7 @@ export default function Home() {
         /* mergeTodos, not mergeWithTombstones: a recurring task's completion is
            per-date, so the row cannot be resolved as one unit without letting two
            devices' unrelated ticks overwrite each other. See lib/todoMerge. */
-        const mergedTodos    = purgeTombstones(mergeTodos(cloud.todos,  localTodos))
+        const mergedTodos    = purgeTodos(mergeTodos(cloud.todos,  localTodos))
         const mergedCatsRaw  = mergeById(cloud.todoCategories, localCats)
         const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
         const mergedEvCatsRaw = mergeById(cloud.eventCategories, localEvCats)
@@ -727,7 +727,7 @@ export default function Home() {
       if (!cloud) return false
 
       setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
-      setTodos(local  => purgeTombstones(mergeTodos(cloud.todos,  local)))
+      setTodos(local  => purgeTodos(mergeTodos(cloud.todos,  local)))
       setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
       setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
       setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
@@ -929,7 +929,7 @@ export default function Home() {
       const ep = localStorage.getItem('lv-event-prefs')
       const ss = localStorage.getItem('lv-study-sessions')
       if (e)  setEvents(purgeTombstones(JSON.parse(e)))
-      if (t)  setTodos(purgeTombstones(JSON.parse(t)))
+      if (t)  setTodos(purgeTodos(JSON.parse(t)))
       if (tc) setTodoCategories(JSON.parse(tc))
       const ec = localStorage.getItem('lv-event-cats')
       if (ec) {
@@ -1034,26 +1034,29 @@ export default function Home() {
       const cloud = await res.json()
       if (!cloud) return
 
-      // cloud wins for ids present in both; local-only items kept
-      function mergeCloudWins(cloudArr, localArr) {
-        const cloudMap = Object.fromEntries((cloudArr ?? []).map(x => [x.id, x]))
-        const localMap = Object.fromEntries((localArr ?? []).map(x => [x.id, x]))
-        return Object.values({ ...localMap, ...cloudMap })
-      }
-
+      /* The hand-rolled cloud-wins merge that used to live here is gone. It keyed
+         local and cloud by id and let cloud overwrite, with no notion of a
+         tombstone — so a class deleted here and not yet uploaded was overwritten by
+         the cloud's live copy and came back, and hitting Sync was enough to undo the
+         delete. Classes soft-delete (see deleteCanvasClass), and the background pull
+         has been tombstone-aware since tombstones landed; this path simply never
+         got updated, which left the resurrection bug alive in the one place the
+         user reaches by pressing a button. */
       setEvents(local => mergeCloudWinsWithTombstones(cloud.events, local))
-      setTodos(local => mergeTodosCloudWins(cloud.todos, local))
+      setTodos(local => purgeTodos(mergeTodosCloudWins(cloud.todos, local)))
+      // Categories: an empty cloud array means "not synced yet", not "the user
+      // deleted every category" — falling through to local avoids wiping them.
       setTodoCategories(local => {
-        const merged = mergeCloudWins(cloud.todoCategories, local)
+        const merged = mergeCloudWinsWithTombstones(cloud.todoCategories, local)
         return merged.length > 0 ? merged : local
       })
       setEventCategories(local => {
-        const merged = mergeCloudWins(cloud.eventCategories, local)
+        const merged = mergeCloudWinsWithTombstones(cloud.eventCategories, local)
         return merged.length > 0 ? merged : local
       })
-      setCanvasClasses(local => mergeCloudWins(cloud.classSchedule, local))
+      setCanvasClasses(local => purgeTombstones(mergeCloudWinsWithTombstones(cloud.classSchedule, local)))
       setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
-      setStudySessions(local => mergeCloudWins(cloud.studySessions, local))
+      setStudySessions(local => mergeCloudWinsWithTombstones(cloud.studySessions, local))
       /* The hand-rolled pass that used to re-apply local list tombstones here is
          gone: mergeCustomListsCloudWins is tombstone-aware now, so a local delete
          already survives a cloud row that hasn't heard about it. */
@@ -1450,10 +1453,10 @@ export default function Home() {
         const wasCompleted = (t.completedDates || []).includes(dateStr)
         if (!wasCompleted) updateStreak(dateStr)
         /* setCompletionForDate rather than splicing the array by hand: it stamps
-           this date in completionStamps too, and the two moving together is what
-           lets the merge resolve each occurrence separately — including an untick,
-           which a bare array cannot express. */
-        return { ...setCompletionForDate(t, dateStr, !wasCompleted, now), updatedAt: now }
+           this date in completionStamps and bumps the row's updatedAt too, and the
+           three moving together is what lets the merge resolve each occurrence
+           separately — including an untick, which a bare array cannot express. */
+        return setCompletionForDate(t, dateStr, !wasCompleted, now)
       }))
     } else {
       setTodos(p => p.map(t => {

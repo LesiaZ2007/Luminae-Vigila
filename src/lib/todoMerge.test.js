@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  mergeTodos, mergeTodosCloudWins, reconcileCompletion, setCompletionForDate,
+  mergeTodos, mergeTodosCloudWins, reconcileCompletion, setCompletionForDate, purgeTodos,
 } from './todoMerge'
 import { softDelete, TOMBSTONE_RETENTION_MS } from './tombstones'
 
@@ -39,6 +39,79 @@ describe('setCompletionForDate', () => {
     const a = setCompletionForDate({ id: 'a' }, '2026-09-14', true, T.early)
     const b = setCompletionForDate(a, '2026-09-07', true, T.late)
     expect(b.completedDates).toEqual(['2026-09-07', '2026-09-14'])
+  })
+
+  /* The row timestamp is what the merge resolves the row by, so a tick that moves
+     the register without moving updatedAt is the original sync bug. Stamping it here
+     rather than at the call site means no caller can forget. */
+  it('stamps the row updatedAt, not just the register', () => {
+    const t = setCompletionForDate({ id: 'a', updatedAt: T.early }, '2026-09-07', true, T.late)
+    expect(t.updatedAt).toBe(T.late)
+  })
+
+  it('stamps updatedAt on an untick too', () => {
+    const ticked = setCompletionForDate({ id: 'a' }, '2026-09-07', true, T.early)
+    expect(setCompletionForDate(ticked, '2026-09-07', false, T.late).updatedAt).toBe(T.late)
+  })
+
+  /* completionStamps rides in the todos payload, which buildSyncDelta fingerprints
+     with JSON.stringify — key order and all. Ticking the same dates in a different
+     order on two devices must not produce two different fingerprints, or every sync
+     pushes the whole collection to record nothing. */
+  it('orders stamp keys by date so the sync fingerprint is stable', () => {
+    const forward = setCompletionForDate(
+      setCompletionForDate({ id: 'a' }, '2026-09-07', true, T.early), '2026-09-14', true, T.late)
+    const reverse = setCompletionForDate(
+      setCompletionForDate({ id: 'a' }, '2026-09-14', true, T.late), '2026-09-07', true, T.early)
+
+    expect(Object.keys(forward.completionStamps)).toEqual(['2026-09-07', '2026-09-14'])
+    expect(JSON.stringify(forward.completionStamps)).toBe(JSON.stringify(reverse.completionStamps))
+  })
+})
+
+describe('purgeTodos', () => {
+  const OLD = new Date(Date.parse(T.mid) - TOMBSTONE_RETENTION_MS - 1).toISOString()
+  const now = Date.parse(T.mid)
+
+  it('drops expired tombstones like purgeTombstones does', () => {
+    const rows = [{ id: 'a' }, { ...softDelete({ id: 'b' }, OLD) }]
+    expect(purgeTodos(rows, now).map(r => r.id)).toEqual(['a'])
+  })
+
+  /* reconcileCompletion expires untick stamps, but it only runs for rows both sides
+     hold. A row that never syncs — every row on an offline account — would otherwise
+     keep one stamp per occurrence forever and grow the stored blob without bound. */
+  it('expires an untick stamp on a row that never reached a merge', () => {
+    const [row] = purgeTodos([recurring([], { '2026-01-01': OLD })], now)
+    expect(row.completionStamps).toEqual({})
+  })
+
+  it('keeps an untick stamp that is still inside the window', () => {
+    const [row] = purgeTodos([recurring([], { '2026-09-01': T.early })], now)
+    expect(row.completionStamps).toEqual({ '2026-09-01': T.early })
+  })
+
+  /* A stamp for a date that is still completed is not an untick record — it is the
+     tick's own timestamp, and dropping it would make the tick undateable and so
+     unable to win a merge. */
+  it('never drops the stamp of a date that is still done, however old', () => {
+    const [row] = purgeTodos([recurring(['2026-01-01'], { '2026-01-01': OLD })], now)
+    expect(row.completionStamps).toEqual({ '2026-01-01': OLD })
+  })
+
+  it('leaves an ordinary task untouched rather than giving it empty completion state', () => {
+    const plain = { id: 'p', title: 'One-off', completed: true, updatedAt: T.mid }
+    expect(purgeTodos([plain], now)[0]).toBe(plain)
+  })
+
+  it('returns the same row object when nothing expired, so React sees no change', () => {
+    const row = recurring([], { '2026-09-01': T.early })
+    expect(purgeTodos([row], now)[0]).toBe(row)
+  })
+
+  it('survives null and rows with no completion state', () => {
+    expect(purgeTodos(null, now)).toEqual([])
+    expect(purgeTodos([{ id: 'a' }], now)).toEqual([{ id: 'a' }])
   })
 })
 
