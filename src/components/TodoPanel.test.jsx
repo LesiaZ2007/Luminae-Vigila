@@ -85,3 +85,40 @@ describe('TodoPanel — new task defaults to the filtered category', () => {
     expect(onAddClick).toHaveBeenCalledWith(null)
   })
 })
+
+/* A deleted subtask stays in the array as a tombstone so the deletion can sync.
+   Every read here has to filter those out — the panel would otherwise show a
+   deleted step in the checklist and count it in the progress chip. */
+describe('TodoPanel — tombstoned subtasks', () => {
+  const TASK = {
+    id: 't1', title: 'Essay', category: 'academic', dueDate: '2026-09-10',
+    subtasks: [
+      { id: 's1', title: 'Outline',  completed: true,  updatedAt: '2026-09-01T10:00:00.000Z' },
+      { id: 's2', title: 'Draft',    completed: false, updatedAt: '2026-09-01T10:00:00.000Z' },
+      { id: 's3', title: 'Bibliography', completed: false,
+        updatedAt: '2026-09-02T10:00:00.000Z', deletedAt: '2026-09-02T10:00:00.000Z' },
+    ],
+  }
+
+  it('counts only the live subtasks in the progress chip', () => {
+    renderPanel({ todos: [TASK] })
+    // Two live steps, one of them done — not 1/3.
+    expect(screen.getByRole('button', { name: /1\/2 steps/ })).toBeTruthy()
+  })
+
+  it('leaves the deleted subtask out of the checklist', async () => {
+    const user = userEvent.setup()
+    renderPanel({ todos: [TASK] })
+
+    await user.click(screen.getByRole('button', { name: /1\/2 steps/ }))
+
+    expect(screen.getByText('Outline')).toBeTruthy()
+    expect(screen.getByText('Draft')).toBeTruthy()
+    expect(screen.queryByText('Bibliography')).toBeNull()
+  })
+
+  it('shows no chip at all when every subtask is deleted', () => {
+    renderPanel({ todos: [{ ...TASK, subtasks: [TASK.subtasks[2]] }] })
+    expect(screen.queryByRole('button', { name: /steps/ })).toBeNull()
+  })
+})
