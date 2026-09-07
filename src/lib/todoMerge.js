@@ -30,11 +30,23 @@
  * beat a stale tick. Merging then resolves each date on its own, so step 2 and
  * step 3 above both survive.
  */
-import { mergeWithTombstones, mergeCloudWinsWithTombstones, isDeleted, TOMBSTONE_RETENTION_MS } from './tombstones'
+import { mergeWithTombstones, mergeCloudWinsWithTombstones, purgeTombstones, isDeleted, TOMBSTONE_RETENTION_MS } from './tombstones'
 
 /** Does this row carry any recurring-completion state at all? */
 function hasCompletionState(todo) {
   return Array.isArray(todo?.completedDates) || !!todo?.completionStamps
+}
+
+/**
+ * Is an untick's stamp old enough to drop?
+ *
+ * An unparseable stamp is treated as *not* expired, matching purgeTombstones: a
+ * malformed timestamp should not be able to delete a record of a user's decision.
+ */
+function isStampExpired(stamp, now) {
+  const t = Date.parse(stamp ?? '')
+  if (Number.isNaN(t)) return false
+  return now - t >= TOMBSTONE_RETENTION_MS
 }
 
 /**
@@ -65,10 +77,10 @@ export function reconcileCompletion(cloud, local, now = Date.now()) {
     ...Object.keys(cloudStamps), ...Object.keys(localStamps),
   ])
 
-  const completedDates   = []
-  const completionStamps = {}
+  const completedDates = []
+  const keptStamps     = []
 
-  for (const date of dates) {
+  for (const date of [...dates].sort()) {
     const cloudT   = Date.parse(cloudStamps[date] ?? '')
     const localT   = Date.parse(localStamps[date] ?? '')
     const cloudHas = !Number.isNaN(cloudT)
@@ -93,15 +105,18 @@ export function reconcileCompletion(cloud, local, now = Date.now()) {
 
     if (done) {
       completedDates.push(date)
-      if (stamp) completionStamps[date] = stamp
-    } else if (stamp) {
-      const age = now - Date.parse(stamp)
-      if (!(age >= TOMBSTONE_RETENTION_MS)) completionStamps[date] = stamp
+      if (stamp) keptStamps.push([date, stamp])
+    } else if (stamp && !isStampExpired(stamp, now)) {
+      keptStamps.push([date, stamp])
     }
   }
 
-  completedDates.sort()
-  return { completedDates, completionStamps }
+  /* Built in sorted-date order, not set-iteration order. `completionStamps` is part
+     of the todos payload, and buildSyncDelta fingerprints that with JSON.stringify —
+     which is key-order sensitive. Two devices that agree on the state but inserted
+     the dates in a different order would fingerprint differently, and every sync
+     would push the whole todos collection to record nothing. */
+  return { completedDates, completionStamps: Object.fromEntries(keptStamps) }
 }
 
 /**
@@ -153,17 +168,48 @@ export function mergeTodosCloudWins(cloudArr, localArr, now = Date.now()) {
 /**
  * Stamp one date's completion on a todo — the write side of the register.
  *
- * Returns a new row with `completedDates` and `completionStamps` both updated, so
- * a caller cannot accidentally move one without the other.
+ * Returns a new row with `completedDates`, `completionStamps` *and* `updatedAt` all
+ * updated, so a caller cannot accidentally move one without the others. `updatedAt`
+ * belongs here rather than at the call site for the same reason the list mutators
+ * own their stamps: a tick that updates the register but not the row timestamp is
+ * the original completion-sync bug, and a stamp that only one of several call sites
+ * remembers is silent until it shows up on another device.
  */
 export function setCompletionForDate(todo, date, done, now = new Date().toISOString()) {
   const current = new Set(todo?.completedDates ?? [])
   if (done) current.add(date)
   else current.delete(date)
 
+  const stamps = { ...(todo?.completionStamps ?? {}), [date]: now }
+
   return {
     ...todo,
     completedDates:   [...current].sort(),
-    completionStamps: { ...(todo?.completionStamps ?? {}), [date]: now },
+    completionStamps: Object.fromEntries(Object.keys(stamps).sort().map(d => [d, stamps[d]])),
+    updatedAt:        now,
   }
+}
+
+/**
+ * Purge a todo collection: drop expired tombstones, and drop expired untick stamps.
+ *
+ * The stamps also expire inside `reconcileCompletion`, but that only runs for rows
+ * *both* sides hold. A row that has never been synced — every row for an offline
+ * account — is never reconciled, so its unticks would accumulate one stamp per
+ * occurrence forever and grow the localStorage blob without bound. Pruning on the
+ * purge path covers those, and is where the equivalent tombstone sweep already runs.
+ */
+export function purgeTodos(todos, now = Date.now()) {
+  return purgeTombstones(todos, now).map(todo => {
+    const stamps = todo?.completionStamps
+    if (!stamps) return todo
+
+    const done = new Set(todo.completedDates ?? [])
+    const kept = Object.keys(stamps)
+      .sort()
+      .filter(date => done.has(date) || !isStampExpired(stamps[date], now))
+
+    if (kept.length === Object.keys(stamps).length) return todo
+    return { ...todo, completionStamps: Object.fromEntries(kept.map(d => [d, stamps[d]])) }
+  })
 }

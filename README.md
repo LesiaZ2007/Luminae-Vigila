@@ -410,10 +410,11 @@ completionStamps: { '2026-09-07': '…T10:00Z', '2026-09-14': '…T11:00Z' }
 - **Per date, the newer stamp decides.** Monday and Tuesday resolve separately, so both survive step 2 and step 3 above
 - **One side stamped, the other not → the stamped side decides.** A stamp means the date was touched; no stamp means it never was. Same rule the row-level merge applies to `updatedAt`
 - **Neither side stamped → union.** Those rows predate the register, so they carry no record of an untick and there is none to honour; keeping a tick nobody can date beats dropping one somebody made
-- **Un-tick stamps are dropped after the 30-day tombstone window.** They only have to outlive the slowest device, and without that a long-running weekly task would accumulate a stamp per occurrence forever
+- **Un-tick stamps are dropped after the 30-day tombstone window.** They only have to outlive the slowest device, and without that a long-running weekly task would accumulate a stamp per occurrence forever. Expiry runs on the **purge** path (`purgeTodos`) as well as inside the merge, because the merge only sees rows *both* sides hold — for an offline account, no row is ever reconciled, and the stamps would have grown without bound
 - **Ordinary tasks are left alone.** A task with no recurring state doesn't gain an empty `completedDates` — that would change its sync fingerprint and re-push the whole collection for nothing
+- **Stamp keys are stored in date order.** `completionStamps` rides in the todos payload, and the delta check below fingerprints that with `JSON.stringify`, which is key-order sensitive. Two devices that agree on the state but ticked the dates in a different order would otherwise fingerprint differently and re-push the whole collection on every sync
 
-`setCompletionForDate` is the only writer, so the array and the stamps cannot drift apart.
+`setCompletionForDate` is the only writer, and it moves `completedDates`, `completionStamps` and the row's `updatedAt` **together** — the array and the stamps cannot drift apart, and no call site can tick a date without stamping the row the merge resolves it by.
 
 ### 🧾 Custom-list items sync like tasks now
 
@@ -435,6 +436,8 @@ An item is now a **merge unit in its own right**: it carries its own `updatedAt`
 #### A note on the manual refresh button
 
 The "pull from cloud" merges are cloud-wins at the **row** level, but both now resolve the finer-grained state by timestamp rather than overwriting it: per-date for recurring completion, per-item for list items. The button means *"fetch what my other device did"*, not *"discard what I just did here"* — a tick made seconds ago carries the newer stamp and survives. This mirrors the rule the refresh already followed of never resurrecting a local delete.
+
+That rule turned out to have a hole. The refresh kept its **own** hand-rolled merge for classes, study sessions and categories — keyed by id, cloud overwrites local, no notion of a tombstone. Classes soft-delete, and the background pull had been tombstone-aware since tombstones landed, so **deleting a class and then pressing Sync brought it back**: the cloud's copy simply hadn't heard about the delete yet, and nothing stopped it from overwriting the tombstone. Every collection now goes through the shared `mergeCloudWinsWithTombstones`, and the duplicate helper is gone — a second implementation of a merge is a second place for a rule like this to be missed.
 
 ### 💸 Sync writes only what changed
 
@@ -1175,6 +1178,7 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
 - `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
+- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating a stale tick, legacy unstamped rows unioning, `setCompletionForDate` stamping the row as well as the register, and `purgeTodos` expiring untick stamps while never dropping the stamp of a date that is still done
 - `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating an older tick (and vice versa), the unstamped-legacy union fallback, stamp expiry, and ordinary tasks not gaining an empty `completedDates`
 - `src/lib/customLists.test.js` — per-item merging: a check winning in either direction, a deleted item staying deleted, two edits to one list both surviving, tombstones surviving a reorder, and the mutation helpers stamping both the item and the list
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
