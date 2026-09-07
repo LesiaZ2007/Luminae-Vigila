@@ -38,7 +38,11 @@ import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
 import { mergeCustomLists, mergeCustomListsCloudWins, makeList, visibleItems } from '@/lib/customLists'
 import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, dropEmptyNotes, isNoteEmpty, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
 import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
-import { mergeTodos, mergeTodosCloudWins, setCompletionForDate, purgeTodos } from '@/lib/todoMerge'
+import {
+  mergeTodos, mergeTodosCloudWins, setCompletionForDate, purgeTodos,
+  patchSubtask, addSubtask, applySubtaskEdits, visibleSubtasks,
+} from '@/lib/todoMerge'
+import { setEventPref, mergeEventPrefs, mergeEventPrefsCloudWins, stampAllPrefs } from '@/lib/eventPrefs'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
@@ -519,7 +523,10 @@ export default function Home() {
            Everything here now uses the same merge, so that class of divergence is
            gone rather than fixed one collection at a time. */
         const mergedClasses  = purgeTombstones(mergeWithTombstones(cloud.classSchedule, localClasses))
-        const mergedPrefs    = { ...(cloud.eventPrefs ?? {}), ...localPrefs }
+        /* Per entry by timestamp, not a wholesale spread. A pref is one decision
+           per event, and merging the object as one unit let a stale entry for one
+           event ride in on the same spread that carried a fresh one for another. */
+        const mergedPrefs    = mergeEventPrefs(cloud.eventPrefs, localPrefs)
         const mergedSessions = mergeWithTombstones(cloud.studySessions,  localSessions)
         const mergedLists    = purgeTombstones(mergeCustomLists(cloud.customLists ?? [], localLists))
         // Notes resolve strictly by updatedAt — a note body is one blob, so
@@ -742,7 +749,7 @@ export default function Home() {
         const merged = mergeWithTombstones(cloud.eventCategories, local)
         return merged.length > 0 ? merged : local
       })
-      setEventPrefs(local => ({ ...(cloud.eventPrefs ?? {}), ...local }))
+      setEventPrefs(local => mergeEventPrefs(cloud.eventPrefs, local))
 
       /* Did that pull actually bring anything? Compared as the raw response text
          rather than per-collection: this only decides how soon to ask again, so a
@@ -1055,7 +1062,10 @@ export default function Home() {
         return merged.length > 0 ? merged : local
       })
       setCanvasClasses(local => purgeTombstones(mergeCloudWinsWithTombstones(cloud.classSchedule, local)))
-      setEventPrefs(local => ({ ...local, ...(cloud.eventPrefs ?? {}) }))
+      /* This used to spread the other way round from the two merges above, so the
+         same two devices could settle on different answers for one event depending
+         on whether you signed in or pressed Sync. Both resolve per entry now. */
+      setEventPrefs(local => mergeEventPrefsCloudWins(cloud.eventPrefs, local))
       setStudySessions(local => mergeCloudWinsWithTombstones(cloud.studySessions, local))
       /* The hand-rolled pass that used to re-apply local list tombstones here is
          gone: mergeCustomListsCloudWins is tombstone-aware now, so a local delete
@@ -1367,18 +1377,25 @@ export default function Home() {
     }, 'single')
   }, [events, saveEvent])
 
-  // ── Event recolor ─────────────────────────────────────────────────────────
+  /* ── Event prefs ──
+     All five writers go through setEventPref, which stamps the entry. A pref is
+     one decision per event, and the merge resolves it per event by that stamp —
+     so an unstamped write is one that silently loses to a stale copy on another
+     device. Spreading into prev[id] here instead is how that gets forgotten. */
   const handleRecolorEvent = useCallback((id, color) => {
-    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
+    setEventPrefs(prev => setEventPref(prev, id, { color }))
   }, [])
 
   const hideEvent = useCallback((id) => {
-    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), hidden: true } }))
+    setEventPrefs(prev => setEventPref(prev, id, { hidden: true }))
     setToasts(prev => prev.filter(t => t.eventId !== id))
   }, [])
 
+  /* Un-hiding writes `hidden: false` rather than deleting the key, which is what
+     lets the merge see it. A removed key is an absence, and an absence is
+     indistinguishable from "never set" — the same reason deletes need tombstones. */
   const unhideEvent = useCallback((id) => {
-    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), hidden: false } }))
+    setEventPrefs(prev => setEventPref(prev, id, { hidden: false }))
   }, [])
 
   /**
@@ -1390,11 +1407,11 @@ export default function Home() {
    * eventPrefs sync and backup for free.
    */
   const toggleImportantEvent = useCallback((id) => {
-    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), important: !prev[id]?.important } }))
+    setEventPrefs(prev => setEventPref(prev, id, { important: !prev[id]?.important }))
   }, [])
 
   const setGoogleEventColor = useCallback((id, color) => {
-    setEventPrefs(prev => ({ ...prev, [id]: { ...(prev[id] ?? {}), color } }))
+    setEventPrefs(prev => setEventPref(prev, id, { color }))
     setToasts(prev => prev.map(toast => toast.eventId === id
       ? {
           ...toast,
@@ -1487,7 +1504,17 @@ export default function Home() {
       { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
     )
   }, [todosRaw, pushToast])
-  const updateTodo = useCallback((updated) => setTodos(p => p.map(t => t.id === updated.id ? { ...updated, updatedAt: new Date().toISOString() } : t)), [])
+  /* The editor hands back the subtask array it was holding — the visible ones — so
+     writing it straight through would drop every tombstone and resurrect deleted
+     subtasks on the next merge, exactly as the list reorder handler once did.
+     applySubtaskEdits takes the editor's content and order but turns removals into
+     tombstones and leaves untouched subtasks on the stamp they already had. */
+  const updateTodo = useCallback((updated) => setTodos(p => p.map(t => {
+    if (t.id !== updated.id) return t
+    const now = new Date().toISOString()
+    const { subtasks, ...fields } = updated
+    return applySubtaskEdits({ ...t, ...fields }, subtasks ?? visibleSubtasks(t), now)
+  })), [])
   /* Drag a task to another day on the coursework month.
      Only the due date moves. A reminder is stored as an *offset* from the due date, so
      it follows on its own and rewriting it here would double-apply the move; an
@@ -1500,34 +1527,25 @@ export default function Home() {
     ))
   }, [])
 
-  /* Subtasks live inside the parent task's row, so the parent is what the merge
-     resolves — the stamp goes on the parent, and without it a checked subtask
-     reverted across devices for the same reason a checked task did. */
+  /* A subtask is its own merge unit now, not a field of the parent's blob. It used
+     to be resolved by the parent row, which is the completedDates mistake one level
+     down: three steps under one task are three decisions sharing one timestamp, so
+     ticking "outline" on the phone and "draft" on the laptop meant the newer row won
+     whole and one tick was lost. patchSubtask stamps the subtask *and* the row — the
+     row still resolves the task's own fields. */
   const toggleSubtask = useCallback((todoId, subtaskId) => {
-    const now = new Date().toISOString()
-    setTodos(prev => prev.map(t =>
-      t.id !== todoId ? t : {
-        ...t,
-        subtasks: (t.subtasks || []).map(s =>
-          s.id === subtaskId ? { ...s, completed: !s.completed } : s
-        ),
-        updatedAt: now,
-      }
-    ))
+    setTodos(prev => prev.map(t => {
+      if (t.id !== todoId) return t
+      const current = (t.subtasks ?? []).find(s => s.id === subtaskId)
+      return patchSubtask(t, subtaskId, { completed: !current?.completed })
+    }))
   }, [])
 
   // Append a subtask from the inline composer on a task row.
-  const addSubtask = useCallback((todoId, title) => {
+  const addSubtaskToTodo = useCallback((todoId, title) => {
     const trimmed = (title ?? '').trim()
     if (!trimmed) return
-    setTodos(prev => prev.map(t => t.id !== todoId ? t : {
-      ...t,
-      subtasks: [
-        ...(t.subtasks ?? []),
-        { id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title: trimmed, completed: false },
-      ],
-      updatedAt: new Date().toISOString(),
-    }))
+    setTodos(prev => prev.map(t => (t.id === todoId ? addSubtask(t, trimmed) : t)))
   }, [])
 
   // Bulk-remove finished tasks. Recurring todos track completion per-date in
@@ -1713,9 +1731,14 @@ export default function Home() {
     if (Array.isArray(merged?.studySessions))   setStudySessions(merged.studySessions)
 
     /* `undefined` means the file had no opinion on hidden/recoloured events, which is
-       different from it saying you have none — only the latter should overwrite. */
+       different from it saying you have none — only the latter should overwrite.
+
+       Restored entries are stamped as of the restore. They carry whatever stamp the
+       backup was written with, or none if the file predates stamping, so without
+       this they would lose the next merge to a fresher copy on another device and
+       the restore would quietly undo itself. */
     if (importedPrefs && typeof importedPrefs === 'object') {
-      setEventPrefs(prev => ({ ...prev, ...importedPrefs }))
+      setEventPrefs(prev => ({ ...prev, ...stampAllPrefs(importedPrefs) }))
     }
 
     /* A restore replaces rather than adds, so counting what grew would describe it
@@ -3089,7 +3112,7 @@ export default function Home() {
                                onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                                onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                                onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
-                               onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
+                               onAddSubtask={addSubtaskToTodo} onClearCompleted={clearCompletedTodos}
                                onReorder={reorderTodos} isMobile={isMobile}
                                canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                                onToggleCanvas={toggleCanvasAssignment}
@@ -3120,7 +3143,7 @@ export default function Home() {
                            onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
                            onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                            onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
-                               onAddSubtask={addSubtask} onClearCompleted={clearCompletedTodos}
+                               onAddSubtask={addSubtaskToTodo} onClearCompleted={clearCompletedTodos}
                            onReorder={reorderTodos} fullPage isMobile={isMobile}
                            canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
                            onToggleCanvas={toggleCanvasAssignment}

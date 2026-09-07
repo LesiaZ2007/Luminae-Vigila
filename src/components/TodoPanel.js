@@ -6,6 +6,7 @@ import CategoryManager from '@/components/CategoryManager'
 import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId, isClassCategoryId as isClassCategory } from '@/lib/classCategories'
 
 import Confetti from '@/components/Confetti'
+import { visibleSubtasks } from '@/lib/todoMerge'
 
 /**
  * Shared style for the per-row task actions (+ / trash).
@@ -552,6 +553,10 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
   const [addingSubtask,    setAddingSubtask]    = useState(false)
   const [subtaskDraft,     setSubtaskDraft]     = useState('')
 
+  /* Deleted subtasks stay in the array as tombstones so the deletion can sync, so
+     every read here goes through visibleSubtasks — the checklist and the `2/5 steps`
+     chip alike. Counting the raw array would count the deleted ones. */
+  const subtasks = visibleSubtasks(todo)
 
   function commitSubtask() {
     const title = subtaskDraft.trim()
@@ -786,9 +791,9 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
               </span>
             )}
             {/* Subtask progress chip */}
-            {todo.subtasks?.length > 0 && (() => {
-              const doneCount = todo.subtasks.filter(s => s.completed).length
-              const total = todo.subtasks.length
+            {subtasks.length > 0 && (() => {
+              const doneCount = subtasks.filter(s => s.completed).length
+              const total = subtasks.length
               return (
                 <button
                   type="button"
@@ -811,10 +816,10 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
           </div>
 
           {/* Expandable subtask checklist */}
-          {subtasksExpanded && todo.subtasks?.length > 0 && (
+          {subtasksExpanded && subtasks.length > 0 && (
             <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}
                  onClick={e => e.stopPropagation()}>
-              {todo.subtasks.map(st => (
+              {subtasks.map(st => (
                 <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <button
                     type="button"
