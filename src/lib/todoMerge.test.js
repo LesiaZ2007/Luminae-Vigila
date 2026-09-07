@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mergeTodos, mergeTodosCloudWins, reconcileCompletion, setCompletionForDate, purgeTodos,
+  patchSubtask, addSubtask, applySubtaskEdits, visibleSubtasks,
 } from './todoMerge'
 import { softDelete, TOMBSTONE_RETENTION_MS } from './tombstones'
 
@@ -69,6 +70,127 @@ describe('setCompletionForDate', () => {
   })
 })
 
+/* Subtasks used to be resolved by the parent row, which is the completedDates
+   mistake one level down: several independent decisions sharing one timestamp. */
+describe('subtasks as merge units', () => {
+  const withSubs = (subs, updatedAt = T.mid) =>
+    ({ id: 't1', title: 'Essay', subtasks: subs, updatedAt })
+
+  it('patchSubtask stamps the subtask and the parent', () => {
+    const todo = withSubs([{ id: 's1', title: 'outline', completed: false }], T.early)
+    const out  = patchSubtask(todo, 's1', { completed: true }, T.late)
+    expect(out.subtasks[0]).toMatchObject({ completed: true, updatedAt: T.late })
+    expect(out.updatedAt).toBe(T.late)
+  })
+
+  it('patchSubtask leaves its siblings alone', () => {
+    const todo = withSubs([
+      { id: 's1', title: 'outline', completed: false, updatedAt: T.early },
+      { id: 's2', title: 'draft',   completed: false, updatedAt: T.early },
+    ])
+    const out = patchSubtask(todo, 's1', { completed: true }, T.late)
+    expect(out.subtasks[1].updatedAt).toBe(T.early)
+  })
+
+  it('addSubtask stamps the new subtask and the parent', () => {
+    const out = addSubtask(withSubs([]), 'cite sources', T.late)
+    expect(out.subtasks[0]).toMatchObject({ title: 'cite sources', completed: false, updatedAt: T.late })
+    expect(out.updatedAt).toBe(T.late)
+  })
+
+  /* The bug this whole change exists for. */
+  it('two devices ticking different subtasks both survive', () => {
+    const base  = withSubs([
+      { id: 's1', title: 'outline', completed: false, updatedAt: T.early },
+      { id: 's2', title: 'draft',   completed: false, updatedAt: T.early },
+    ], T.early)
+    const phone  = patchSubtask(base, 's1', { completed: true }, T.mid)
+    const laptop = patchSubtask(base, 's2', { completed: true }, T.late)
+
+    const merged = mergeTodos([laptop], [phone])
+    const byId = Object.fromEntries(merged[0].subtasks.map(s => [s.id, s]))
+    expect(byId.s1.completed).toBe(true)
+    expect(byId.s2.completed).toBe(true)
+  })
+
+  it('an untouched task does not gain an empty subtasks array', () => {
+    const merged = mergeTodos([{ id: 't1', updatedAt: T.mid }], [{ id: 't1', updatedAt: T.early }])
+    expect('subtasks' in merged[0]).toBe(false)
+  })
+
+  it('a deleted subtask stays deleted rather than coming back from the other device', () => {
+    const base    = withSubs([{ id: 's1', title: 'outline', completed: false, updatedAt: T.early }], T.early)
+    const deleted = applySubtaskEdits(base, [], T.late)
+    const merged  = mergeTodos([base], [deleted])
+    expect(visibleSubtasks(merged[0])).toEqual([])
+  })
+})
+
+describe('applySubtaskEdits', () => {
+  const base = {
+    id: 't1',
+    subtasks: [
+      { id: 's1', title: 'outline', completed: false, updatedAt: T.early },
+      { id: 's2', title: 'draft',   completed: false, updatedAt: T.early },
+    ],
+    updatedAt: T.early,
+  }
+
+  /* The trap the list reorder handler fell into: writing back the visible array
+     drops every tombstone, and the deleted items return on the next merge. */
+  it('turns a removal into a tombstone instead of an absence', () => {
+    const out = applySubtaskEdits(base, [base.subtasks[0]], T.late)
+    expect(out.subtasks).toHaveLength(2)
+    expect(out.subtasks.find(s => s.id === 's2').deletedAt).toBe(T.late)
+    expect(visibleSubtasks(out).map(s => s.id)).toEqual(['s1'])
+  })
+
+  it('does not re-stamp a subtask that did not change', () => {
+    const out = applySubtaskEdits(base, base.subtasks, T.late)
+    expect(out.subtasks[0]).toBe(base.subtasks[0])
+  })
+
+  it('stamps only the subtask that changed', () => {
+    const next = [{ ...base.subtasks[0], completed: true }, base.subtasks[1]]
+    const out  = applySubtaskEdits(base, next, T.late)
+    expect(out.subtasks[0].updatedAt).toBe(T.late)
+    expect(out.subtasks[1].updatedAt).toBe(T.early)
+  })
+
+  it('stamps a newly added subtask', () => {
+    const next = [...base.subtasks, { id: 's3', title: 'cite', completed: false }]
+    expect(applySubtaskEdits(base, next, T.late).subtasks[2].updatedAt).toBe(T.late)
+  })
+
+  it('keeps the editor’s order for the visible subtasks', () => {
+    const out = applySubtaskEdits(base, [base.subtasks[1], base.subtasks[0]], T.late)
+    expect(visibleSubtasks(out).map(s => s.id)).toEqual(['s2', 's1'])
+  })
+
+  /* Corvus marks a task done by spreading the whole row back, so the raw array
+     arrives here with tombstones in it. Clearing deletedAt would resurrect them. */
+  it('passes an incoming tombstone through untouched', () => {
+    const withTomb = applySubtaskEdits(base, [base.subtasks[0]], T.mid)
+    const out = applySubtaskEdits(withTomb, withTomb.subtasks, T.late)
+    expect(visibleSubtasks(out).map(s => s.id)).toEqual(['s1'])
+    expect(out.subtasks.find(s => s.id === 's2').deletedAt).toBe(T.mid)
+  })
+
+  it('lifts the tombstone when the editor re-adds that id', () => {
+    const withTomb = applySubtaskEdits(base, [base.subtasks[0]], T.mid)
+    const readded  = applySubtaskEdits(withTomb, [base.subtasks[0], { id: 's2', title: 'draft', completed: false }], T.late)
+    expect(visibleSubtasks(readded).map(s => s.id)).toEqual(['s1', 's2'])
+  })
+
+  it('stamps the parent row', () => {
+    expect(applySubtaskEdits(base, base.subtasks, T.late).updatedAt).toBe(T.late)
+  })
+
+  it('survives a task with no subtasks at all', () => {
+    expect(applySubtaskEdits({ id: 't1' }, [], T.late).subtasks).toEqual([])
+  })
+})
+
 describe('purgeTodos', () => {
   const OLD = new Date(Date.parse(T.mid) - TOMBSTONE_RETENTION_MS - 1).toISOString()
   const now = Date.parse(T.mid)
@@ -112,6 +234,23 @@ describe('purgeTodos', () => {
   it('survives null and rows with no completion state', () => {
     expect(purgeTodos(null, now)).toEqual([])
     expect(purgeTodos([{ id: 'a' }], now)).toEqual([{ id: 'a' }])
+  })
+
+  /* Same reason as the untick stamps: a row that never syncs is never reconciled,
+     so nothing else would ever drop its subtask tombstones. */
+  it('drops an expired subtask tombstone', () => {
+    const row = { id: 't1', subtasks: [{ id: 's1', title: 'x', deletedAt: OLD, updatedAt: OLD }] }
+    expect(purgeTodos([row], now)[0].subtasks).toEqual([])
+  })
+
+  it('keeps a subtask tombstone still inside the window', () => {
+    const row = { id: 't1', subtasks: [{ id: 's1', title: 'x', deletedAt: T.early, updatedAt: T.early }] }
+    expect(purgeTodos([row], now)[0].subtasks).toHaveLength(1)
+  })
+
+  it('leaves a task whose subtasks are all live untouched', () => {
+    const row = { id: 't1', subtasks: [{ id: 's1', title: 'x', updatedAt: T.early }] }
+    expect(purgeTodos([row], now)[0]).toBe(row)
   })
 })
 

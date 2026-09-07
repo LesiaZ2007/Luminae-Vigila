@@ -7,6 +7,7 @@ import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import { isClassCategoryId, classIdFromCategoryId } from '@/lib/classCategories'
+import { visibleSubtasks } from '@/lib/todoMerge'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
@@ -54,7 +55,10 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [repeatType,    setRepeatType]    = useState(editTodo?.recurrence?.type || 'weekly')
   const [repeatDays,    setRepeatDays]    = useState(editTodo?.recurrence?.days || [new Date().getDay()])
   const [repeatUntil,   setRepeatUntil]   = useState(editTodo?.recurrence?.until || '')
-  const [subtasks,      setSubtasks]      = useState(editTodo?.subtasks ?? [])
+  /* Tombstoned subtasks are not the user's to see or reorder — the editor works on
+     the visible ones and hands that array back, and updateTodo turns anything
+     missing from it into a tombstone. */
+  const [subtasks,      setSubtasks]      = useState(() => visibleSubtasks(editTodo))
   const [newSubtask,    setNewSubtask]    = useState('')
   const [editingIdx,    setEditingIdx]    = useState(-1)
   const [editingVal,    setEditingVal]    = useState('')

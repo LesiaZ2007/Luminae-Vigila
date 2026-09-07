@@ -30,7 +30,10 @@
  * beat a stale tick. Merging then resolves each date on its own, so step 2 and
  * step 3 above both survive.
  */
-import { mergeWithTombstones, mergeCloudWinsWithTombstones, purgeTombstones, isDeleted, TOMBSTONE_RETENTION_MS } from './tombstones'
+import {
+  mergeWithTombstones, mergeCloudWinsWithTombstones, purgeTombstones,
+  visible, softDelete, isDeleted, TOMBSTONE_RETENTION_MS,
+} from './tombstones'
 
 /** Does this row carry any recurring-completion state at all? */
 function hasCompletionState(todo) {
@@ -137,10 +140,21 @@ function reconcileAll(merged, cloudArr, localArr, now) {
     const local = localMap.get(row.id)
     if (!cloud || !local) return row
     if (isDeleted(row)) return row
-    if (!hasCompletionState(cloud) && !hasCompletionState(local)) return row
 
-    const { completedDates, completionStamps } = reconcileCompletion(cloud, local, now)
-    return { ...row, completedDates, completionStamps }
+    let out = row
+
+    if (hasCompletionState(cloud) || hasCompletionState(local)) {
+      const { completedDates, completionStamps } = reconcileCompletion(cloud, local, now)
+      out = { ...out, completedDates, completionStamps }
+    }
+
+    // Same guard as completion: a task with no subtasks must not gain an empty
+    // array, which would change its sync fingerprint and re-push the collection.
+    if (cloud.subtasks?.length || local.subtasks?.length) {
+      out = { ...out, subtasks: reconcileSubtasks(cloud, local, now) }
+    }
+
+    return out
   })
 }
 
@@ -190,6 +204,120 @@ export function setCompletionForDate(todo, date, done, now = new Date().toISOStr
   }
 }
 
+/* ── Subtasks ────────────────────────────────────────────────────────────────
+ *
+ * Subtasks used to be resolved by their parent: the row carried the array, a
+ * subtask change stamped the row, and the newer row won whole. That is the same
+ * mistake `completedDates` made, one level down — a task's subtasks are several
+ * independent decisions sharing one timestamp:
+ *
+ *   1. Both devices hold "Essay" with steps "outline", "draft", "cite".
+ *   2. You tick "outline" on your phone.
+ *   3. You tick "draft" on your laptop.
+ *   4. The newer row wins entirely, and one of the two ticks is gone.
+ *
+ * Deleting had the broader version, exactly as list items did: the edit modal
+ * saves the array it is holding, so a removed subtask was simply absent — and an
+ * absent subtask is indistinguishable from one added offline on the other device,
+ * so it came back.
+ *
+ * So a subtask is a merge unit in its own right, carrying `updatedAt` and, when
+ * removed, a `deletedAt` tombstone — which lets the same tombstones.js helpers
+ * resolve it. The row still resolves the task's own fields; subtasks resolve one
+ * by one underneath it.
+ */
+
+/** Everything the user should see — tombstoned subtasks are not it. */
+export function visibleSubtasks(todo) {
+  return visible(todo?.subtasks ?? [])
+}
+
+/** Stamp the parent row. A subtask change is still a change to the task. */
+function touchTodo(todo, now) {
+  return { ...todo, updatedAt: now }
+}
+
+/** Patch one subtask, stamping it and its parent. */
+export function patchSubtask(todo, subtaskId, patch, now = new Date().toISOString()) {
+  return touchTodo({
+    ...todo,
+    subtasks: (todo?.subtasks ?? []).map(s =>
+      s.id === subtaskId ? { ...s, ...patch, updatedAt: now } : s,
+    ),
+  }, now)
+}
+
+/** Append a subtask. */
+export function addSubtask(todo, title, now = new Date().toISOString()) {
+  const subtask = {
+    id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title,
+    completed: false,
+    updatedAt: now,
+  }
+  return touchTodo({ ...todo, subtasks: [...(todo?.subtasks ?? []), subtask] }, now)
+}
+
+/**
+ * Apply the subtask array an editor is holding, without losing tombstones.
+ *
+ * The edit modal and Corvus both save a plain list of the subtasks they can see,
+ * which is the shape that made deletion unsyncable: writing that array straight
+ * back drops every tombstone, and the deleted subtasks return on the next merge
+ * from a device that still remembers them. The same trap the list reorder handler
+ * fell into.
+ *
+ * So the incoming array decides *content and order*, while removals become
+ * tombstones and untouched subtasks keep the stamp they had. Only what actually
+ * changed is re-stamped — re-stamping everything would let an unrelated edit win
+ * merges it should lose, and would churn the sync fingerprint of the whole row.
+ */
+export function applySubtaskEdits(todo, next, now = new Date().toISOString()) {
+  const previous = todo?.subtasks ?? []
+  const byId     = new Map(previous.map(s => [s.id, s]))
+  const keptIds  = new Set((next ?? []).map(s => s?.id).filter(Boolean))
+
+  const updated = (next ?? []).map(incoming => {
+    const before = incoming?.id ? byId.get(incoming.id) : null
+    if (!before) return { ...incoming, updatedAt: now }
+
+    /* An incoming tombstone passes straight through. Not every caller filters the
+       array first — Corvus marks a task done by spreading the whole row back — so
+       the raw list arrives here tombstones and all, and clearing deletedAt on those
+       would resurrect exactly what the tombstone exists to keep buried. */
+    if (isDeleted(incoming)) return incoming
+
+    // The editor lists an id that was tombstoned: it is being re-added, so lift the
+    // tombstone rather than leaving a deleted subtask the user can see.
+    if (isDeleted(before)) return { ...before, ...incoming, deletedAt: null, updatedAt: now }
+
+    const unchanged = before.title === incoming.title
+      && !!before.completed === !!incoming.completed
+    return unchanged ? before : { ...before, ...incoming, updatedAt: now }
+  })
+
+  // Anything the editor no longer lists was removed — tombstone it rather than
+  // letting it vanish. Tombstones sort after the visible subtasks; nothing reads
+  // them for order, and keeping them last leaves the editor's order intact.
+  const removed = previous
+    .filter(s => !keptIds.has(s.id))
+    .map(s => (isDeleted(s) ? s : softDelete(s, now)))
+
+  return touchTodo({ ...todo, subtasks: [...updated, ...removed] }, now)
+}
+
+/**
+ * Resolve two versions of one task's subtasks.
+ *
+ * Ordinary id-keyed tombstone merge — the same one rows and list items get. Order
+ * follows the merged array, which keeps the side that has each subtask; there is
+ * no `sortOrder` here because subtask order is array position and reordering is
+ * not something the UI offers.
+ */
+export function reconcileSubtasks(cloud, local, now) {
+  return purgeTombstones(mergeWithTombstones(cloud?.subtasks ?? [], local?.subtasks ?? []), now)
+}
+
 /**
  * Purge a todo collection: drop expired tombstones, and drop expired untick stamps.
  *
@@ -201,15 +329,28 @@ export function setCompletionForDate(todo, date, done, now = new Date().toISOStr
  */
 export function purgeTodos(todos, now = Date.now()) {
   return purgeTombstones(todos, now).map(todo => {
+    let out = todo
+
     const stamps = todo?.completionStamps
-    if (!stamps) return todo
+    if (stamps) {
+      const done = new Set(todo.completedDates ?? [])
+      const kept = Object.keys(stamps)
+        .sort()
+        .filter(date => done.has(date) || !isStampExpired(stamps[date], now))
 
-    const done = new Set(todo.completedDates ?? [])
-    const kept = Object.keys(stamps)
-      .sort()
-      .filter(date => done.has(date) || !isStampExpired(stamps[date], now))
+      if (kept.length !== Object.keys(stamps).length) {
+        out = { ...out, completionStamps: Object.fromEntries(kept.map(d => [d, stamps[d]])) }
+      }
+    }
 
-    if (kept.length === Object.keys(stamps).length) return todo
-    return { ...todo, completionStamps: Object.fromEntries(kept.map(d => [d, stamps[d]])) }
+    // Subtask tombstones expire on the same schedule, and for the same reason they
+    // are swept here rather than only in the merge: a row that never syncs is never
+    // reconciled, so nothing else would ever drop them.
+    if (todo?.subtasks?.length) {
+      const swept = purgeTombstones(todo.subtasks, now)
+      if (swept.length !== todo.subtasks.length) out = { ...out, subtasks: swept }
+    }
+
+    return out
   })
 }
