@@ -124,6 +124,47 @@ describe('mergeWithTombstones — the resurrection bug', () => {
   })
 })
 
+/* Why every todo mutator must stamp `updatedAt`.
+ *
+ * toggleTodo used to flip `completed` without touching the timestamp, and the
+ * symptom was oddly specific: tasks appeared on both devices, but ticking one off
+ * reverted. These pin the merge behaviour that made that happen, so a future
+ * unstamped mutator fails here instead of silently losing edits. */
+describe('mergeWithTombstones — completion state across devices', () => {
+  it('a completion stamped on another device beats the stale local copy', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 't1', title: 'Essay', completed: true,  updatedAt: '2026-09-03T12:00:00.000Z' }],
+      [{ id: 't1', title: 'Essay', completed: false, updatedAt: '2026-09-03T11:00:00.000Z' }],
+    )
+    expect(merged[0].completed).toBe(true)
+  })
+
+  it('an unstamped toggle loses to the cloud on an equal timestamp — the original bug', () => {
+    const stamp = '2026-09-03T11:00:00.000Z'
+    const merged = mergeWithTombstones(
+      [{ id: 't1', completed: true,  updatedAt: stamp }], // toggled elsewhere, stamp untouched
+      [{ id: 't1', completed: false, updatedAt: stamp }], // never heard about it
+    )
+    expect(merged[0].completed).toBe(false) // stale local wins the >= tie-break
+  })
+
+  it('a recurring task completed for a date wins once the toggle stamps it', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 't2', completedDates: ['2026-09-03'], updatedAt: '2026-09-03T12:00:00.000Z' }],
+      [{ id: 't2', completedDates: [],             updatedAt: '2026-09-03T11:00:00.000Z' }],
+    )
+    expect(merged[0].completedDates).toEqual(['2026-09-03'])
+  })
+
+  it('a checked subtask rides on the parent task stamp', () => {
+    const merged = mergeWithTombstones(
+      [{ id: 't3', subtasks: [{ id: 's1', completed: true }],  updatedAt: '2026-09-03T12:00:00.000Z' }],
+      [{ id: 't3', subtasks: [{ id: 's1', completed: false }], updatedAt: '2026-09-03T11:00:00.000Z' }],
+    )
+    expect(merged[0].subtasks[0].completed).toBe(true)
+  })
+})
+
 describe('mergeCloudWinsWithTombstones', () => {
   it('cloud wins for ordinary conflicts', () => {
     const merged = mergeCloudWinsWithTombstones(

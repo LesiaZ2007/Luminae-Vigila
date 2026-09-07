@@ -33,7 +33,11 @@ import {
   Calendar, StickyNote,
 } from 'lucide-react'
 import Confetti from '@/components/Confetti'
-import { makeItem, makeSubtask } from '@/lib/customLists'
+import {
+  makeItem, makeSubtask, visibleItems,
+  addListItem, patchItem, deleteListItem, clearCheckedItems, reorderListItems,
+  addListSubtask, patchSubtask, deleteListSubtask,
+} from '@/lib/customLists'
 import DatePicker from '@/components/DatePicker'
 
 // ── Icon registry ──────────────────────────────────────────────────────────
@@ -785,15 +789,19 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   const dragOverIdRef = useRef(null)
   const [localOrder, setLocalOrder] = useState(null)
 
-  const items = localOrder || (list.items ?? []).slice().sort((a, b) => {
+  /* visibleItems, not list.items: a deleted item is now a tombstone that stays in
+     the array so the delete can sync, and it must not be rendered or counted. */
+  const live = visibleItems(list)
+
+  const items = localOrder || live.slice().sort((a, b) => {
     if (a.sortOrder != null && b.sortOrder != null) return a.sortOrder - b.sortOrder
     if (a.sortOrder != null) return -1
     if (b.sortOrder != null) return 1
     return 0
   })
 
-  const totalCount   = (list.items ?? []).length
-  const checkedCount = (list.items ?? []).filter(i => i.checked).length
+  const totalCount   = live.length
+  const checkedCount = live.filter(i => i.checked).length
   const accent       = list.color || '#3a6fa8'
 
   // List is "complete" when all top-level items are checked (subtasks do not affect this)
@@ -816,86 +824,64 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
     wasCompleteRef.current = isComplete
   }, [isComplete])
 
+  /* Every one of these goes through a helper in lib/customLists rather than
+     splicing `list.items` here. An item is a merge unit now — it carries its own
+     `updatedAt`, and deleting one leaves a tombstone — and the helpers are what
+     keep that bookkeeping in one place instead of repeated across nine handlers,
+     where a single missed stamp would silently lose the edit on another device. */
+
   function addItem() {
     const text = newText.trim()
     if (!text) return
-    const item = makeItem(text)
-    item.sortOrder = items.length
-    onUpdateList({ ...list, items: [...(list.items ?? []), item] })
+    onUpdateList(addListItem(list, { ...makeItem(text), sortOrder: items.length }))
     setNewText('')
   }
 
   function toggleItem(id) {
-    onUpdateList({
-      ...list,
-      items: (list.items ?? []).map(i => i.id === id ? { ...i, checked: !i.checked } : i),
-    })
+    const item = (list.items ?? []).find(i => i.id === id)
+    onUpdateList(patchItem(list, id, { checked: !item?.checked }))
   }
 
   function deleteItem(id) {
-    onUpdateList({ ...list, items: (list.items ?? []).filter(i => i.id !== id) })
+    onUpdateList(deleteListItem(list, id))
   }
 
   function updateText(id, text) {
-    onUpdateList({ ...list, items: (list.items ?? []).map(i => i.id === id ? { ...i, text } : i) })
+    onUpdateList(patchItem(list, id, { text }))
   }
 
   function updateNote(id, note) {
-    onUpdateList({ ...list, items: (list.items ?? []).map(i => i.id === id ? { ...i, note } : i) })
+    onUpdateList(patchItem(list, id, { note }))
   }
 
   function updateDue(id, dueDate) {
-    onUpdateList({ ...list, items: (list.items ?? []).map(i => i.id === id ? { ...i, dueDate } : i) })
+    onUpdateList(patchItem(list, id, { dueDate }))
   }
 
   function clearChecked() {
-    onUpdateList({ ...list, items: (list.items ?? []).filter(i => !i.checked) })
+    onUpdateList(clearCheckedItems(list))
   }
 
-  // Subtask handlers
+  // Subtask handlers. A subtask is not a merge unit — it lives inside its item's
+  // blob, so these stamp the item and need no tombstone of their own.
   function addSubtask(itemId) {
     const text = window.prompt('New subtask:')?.trim()
     if (!text) return
-    const st = makeSubtask(text)
-    onUpdateList({
-      ...list,
-      items: (list.items ?? []).map(i =>
-        i.id === itemId ? { ...i, subtasks: [...(i.subtasks ?? []), st] } : i
-      ),
-    })
+    onUpdateList(addListSubtask(list, itemId, makeSubtask(text)))
   }
 
   function toggleSubtask(itemId, subtaskId) {
-    onUpdateList({
-      ...list,
-      items: (list.items ?? []).map(i =>
-        i.id !== itemId ? i : {
-          ...i,
-          subtasks: (i.subtasks ?? []).map(s => s.id === subtaskId ? { ...s, checked: !s.checked } : s),
-        }
-      ),
-    })
+    const item = (list.items ?? []).find(i => i.id === itemId)
+    const st   = (item?.subtasks ?? []).find(s => s.id === subtaskId)
+    onUpdateList(patchSubtask(list, itemId, subtaskId, { checked: !st?.checked }))
   }
 
   function deleteSubtask(itemId, subtaskId) {
-    onUpdateList({
-      ...list,
-      items: (list.items ?? []).map(i =>
-        i.id !== itemId ? i : { ...i, subtasks: (i.subtasks ?? []).filter(s => s.id !== subtaskId) }
-      ),
-    })
+    onUpdateList(deleteListSubtask(list, itemId, subtaskId))
   }
 
   function updateSubtaskText(itemId, subtaskId, text) {
-    onUpdateList({
-      ...list,
-      items: (list.items ?? []).map(i =>
-        i.id !== itemId ? i : {
-          ...i,
-          subtasks: (i.subtasks ?? []).map(s => s.id === subtaskId ? { ...s, text } : s),
-        }
-      ),
-    })
+    onUpdateList(patchSubtask(list, itemId, subtaskId, { text }))
   }
 
   // Drag handlers
@@ -916,8 +902,7 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
 
   function handleDrop() {
     if (!dragIdRef.current || !localOrder) { resetDrag(); return }
-    const withOrder = localOrder.map((i, idx) => ({ ...i, sortOrder: idx }))
-    onUpdateList({ ...list, items: withOrder })
+    onUpdateList(reorderListItems(list, localOrder))
     setLocalOrder(null)
     resetDrag()
   }
@@ -1133,9 +1118,10 @@ export default function CustomListPanel({
 }) {
   const [deletingId, setDeletingId] = useState(null)
 
-  // Per-list completion for tab strikethrough
+  // Per-list completion for tab strikethrough. Tombstoned items are not on the
+  // list any more, so they must not decide whether it reads as finished.
   function listIsComplete(list) {
-    const items = list.items ?? []
+    const items = visibleItems(list)
     return items.length > 0 && items.every(i => i.checked)
   }
 
@@ -1294,7 +1280,7 @@ export default function CustomListPanel({
       {deletingId && (() => {
         const list = lists.find(l => l.id === deletingId)
         if (!list) { setDeletingId(null); return null }
-        const totalCount = (list.items ?? []).length
+        const totalCount = visibleItems(list).length
         return (
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
