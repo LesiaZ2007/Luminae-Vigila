@@ -426,12 +426,26 @@ Checklist items had a broader version of the same problem. [`lib/customLists.js`
 
 An item is now a **merge unit in its own right**: it carries its own `updatedAt`, and deleting one leaves a `deletedAt` tombstone. That makes items behave exactly like tasks and events, and lets the same [`lib/tombstones.js`](src/lib/tombstones.js) helpers resolve them — the list row resolves name, icon, colour and due date, while items resolve one by one underneath it.
 
-- **Subtasks are deliberately *not* merge units.** A subtask lives inside its item's blob, so the item's timestamp resolves it — which means a subtask change stamps the **item**, and a subtask can be removed outright with no tombstone
+- **A list item's subtasks are deliberately *not* merge units.** A subtask lives inside its item's blob, so the item's timestamp resolves it — which means a subtask change stamps the **item**, and a subtask can be removed outright with no tombstone. (A *task's* subtasks are a different matter — see below)
 - **Every mutation goes through a helper** in `customLists.js` (`patchItem`, `deleteListItem`, `reorderListItems`, …) rather than being spliced together in the component. Stamping is easy to forget in one branch out of nine, and forgetting it is silent — the edit just loses a merge later, on another device, with nothing to point at
 - **Reordering keeps tombstones.** The old drag handler replaced `list.items` with only the visible items, which would have dropped every tombstone and resurrected the deleted items
 - **Tombstoned items are filtered from every count**, not just the list body — the `3/7` badge, the tab strikethrough, the calendar due-date markers, the agenda, and search all read `visibleItems(list)`
 
 **No database change.** A list is stored as a single JSONB blob, so items ride inside it — nothing to run against Neon.
+
+### ☑️ A task's subtasks resolve one by one
+
+Subtasks were resolved by their parent: the row carried the array, a subtask change stamped the row, and the newer row won whole. That's the `completedDates` mistake one level down — three steps under one task are three independent decisions sharing one timestamp.
+
+- **Ticking two different steps on two devices lost one of them.** Tick "outline" on your phone and "draft" on your laptop, and whichever row was touched later won entirely
+- **A deleted subtask came back.** The edit modal saves the array it's holding, so a removed subtask was simply *absent* — and an absent subtask is indistinguishable from one added offline on the other device
+
+A subtask now carries its own `updatedAt`, and removing one leaves a `deletedAt` tombstone, so the same [`lib/tombstones.js`](src/lib/tombstones.js) helpers resolve it. The row still resolves the task's own fields — title, due date, category — while subtasks resolve one by one underneath it.
+
+- **Every write goes through a helper** — `patchSubtask`, `addSubtask`, `applySubtaskEdits` — each stamping the subtask *and* the parent row
+- **`applySubtaskEdits` is what makes the edit modal safe.** It takes the editor's content and order but turns removals into tombstones, so writing back the visible array no longer drops them — the trap the list reorder handler fell into. An incoming tombstone passes through untouched, because not every caller filters the array first: Corvus marks a task done by spreading the whole row back
+- **Only what changed is re-stamped.** Re-stamping every subtask on save would let an unrelated edit win merges it should lose, and would churn the whole row's sync fingerprint
+- **Tombstoned subtasks are filtered from every read** — the checklist, the `2/5 steps` chip, and the editor's own list all go through `visibleSubtasks`
 
 #### A note on the manual refresh button
 
@@ -442,6 +456,21 @@ There were **three** implementations of the merge rule, and a collection was res
 `mergeById` was the pre-tombstone merge, kept at sign-in for categories and study sessions long after those collections had moved on. It preferred **local whenever either side lacked `updatedAt`** — the exact defect [`lib/tombstones.js`](src/lib/tombstones.js) documents. Retroactively tagging a focus session stamps `updatedAt` *specifically* so the edit wins that merge, but the other device's untouched copy has no stamp at all, so it won as "local" and pushed the untagged copy back — **the tag reverted on sign-in.** It also compared timestamps as raw strings rather than parsed dates. It's gone; everything merges through the shared helpers now.
 
 The refresh button had the same problem from the other end. It kept its **own** hand-rolled merge for classes, study sessions and categories — keyed by id, cloud overwrites local, no notion of a tombstone. Classes soft-delete, and the background pull had been tombstone-aware since tombstones landed, so **deleting a class and then pressing Sync brought it back**: the cloud's copy simply hadn't heard about the delete yet, and nothing stopped it from overwriting the tombstone. Every collection now goes through the shared `mergeCloudWinsWithTombstones`, and the duplicate helper is gone — a second implementation of a merge is a second place for a rule like this to be missed.
+
+### 👁 Hidden, recoloured and important events
+
+`eventPrefs` holds per-event display state — hidden, colour, important — keyed by event id. It lives apart from the events themselves so it works for events that aren't ours to edit: a Google invite, a Canvas due date and a class period all get the same treatment. That part was right; how it *synced* was not.
+
+The whole object was shallow-merged with no timestamps anywhere, **and in a different direction depending on the path** — sign-in and the background poll did `{ ...cloud, ...local }`, the refresh button did `{ ...local, ...cloud }`. So marking an event important on your phone and un-marking it on your laptop meant the phone's stale copy won as "local" and was pushed back over the un-mark. And because the direction flipped between paths, **the same two devices could settle on different answers depending on whether you signed in or pressed Sync** — which is what made it look like a rendering glitch rather than a sync bug.
+
+An entry is now a merge unit carrying its own `updatedAt` ([`lib/eventPrefs.js`](src/lib/eventPrefs.js)), and every path resolves entries the same way.
+
+- **All five writers go through `setEventPref`**, which stamps the entry — hide, un-hide, both colour setters, and the important toggle
+- **Un-hiding writes `hidden: false` rather than deleting the key.** A removed key is an absence, and an absence is indistinguishable from "never set" — the same reason deletes need tombstones. Nothing here deletes an entry, so prefs need no tombstones of their own
+- **The refresh button resolves prefs by timestamp too.** A pref entry *is* the finer-grained state that the row-level cloud-wins rule defers to, and it's the smallest thing anyone decides here
+- **A restored backup stamps its entries** as of the restore. They'd otherwise carry the backup's old stamp — or none, if the file predates stamping — and lose the next merge to a fresher copy on another device, silently undoing the restore
+
+**Not yet fixed:** prefs for deleted events are never reaped, so the object grows slowly and forever. Reaping needs a grace window like the one orphaned note images use, because Google and Canvas events load asynchronously — an event that's merely *not loaded yet* must not look like one that's gone.
 
 ### 💸 Sync writes only what changed
 
@@ -1182,7 +1211,8 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
 - `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
-- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating a stale tick, legacy unstamped rows unioning, `setCompletionForDate` stamping the row as well as the register, and `purgeTodos` expiring untick stamps while never dropping the stamp of a date that is still done
+- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating a stale tick, legacy unstamped rows unioning, `setCompletionForDate` stamping the row as well as the register, and `purgeTodos` expiring untick stamps while never dropping the stamp of a date that is still done. Also the subtask register — two devices ticking different steps, a deleted subtask staying deleted, and `applySubtaskEdits` tombstoning removals without resurrecting the tombstones a caller passes back in
+- `src/lib/eventPrefs.test.js` — per-event pref resolution: an un-mark beating a stale mark in both directions, two events resolving separately, the one-sided-stamp cases, sign-in and the refresh button giving the same answer, and a restored backup winning the next merge
 - `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating an older tick (and vice versa), the unstamped-legacy union fallback, stamp expiry, and ordinary tasks not gaining an empty `completedDates`
 - `src/lib/customLists.test.js` — per-item merging: a check winning in either direction, a deleted item staying deleted, two edits to one list both surviving, tombstones surviving a reorder, and the mutation helpers stamping both the item and the list
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
