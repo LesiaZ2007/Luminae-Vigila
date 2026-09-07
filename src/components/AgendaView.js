@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks, AlertTriangle } from 'lucide-react'
 import { todayStr } from '@/lib/localDate'
 import { describeLocation } from '@/lib/maps'
+import { visibleItems } from '@/lib/customLists'
 
 const DAYS_AHEAD = 14
 
@@ -212,7 +213,7 @@ export default function AgendaView({
     // ── Custom list due dates ────────────────────────────────────────────────
     for (const list of customLists) {
       const accent       = list.color || '#3a6fa8'
-      const items        = list.items ?? []
+      const items        = visibleItems(list) // tombstoned items are off the list
       const totalCount   = items.length
       const checkedCount = items.filter(i => i.checked).length
       const isComplete   = totalCount > 0 && checkedCount === totalCount

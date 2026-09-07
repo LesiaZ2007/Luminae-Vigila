@@ -371,6 +371,78 @@ Server-side, a user with no rules pays exactly one extra query per cron tick (th
 - **Atomic writes** — cloud sync POSTs now run all database writes (DELETEs and INSERTs) inside a single transaction. If anything fails mid-way the entire write is rolled back, so partial data wipes are impossible.
 - **Manual Refresh button** — when signed in, a refresh icon appears next to your email in the sidebar (desktop) and in the account section of the Settings tab (mobile). Tap it to immediately pull the latest cloud state to your current device — useful when you've updated your data on another device and don't want to wait for the next auto-sync. The icon spins while the pull is in progress.
 
+### ✅ Why ticking a task off didn't stick on the other device
+
+Tasks synced. Whether they were **done** did not — you'd tick something off on your phone, open the laptop, and find it unticked again (or tick it on the laptop and watch the phone undo it on its next sync).
+
+The cause was a single missing line rather than anything wrong with sync itself. Every merge in the app resolves conflicts by `updatedAt` — newest edit wins ([`lib/tombstones.js`](src/lib/tombstones.js)) — and `toggleTodo` was flipping `completed` **without stamping `updatedAt`**. Every other task mutator stamped it; the toggle didn't.
+
+That produced a very specific and misleading symptom:
+
+- Both devices held the same task with the **same** timestamp and a **different** `completed` flag
+- The merge's tie-break is `localT >= cloudT`, so on an exact tie the **local** copy wins — and the local copy was the one that hadn't heard about the toggle
+- The stale copy then got pushed back over the real change, so the completion was undone *everywhere*, not just missed on one device
+- Creating a task was unaffected, because a new id is absent on the other side and merges unconditionally. Only the flag reverted — which is exactly why this read as a display bug ("I can see the task, it just won't stay done") rather than a sync bug
+
+Fixed by stamping `updatedAt` on the three task mutators that were missing it — **completion** (both the one-off `completed` flag and a recurring task's per-date `completedDates`), **subtask checkboxes** (stamped on the parent, since the parent row is what the merge resolves), and **reordering** (order is synced, user-visible state, so it lost the same tie-break).
+
+`tombstones.test.js` now pins the merge behaviour that allowed it, so a future unstamped mutator fails a test instead of quietly losing edits.
+
+### 🔁 Recurring tasks: completion is resolved per date, not per row
+
+Stamping the row fixed completion for ordinary tasks, but a recurring task carries **several independent decisions in one row** — it records completion per date in `completedDates` rather than as one flag. Resolving that row as a single unit makes those decisions compete:
+
+1. Both devices are offline holding the same weekly task
+2. You tick **Monday's** copy off on your phone
+3. You tick **Tuesday's** copy off on your laptop
+4. Whichever row was touched later wins *entirely* — the other day's tick is gone, though the two never actually conflicted
+
+The obvious fix — union the two arrays — trades one bug for a worse one. An add-only set cannot express *"Monday is no longer done"*, so un-ticking on one device gets undone by any device that still remembers the tick.
+
+So completion is now a **per-date last-write-wins register** ([`lib/todoMerge.js`](src/lib/todoMerge.js)). `completedDates` stays the array everything already reads, and a companion `completionStamps` records when each date last changed:
+
+```js
+completedDates:   ['2026-09-07']
+completionStamps: { '2026-09-07': '…T10:00Z', '2026-09-14': '…T11:00Z' }
+```
+
+- **A date in the stamps but absent from the array was deliberately un-ticked.** That's the same idea as a tombstone, and it's what lets an untick beat a stale tick instead of being mistaken for "never done"
+- **Per date, the newer stamp decides.** Monday and Tuesday resolve separately, so both survive step 2 and step 3 above
+- **One side stamped, the other not → the stamped side decides.** A stamp means the date was touched; no stamp means it never was. Same rule the row-level merge applies to `updatedAt`
+- **Neither side stamped → union.** Those rows predate the register, so they carry no record of an untick and there is none to honour; keeping a tick nobody can date beats dropping one somebody made
+- **Un-tick stamps are dropped after the 30-day tombstone window.** They only have to outlive the slowest device, and without that a long-running weekly task would accumulate a stamp per occurrence forever. Expiry runs on the **purge** path (`purgeTodos`) as well as inside the merge, because the merge only sees rows *both* sides hold — for an offline account, no row is ever reconciled, and the stamps would have grown without bound
+- **Ordinary tasks are left alone.** A task with no recurring state doesn't gain an empty `completedDates` — that would change its sync fingerprint and re-push the whole collection for nothing
+- **Stamp keys are stored in date order.** `completionStamps` rides in the todos payload, and the delta check below fingerprints that with `JSON.stringify`, which is key-order sensitive. Two devices that agree on the state but ticked the dates in a different order would otherwise fingerprint differently and re-push the whole collection on every sync
+
+`setCompletionForDate` is the only writer, and it moves `completedDates`, `completionStamps` and the row's `updatedAt` **together** — the array and the stamps cannot drift apart, and no call site can tick a date without stamping the row the merge resolves it by.
+
+### 🧾 Custom-list items sync like tasks now
+
+Checklist items had a broader version of the same problem. [`lib/customLists.js`](src/lib/customLists.js) merged **local-wins with no timestamps anywhere**, at both the list and the item level:
+
+- **Checking an item reverted.** The device that had never heard about the check won as "local" and pushed the unchecked copy back — exactly the task bug
+- **Deleting an item brought it back.** Deletion spliced the item out of the array, and an item absent from one side is indistinguishable from one *created* offline, so the merge kept it
+- **Two edits to one list fought.** The whole list was one unit, so checking an item on your phone while renaming a different item on your laptop meant one of the two was discarded
+
+An item is now a **merge unit in its own right**: it carries its own `updatedAt`, and deleting one leaves a `deletedAt` tombstone. That makes items behave exactly like tasks and events, and lets the same [`lib/tombstones.js`](src/lib/tombstones.js) helpers resolve them — the list row resolves name, icon, colour and due date, while items resolve one by one underneath it.
+
+- **Subtasks are deliberately *not* merge units.** A subtask lives inside its item's blob, so the item's timestamp resolves it — which means a subtask change stamps the **item**, and a subtask can be removed outright with no tombstone
+- **Every mutation goes through a helper** in `customLists.js` (`patchItem`, `deleteListItem`, `reorderListItems`, …) rather than being spliced together in the component. Stamping is easy to forget in one branch out of nine, and forgetting it is silent — the edit just loses a merge later, on another device, with nothing to point at
+- **Reordering keeps tombstones.** The old drag handler replaced `list.items` with only the visible items, which would have dropped every tombstone and resurrected the deleted items
+- **Tombstoned items are filtered from every count**, not just the list body — the `3/7` badge, the tab strikethrough, the calendar due-date markers, the agenda, and search all read `visibleItems(list)`
+
+**No database change.** A list is stored as a single JSONB blob, so items ride inside it — nothing to run against Neon.
+
+#### A note on the manual refresh button
+
+The "pull from cloud" merges are cloud-wins at the **row** level, but both now resolve the finer-grained state by timestamp rather than overwriting it: per-date for recurring completion, per-item for list items. The button means *"fetch what my other device did"*, not *"discard what I just did here"* — a tick made seconds ago carries the newer stamp and survives. This mirrors the rule the refresh already followed of never resurrecting a local delete.
+
+There were **three** implementations of the merge rule, and a collection was resolved differently depending on how you arrived at it — `mergeById` at sign-in, `mergeWithTombstones` on the background poll, and a hand-rolled cloud-wins pass on the refresh button. Three copies of one rule is three places to miss it, and both of the following bugs are that miss.
+
+`mergeById` was the pre-tombstone merge, kept at sign-in for categories and study sessions long after those collections had moved on. It preferred **local whenever either side lacked `updatedAt`** — the exact defect [`lib/tombstones.js`](src/lib/tombstones.js) documents. Retroactively tagging a focus session stamps `updatedAt` *specifically* so the edit wins that merge, but the other device's untouched copy has no stamp at all, so it won as "local" and pushed the untagged copy back — **the tag reverted on sign-in.** It also compared timestamps as raw strings rather than parsed dates. It's gone; everything merges through the shared helpers now.
+
+The refresh button had the same problem from the other end. It kept its **own** hand-rolled merge for classes, study sessions and categories — keyed by id, cloud overwrites local, no notion of a tombstone. Classes soft-delete, and the background pull had been tombstone-aware since tombstones landed, so **deleting a class and then pressing Sync brought it back**: the cloud's copy simply hadn't heard about the delete yet, and nothing stopped it from overwriting the tombstone. Every collection now goes through the shared `mergeCloudWinsWithTombstones`, and the duplicate helper is gone — a second implementation of a merge is a second place for a rule like this to be missed.
+
 ### 💸 Sync writes only what changed
 
 Neon bills for **compute time**, and the sync was spending a lot of it saying nothing.
@@ -1109,7 +1181,10 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/recurrence.test.js` — `expandRecurring` and `expandRecurringTodo` pure logic
 - `src/lib/ics.test.js` — ICS date parsing (`parseIcsDate`) and VEVENT extraction (`parseIcs`)
 - `src/lib/notes.test.js` — notes merge conflict resolution, trash retention, HTML→plain-text flattening, title/preview derivation, sorting, search matching, and shared-text escaping
-- `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete
+- `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
+- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating a stale tick, legacy unstamped rows unioning, `setCompletionForDate` stamping the row as well as the register, and `purgeTodos` expiring untick stamps while never dropping the stamp of a date that is still done
+- `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating an older tick (and vice versa), the unstamped-legacy union fallback, stamp expiry, and ordinary tasks not gaining an empty `completedDates`
+- `src/lib/customLists.test.js` — per-item merging: a check winning in either direction, a deleted item staying deleted, two edits to one list both surviving, tombstones surviving a reorder, and the mutation helpers stamping both the item and the list
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
 - `src/lib/localDate.test.js` — local-vs-UTC date derivation, including the exact evening-rollover case that made the badge count tomorrow's work
 - `src/lib/glance.test.js` — the today summary shared by `/today`, the daily push, and the icon badge: overdue/due-today splitting, all-day event ordering, and Canvas assignment inclusion
@@ -1351,7 +1426,9 @@ src/
 │   └── OnboardingWizard.js           # First-run 4-step wizard modal
 │
 └── lib/
-    ├── customLists.js      # Custom list localStorage helpers + cloud-merge logic
+    ├── customLists.js      # Custom list localStorage helpers + per-item cloud-merge
+    ├── todoMerge.js        # Todo merge: row-level LWW + per-date completion register
+    ├── tombstones.js       # Soft-delete helpers shared by every id-keyed collection
     ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
