@@ -128,3 +128,34 @@ describe('displayTime', () => {
     expect(displayTime('')).toBe('')
   })
 })
+
+/* A multi-day event was filed under its start date alone, so a conference running
+   Monday to Wednesday was in Monday's glance and absent from Tuesday's — it
+   disappeared the moment it began, which is when it mattered most. The glance drives
+   /today and the daily push, so it disappeared from both. */
+describe('buildGlance — multi-day events', () => {
+  const conference = { id: 'c1', title: 'Robotics comp', allDay: true, start: '2026-08-02', end: '2026-08-05' }
+
+  it('includes an event that started before today and is still running', () => {
+    const g = buildGlance({ events: [conference], dateStr: DATE })
+    expect(g.events.map(e => e.id)).toEqual(['c1'])
+  })
+
+  it('says which day of it today is', () => {
+    expect(buildGlance({ events: [conference], dateStr: DATE }).events[0].span).toBe('Day 2 of 3')
+  })
+
+  it('is gone on the exclusive end day', () => {
+    expect(buildGlance({ events: [conference], dateStr: '2026-08-05' }).events).toEqual([])
+  })
+
+  it('still counts a single-day event, with no span label', () => {
+    const g = buildGlance({ events: [event()], dateStr: DATE })
+    expect(g.events).toHaveLength(1)
+    expect(g.events[0].span).toBeNull()
+  })
+
+  it('leaves an event that has not started out', () => {
+    expect(buildGlance({ events: [conference], dateStr: '2026-08-01' }).events).toEqual([])
+  })
+})

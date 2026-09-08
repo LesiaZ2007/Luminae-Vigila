@@ -2278,6 +2278,14 @@ export default function Home() {
       setEventModal({ open: true, event: null, date: info.dateStr })
     }
   }, [])
+  /* Dragging a range on the calendar opens the event form spanning exactly it.
+     Only real drags arrive here — WeeklyCalendar drops single-cell and single-slot
+     selections, which are clicks and already mean something else — so this adds the
+     one thing that had no gesture at all: creating a multi-day event by hand. */
+  const handleSelectRange = useCallback(({ startStr, endStr, allDay }) => {
+    setEventModal({ open: true, event: null, date: startStr, end: endStr, allDay })
+  }, [])
+
   const handleEventClick = useCallback((info) => {
     /* A task on the calendar answers with a small menu rather than the edit form.
        Most clicks on one are "done", and that was the one thing the form made
@@ -3087,6 +3095,7 @@ export default function Home() {
               <ErrorBoundary>
                 <WeeklyCalendar events={allCalendarEvents} todos={todos}
                                 onDateClick={handleDateClick} onEventClick={handleEventClick}
+                                onSelectRange={handleSelectRange}
                                 onViewChange={handleViewChange}
                                 isMobile={isMobile}
                                 highlightEventId={searchHighlightId}
@@ -3563,6 +3572,7 @@ export default function Home() {
       )}
       {eventModal.open && (
         <EventModal event={eventModal.event} initialDate={eventModal.date}
+                    initialEnd={eventModal.end} initialAllDay={eventModal.allDay}
                     categories={eventCategories} onCategoriesChange={setEventCategories}
                     initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes} onSave={saveEvent} onDelete={deleteEvent}
                     onRecolor={handleRecolorEvent} colorOverride={eventModal.event ? eventPrefs[eventModal.event.id]?.color : null}
@@ -3570,7 +3580,9 @@ export default function Home() {
                     onHide={hideEvent}
                     existingEvents={events}
                     canvasClasses={canvasClasses}
-                    onClose={() => { setEventModal({ open: false, event: null, date: null }); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
+                    /* end/allDay are cleared too, or a range dragged out once would
+                       still be prefilled the next time the form opened from a click. */
+                    onClose={() => { setEventModal({ open: false, event: null, date: null, end: null, allDay: false }); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
       )}
       {examDraft && (
         <ExamBlockModal
