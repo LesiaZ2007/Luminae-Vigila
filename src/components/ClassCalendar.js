@@ -26,7 +26,7 @@ import {
 import {
   monthGrid, groupByDate, isOverdue, describeDay,
   bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule, LOAD_LABELS,
-  overdueItems, upcomingDays, nextDateAfter, addDays,
+  overdueItems, upcomingDays, nextDateAfter, addDays, dayProgress,
 } from '@/lib/classCalendar'
 import TaskActionMenu from '@/components/TaskActionMenu'
 import useAnchoredPosition from '@/lib/useAnchoredPosition'
@@ -537,6 +537,7 @@ export default function ClassCalendar({
           const anyOverdue = dayItems.some(i => isOverdue(i, todayStr))
           const shown      = dayItems.slice(0, CHIPS_PER_CELL)
           const extra      = dayItems.length - shown.length
+          const progress   = dayProgress(dayItems)
           const level      = loadLevel(dayLoad(dayItems, cutoffs))
           const isDropZone = dragOver === cell.date
 
@@ -578,6 +579,22 @@ export default function ClassCalendar({
                 </span>
                 {anyOverdue && (
                   <span title="Something here is overdue" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--red)' }} />
+                )}
+                {/* How much of the day is done. Pushed to the right so the date stays
+                    where the eye looks for it, and it goes quiet once the day is
+                    clear — a finished day should read as settled, not as a score. */}
+                {progress && (
+                  <span
+                    title={`${progress.done} of ${progress.total} done`}
+                    style={{
+                      marginLeft: 'auto', flexShrink: 0,
+                      fontSize: '0.6rem', fontWeight: 700,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: progress.done === progress.total ? 'var(--green)' : 'var(--text-3)',
+                    }}
+                  >
+                    {progress.done}/{progress.total}
+                  </span>
                 )}
               </div>
 
