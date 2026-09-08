@@ -119,11 +119,29 @@ describe('JSON export — the whole thing', () => {
 })
 
 describe('ICS export', () => {
-  it('includes every class meeting alongside your own events', async () => {
+  /* Tasks are in the file now too. A file named after your calendar used to hold
+     events and class meetings only, which left out most of what a planner is for —
+     see collectIcsRows on why a task goes out as a ☑-prefixed all-day entry rather
+     than a VTODO. */
+  it('includes your events, every class meeting, and your tasks', async () => {
     renderExporter()
     await userEvent.click(screen.getByRole('button', { name: /Export ICS/ }))
     const titles = parseIcs(await lastFile()).map(e => e.title).sort()
-    expect(titles).toEqual(['Dentist', 'Physics 101 (002)', 'Physics 101 (002)'])
+    expect(titles).toEqual(['Dentist', 'Physics 101 (002)', 'Physics 101 (002)', '☑ Lab report'])
+  })
+
+  it('puts a task on its due date, as a whole day', async () => {
+    renderExporter()
+    await userEvent.click(screen.getByRole('button', { name: /Export ICS/ }))
+    expect(await lastFile()).toMatch(/DTSTART;VALUE=DATE:20260304/)
+  })
+
+  it('leaves a finished task out — a calendar of things you have done is not the point', async () => {
+    renderExporter({
+      collections: { ...FULL, todos: [{ ...FULL.todos[0], completed: true }] },
+    })
+    await userEvent.click(screen.getByRole('button', { name: /Export ICS/ }))
+    expect(parseIcs(await lastFile()).some(e => e.title?.includes('Lab report'))).toBe(false)
   })
 
   it('carries the room, which used to be dropped', async () => {

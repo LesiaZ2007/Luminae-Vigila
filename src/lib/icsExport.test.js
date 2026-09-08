@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { serializeIcs, serializeEvent } from '@/lib/icsExport'
+import { serializeIcs, serializeEvent, collectIcsRows } from '@/lib/icsExport'
 import { parseIcs } from '@/lib/ics'
 
 /** A stored local event, in the shape EventModal saves. */
@@ -171,5 +171,102 @@ describe('round trip', () => {
     const parsed = parseIcs(serializeIcs([{ id: 'a', title: 'Reading week', start: '2026-03-04', allDay: true }]))
     expect(parsed).toHaveLength(1)
     expect(String(parsed[0].start).slice(0, 10)).toBe('2026-03-04')
+  })
+})
+
+/* The export was `[...events, ...classMeetings]`, so a file called "your calendar"
+   held no tasks — the thing a student planner is mostly for — and none of the due
+   dates on checklist items. All of it is on the app's own calendar, so the omission
+   was invisible until you opened the file somewhere else. */
+describe('collectIcsRows — everything dated, not just events', () => {
+  const task = (over = {}) => ({ id: 't1', title: 'Lab report', dueDate: '2026-03-06', ...over })
+
+  it('carries tasks as all-day entries', () => {
+    const rows = collectIcsRows({ todos: [task()] })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ start: '2026-03-06', allDay: true })
+  })
+
+  /* The ☑ prefix is how googleMirror already writes a task onto a calendar, so a
+     task looks the same wherever this app puts one. */
+  it('prefixes a task so it reads as work due rather than somewhere to be', () => {
+    expect(collectIcsRows({ todos: [task()] })[0].title).toBe('☑ Lab report')
+  })
+
+  it('keeps the task’s notes as the description', () => {
+    const rows = collectIcsRows({ todos: [task({ notes: 'Include the error analysis' })] })
+    expect(rows[0].extendedProps.notes).toBe('Include the error analysis')
+  })
+
+  it('leaves out a finished task, an undated one, and a deleted one', () => {
+    expect(collectIcsRows({ todos: [
+      task({ id: 'a', completed: true }),
+      task({ id: 'b', dueDate: null }),
+      task({ id: 'c', deletedAt: '2026-03-01T00:00:00Z' }),
+      task({ id: 'd', title: '' }),
+    ] })).toEqual([])
+  })
+
+  it('expands a recurring task into its occurrences', () => {
+    const rows = collectIcsRows({ todos: [task({
+      recurrence: { type: 'weekly', days: [], until: '2026-03-27' },
+    })] })
+    expect(rows.length).toBeGreaterThan(1)
+    // Each occurrence is its own dated entry, and each carries a distinct UID.
+    expect(new Set(rows.map(r => r.id)).size).toBe(rows.length)
+  })
+
+  it('skips the occurrences of a recurring task already ticked off', () => {
+    const withRule = { type: 'weekly', days: [], until: '2026-03-27' }
+    const all  = collectIcsRows({ todos: [task({ recurrence: withRule })] })
+    const some = collectIcsRows({ todos: [task({ recurrence: withRule, completedDates: ['2026-03-06'] })] })
+    expect(some.length).toBe(all.length - 1)
+  })
+
+  it('carries a checklist item’s due date, but not a checked one', () => {
+    const rows = collectIcsRows({ customLists: [{
+      id: 'l1', name: 'Packing', items: [
+        { id: 'i1', text: 'Passport', dueDate: '2026-03-08' },
+        { id: 'i2', text: 'Charger',  dueDate: '2026-03-08', checked: true },
+      ],
+    }] })
+    expect(rows.map(r => r.title)).toEqual(['☑ Passport'])
+  })
+
+  it('carries a list’s own due date only while the list is unfinished', () => {
+    const list = items => ({ id: 'l1', name: 'Packing', dueDate: '2026-03-09', items })
+    const open = collectIcsRows({ customLists: [list([{ id: 'i1', text: 'Passport' }])] })
+    const done = collectIcsRows({ customLists: [list([{ id: 'i1', text: 'Passport', checked: true }])] })
+    expect(open.some(r => r.title === '☑ Packing')).toBe(true)
+    expect(done.some(r => r.title === '☑ Packing')).toBe(false)
+  })
+
+  it('ignores a tombstoned list and its tombstoned items', () => {
+    expect(collectIcsRows({ customLists: [
+      { id: 'l1', name: 'Gone', dueDate: '2026-03-09', deletedAt: '2026-03-01T00:00:00Z', items: [] },
+      { id: 'l2', name: 'Here', items: [{ id: 'i1', text: 'Dropped', dueDate: '2026-03-08', deletedAt: '2026-03-01T00:00:00Z' }] },
+    ] })).toEqual([])
+  })
+
+  it('still drops deleted events and still carries class meetings', () => {
+    const rows = collectIcsRows({
+      events: [timed(), timed({ id: 'e2', deletedAt: '2026-03-01T00:00:00Z' })],
+      classMeetings: [timed({ id: 'm1', title: 'Physics 101' })],
+    })
+    expect(rows.map(r => r.id)).toEqual(['e1', 'm1'])
+  })
+
+  it('is empty rather than throwing when handed nothing', () => {
+    expect(collectIcsRows()).toEqual([])
+    expect(collectIcsRows({})).toEqual([])
+  })
+
+  /* End to end: the rows have to survive serialisation into a file a calendar can
+     actually read back. */
+  it('writes tasks into the file as importable all-day events', () => {
+    const ics = serializeIcs(collectIcsRows({ todos: [task()] }))
+    expect(ics).toMatch(/DTSTART;VALUE=DATE:20260306/)
+    const parsed = parseIcs(ics)
+    expect(parsed[0].title).toBe('☑ Lab report')
   })
 })

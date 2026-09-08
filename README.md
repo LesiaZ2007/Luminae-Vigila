@@ -563,8 +563,20 @@ So a 402 is now named. [`lib/dbErrors.js`](src/lib/dbErrors.js) classifies it as
 
 ### 📦 Import / Export
 
-- **Export JSON** — a complete local backup: events, tasks, task *and* event categories, notes, your class schedule, custom lists, study sessions, per-event display settings, and your Canvas/Google/GPA preferences
-- **Export ICS** — your own calendar events **plus every class meeting of the term**, exams included, openable in Google Calendar / Apple Calendar / Outlook
+- **Export JSON** — a complete local backup: events, tasks, task *and* event categories, notes, your class schedule, custom lists, study sessions, per-event display settings, and your Canvas/Google/GPA preferences. Every collection the app syncs is in it; the only things left out are the Canvas caches, which are re-fetched from Canvas rather than owned here
+
+  One limit worth knowing: **images pasted into notes are not in the file.** The bytes live in their own table and a note body carries only a short URL — deliberately, since inlining a phone photo as base64 would blow the ~5 MB localStorage quota and re-upload itself on every sync. So a backup restored onto the same account resolves its images from the server as normal, but the JSON on its own is not a complete offline archive of note images
+- **Export ICS** — everything with a date on it: your own calendar events, **every class meeting of the term** with exams included, and **your tasks and checklist due dates**. Openable in Google Calendar / Apple Calendar / Outlook
+
+  The ICS export used to be events plus class meetings and nothing else, so a file named after your calendar left out the tasks — most of what a student planner actually holds. All of it appears on the app's own calendar, which is why the omission was invisible until you opened the file somewhere else.
+
+  **Tasks go out as all-day entries prefixed `☑`.** That is not a new convention: it is exactly how [`lib/googleMirror.js`](src/lib/googleMirror.js) already writes a task onto a Google calendar, so a task looks the same wherever this app puts one. `VTODO` is the technically correct iCalendar type and the wrong choice here — **Google Calendar ignores VTODO entirely** and Apple diverts it into Reminders, so the export would be silently task-free in the two places it is most likely to be opened.
+
+  - A **finished** task, an **undated** one, and a **deleted** one are all left out — the same rules the Google mirror applies. A calendar of things you have already done is not the point
+  - A **recurring** task exports as its occurrences rather than an `RRULE`, reusing the expander the app's own calendar uses, so the file agrees with the app and no hand-translated recurrence rule can be subtly wrong. Occurrences already ticked off are skipped. The horizon is the expander's (8 weeks, 60 occurrences); the full rule survives in the JSON backup, which is the thing that round-trips
+  - A **list's** own due date appears only while the list is unfinished, and an **item's** only while it is unchecked — the same rules the calendar's own due-date markers follow
+  - **Notes are deliberately absent.** A note has no date and no duration; it is a document, and there is nothing for a VEVENT to say about one. The JSON backup carries them in full
+  - **Canvas assignments are deliberately absent too.** They are Canvas's records rather than yours, and Canvas publishes its own ICS feed — exporting them here would duplicate every assignment for anyone subscribed to both
 - **Import JSON or ICS** — in one of two modes:
   - **Add to what I have** *(default)* — non-destructive. New items are added; duplicates prompt for *Keep mine* / *Replace mine* / *Keep both*
   - **Replace everything** — a full restore. The collections the file carries become exactly what it says, and what you had in them is gone
