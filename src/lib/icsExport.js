@@ -22,6 +22,9 @@
  * into an instant is where the bugs live.
  */
 
+import { expandRecurringTodo } from './recurrence'
+import { visible } from './tombstones'
+
 /** Text escaping per RFC 5545 §3.3.11. Backslash first, or it escapes its own output. */
 function escapeText(value) {
   return String(value ?? '')
@@ -121,6 +124,87 @@ export function serializeEvent(event) {
 
   lines.push('END:VEVENT')
   return lines
+}
+
+/**
+ * Everything dated that belongs in an exported calendar, as event-shaped rows.
+ *
+ * The export was `[...events, ...classMeetings]`, so a file called "your calendar"
+ * held no **tasks** — the thing a student planner is mostly *for*. Nor the due dates
+ * on checklist items. All of it sits on the app's own calendar, so the omission was
+ * invisible until you opened the file somewhere else.
+ *
+ * Tasks become **all-day entries prefixed `☑`**, which is not a new invention: it is
+ * exactly how `lib/googleMirror.js` already represents a task on a Google calendar,
+ * and matching it means a task looks the same wherever this app puts one. The
+ * alternative, `VTODO`, is the technically correct iCalendar type and the wrong
+ * choice here — Google Calendar ignores VTODO entirely and Apple diverts it into
+ * Reminders, so the export would be silently empty of tasks in the two places it is
+ * most likely to be opened.
+ *
+ * What is deliberately *not* here:
+ *
+ * - **Notes.** A note has no date and no duration; it is a document. There is nothing
+ *   for a VEVENT to say about one. The JSON backup carries them in full.
+ * - **Canvas assignments.** They are Canvas's records, not ours, and Canvas publishes
+ *   its own ICS feed — exporting them here would duplicate every assignment for
+ *   anyone subscribed to both.
+ */
+export function collectIcsRows({
+  events = [], classMeetings = [], todos = [], customLists = [],
+} = {}) {
+  const rows = []
+
+  // A tombstone records a deletion. No calendar wants to import one.
+  for (const ev of events) if (ev && !ev.deletedAt) rows.push(ev)
+  for (const m of classMeetings) if (m) rows.push(m)
+
+  for (const td of todos) {
+    // A task with no due date has nowhere to sit on a calendar, and a finished one is
+    // noise — the same two rules the Google mirror applies.
+    if (!td || td.deletedAt || td.completed || !td.dueDate || !td.title) continue
+
+    /* Occurrences rather than an RRULE. The app already expands recurring tasks for
+       its own calendar, bounded and skipping dates already ticked off, so reusing it
+       keeps the file agreeing with the app — and avoids translating this app's
+       recurrence into iCalendar's, which is where a subtly wrong RRULE would live.
+       The horizon is the expander's own (8 weeks, 60 occurrences); the full rule
+       survives in the JSON backup, which is the thing that round-trips. */
+    for (const inst of expandRecurringTodo(td)) {
+      if (!inst?.dueDate) continue
+      rows.push({
+        id:     `lv-todo-${inst.id ?? td.id}`,
+        title:  `☑ ${td.title}`,
+        start:  inst.dueDate,
+        allDay: true,
+        extendedProps: { notes: td.notes || null },
+      })
+    }
+  }
+
+  /* Checklist due dates, by the same rules the calendar's own markers use: a list
+     shows its due date only while it is unfinished, and an item only while unchecked. */
+  for (const list of customLists) {
+    if (!list || list.deletedAt) continue
+    const items = visible(list.items ?? [])
+    const isComplete = items.length > 0 && items.every(i => i.checked)
+
+    if (list.dueDate && !isComplete && list.name) {
+      rows.push({
+        id: `lv-list-${list.id}`, title: `☑ ${list.name}`, start: list.dueDate, allDay: true,
+      })
+    }
+
+    for (const item of items) {
+      if (item.checked || !item.dueDate || !item.text) continue
+      rows.push({
+        id: `lv-listitem-${list.id}-${item.id}`, title: `☑ ${item.text}`,
+        start: item.dueDate, allDay: true,
+      })
+    }
+  }
+
+  return rows
 }
 
 /**
