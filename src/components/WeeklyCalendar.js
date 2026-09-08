@@ -426,6 +426,7 @@ export default function WeeklyCalendar({
     const isTodo    = arg.event.extendedProps?.type === 'todo'
     const isGoogle  = arg.event.extendedProps?.source === 'google'
     const important = !!arg.event.extendedProps?.important
+    const isDone    = Boolean(arg.event.extendedProps?.done)
     const priority  = arg.event.extendedProps?.priority
     const priorityColor = priority === 'high' ? '#ef4444' : priority === 'medium' ? '#f59e0b' : null
 
@@ -448,7 +449,7 @@ export default function WeeklyCalendar({
           {isGoogle && (
             <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '12px', flexShrink: 0 }}>G</span>
           )}
-          <span style={{ fontWeight: 600, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+          <span style={{ fontWeight: 600, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, textDecoration: isDone ? 'line-through' : 'none' }}>
             {arg.event.title}
           </span>
         </div>
@@ -480,7 +481,9 @@ export default function WeeklyCalendar({
           {isGoogle && (
             <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '13px', marginRight: 3, verticalAlign: 'middle', display: 'inline-block' }}>G</span>
           )}
-          {arg.event.title}
+          {/* Only the text is struck through — a line drawn across the priority dot
+              or the Google badge would read as noise rather than as "done". */}
+          <span style={{ textDecoration: isDone ? 'line-through' : 'none' }}>{arg.event.title}</span>
         </div>
         {linkedTodos.slice(0, 3).map(t => (
           <div key={t.id} style={{ fontSize: '0.63rem', opacity: 0.88, marginTop: 1, overflow: 'hidden', wordBreak: 'break-word' }}>
@@ -648,6 +651,7 @@ export default function WeeklyCalendar({
             eventClassNames={(arg) => [
               arg.event.extendedProps?.isHiddenEvent ? 'lv-hidden-event'    : null,
               arg.event.extendedProps?.important     ? 'lv-important-event' : null,
+              arg.event.extendedProps?.done          ? 'lv-done-event'      : null,
             ].filter(Boolean)}
             eventContent={renderEventContent}
             eventDidMount={handleEventDidMount}
