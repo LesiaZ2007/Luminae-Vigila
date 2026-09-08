@@ -12,6 +12,7 @@
  * the server, which runs in UTC, can pass a local date).
  */
 import { dateStrOf, todayStr } from './localDate'
+import { coversDay, spanLabel } from './eventSpan'
 
 /** Sortable HH:MM for a timestamp, or '' for all-day / undated items. */
 function timeOf(iso) {
@@ -55,8 +56,12 @@ export function buildGlance({ todos = [], events = [], assignments = [], dateStr
     .filter(a => a && !a.done && !a.hidden && dateStrOf(a.dueAt) === dateStr)
     .map(a => ({ id: a.id, title: a.name ?? a.title ?? 'Assignment', kind: 'assignment', time: timeOf(a.dueAt) }))
 
+  /* `coversDay`, not `start === dateStr`. A multi-day event was filed under its start
+     alone, so a conference running Monday to Wednesday was in Monday's glance and
+     absent from Tuesday's and Wednesday's — it disappeared the moment it began, which
+     is when it mattered most. `spanLabel` says which day of it today is. */
   const eventsToday = (events ?? [])
-    .filter(e => e && !e.deletedAt && dateStrOf(e.start) === dateStr)
+    .filter(e => e && !e.deletedAt && coversDay(e, dateStr))
     .map(e => ({
       id: e.id,
       title: e.title ?? 'Untitled event',
@@ -64,6 +69,7 @@ export function buildGlance({ todos = [], events = [], assignments = [], dateStr
       allDay: Boolean(e.allDay),
       time: e.allDay ? '' : timeOf(e.start),
       endTime: e.allDay ? '' : timeOf(e.end),
+      span: spanLabel(e, dateStr),
     }))
     // All-day first, then chronological. Sorting on the HH:MM string works
     // because it is zero-padded.

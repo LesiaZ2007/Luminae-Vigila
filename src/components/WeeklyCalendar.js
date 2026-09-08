@@ -50,8 +50,15 @@ function ImportantStar({ inline = false }) {
   )
 }
 
+/* The grid's slot size, in minutes. `slotDuration` below is derived from it, and the
+   `select` handler compares against it to tell a drag from a click — a plain click on
+   a slot selects exactly one, so the two must agree or clicks start creating events. */
+const SLOT_MINUTES = 30
+
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
+  // Drag across days or hours → create an event spanning exactly that range.
+  onSelectRange,
   // Event recolor
   onRecolorEvent, colorSwatches,
   // ← / → step through consecutive periods. Parent turns this off while a modal
@@ -685,7 +692,7 @@ export default function WeeklyCalendar({
             )}
             slotMinTime={slotRange(focused).min}
             slotMaxTime={slotRange(focused).max}
-            slotDuration="00:30:00"
+            slotDuration={`00:${String(SLOT_MINUTES).padStart(2, '0')}:00`}
             slotLabelInterval="01:00:00"
             slotLabelFormat={isMobile
               ? { hour: 'numeric', hour12: true }
@@ -695,6 +702,28 @@ export default function WeeklyCalendar({
             firstDay={0}
             weekends={true}
             selectable={true}
+            selectMirror={true}
+            /* Drag across days or hours to create an event over exactly that range.
+               `selectable` was already on but nothing consumed the selection, so
+               dragging drew a highlight and then threw it away — and a multi-day
+               event, which the editor has always been able to store, had no way to be
+               created by hand at all.
+
+               Only real drags are forwarded. FullCalendar fires `select` for a plain
+               click as well as a drag, and a click already means something in both
+               view families — navigate to the day in month view, add a task in the
+               all-day lane, open a timed event in a slot. A single-cell or
+               single-slot selection is that click, so it falls through to dateClick
+               untouched and nothing existing changes behaviour. */
+            select={(info) => {
+              if (swipedRef.current) return
+              const ms = info.end - info.start
+              const meaningful = info.allDay
+                ? ms > 86_400_000              // more than one whole day
+                : ms > SLOT_MINUTES * 60_000   // longer than the slot a click selects
+              if (!meaningful) return
+              onSelectRange?.({ startStr: info.startStr, endStr: info.endStr, allDay: info.allDay })
+            }}
             dayMaxEvents={4}
             expandRows={true}
             scrollTime="08:00:00"
