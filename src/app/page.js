@@ -58,6 +58,7 @@ import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
 import Corvus from '@/components/Corvus'
 import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
+import BuildInfo from '@/components/BuildInfo'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
 import SidebarCanvasSection   from '@/components/SidebarCanvasSection'
 import SidebarScheduleSection from '@/components/SidebarScheduleSection'
@@ -118,9 +119,19 @@ const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus trigg
 /* Ceiling for the idle back-off below. A left-open tab that nobody is editing on
    another device asked the database the same question every 2 minutes forever, and
    Neon charges for compute time, not for queries — so the cost of an idle tab was a
-   compute endpoint that never got to sleep. Ten minutes is still well inside "I picked
-   my phone up in class and my laptop is open at home". */
-const AUTO_SYNC_IDLE_MAX_MS  = 10 * 60 * 1000
+   compute endpoint that never got to sleep.
+
+   This was ten minutes, on the reasoning that a catch-up fires when you come back to
+   the tab anyway. It doesn't always: `visibilitychange` reports the *tab* being
+   hidden, not the window losing focus, so a laptop sitting open on this tab behind
+   another window is still "visible" and never gets caught up. Ticking something off
+   on a phone and looking over at that laptop meant waiting up to ten minutes, which
+   reads as "cross-device sync is broken" and is indistinguishable from it.
+
+   The focus/pageshow handlers below fix the case where you touch the machine. Four
+   minutes covers the one they can't — two devices in front of you, one of them
+   untouched — at roughly 15 idle polls an hour instead of 6. */
+const AUTO_SYNC_IDLE_MAX_MS  = 4 * 60 * 1000
 
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
@@ -209,6 +220,10 @@ export default function Home() {
   const [showGoogleSettings, setShowGoogleSettings] = useState(false)
   const [gcSyncing,          setGcSyncing]          = useState(false)
   const [syncingCloud,       setSyncingCloud]       = useState(false)
+  /* When the cloud was last successfully read. Shown in Settings beside the build
+     marker: "is this device up to date" is otherwise unanswerable from the UI, which
+     is exactly the question you have when two devices disagree. */
+  const [lastSyncedAt,       setLastSyncedAt]       = useState(null)
   const [eventPrefs,         setEventPrefs]         = useState({})
 
   // ── Custom Lists ──
@@ -757,6 +772,7 @@ export default function Home() {
          in the polling effect. */
       const changed = text !== lastCloudTextRef.current
       lastCloudTextRef.current = text
+      setLastSyncedAt(Date.now())
       return changed
     } catch {
       // Offline or a transient failure — the next tick tries again.
@@ -806,14 +822,35 @@ export default function Home() {
       }
     }
 
+    /* Coming back to the window, which is not the same event as coming back to the
+       tab. `visibilitychange` only fires when the tab itself is hidden — switched
+       away from, or the window minimised. A browser sitting open on this tab behind
+       another application is still `visible`, so returning to it fired nothing and
+       the back-off kept running: you ticked something off on your phone, looked at
+       the laptop, and waited. `focus` is the event that actually means "the user is
+       here now".
+
+       `pageshow` covers the restore case — a tab resumed from the back/forward cache
+       runs no effects and would otherwise show whatever it was showing when it was
+       frozen. */
+    function onReturn() {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastSync <= AUTO_SYNC_ON_RETURN_MS) return
+      syncNow()
+    }
+
     if (document.visibilityState === 'visible') startPolling()
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onReturn)
+    window.addEventListener('pageshow', onReturn)
     // Back online after a gap: pull straight away rather than waiting a tick.
     window.addEventListener('online', syncNow)
 
     return () => {
       stopPolling()
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onReturn)
+      window.removeEventListener('pageshow', onReturn)
       window.removeEventListener('online', syncNow)
     }
   }, [currentUser, autoSync])
@@ -1073,6 +1110,7 @@ export default function Home() {
       setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
       setNotes(local => purgeExpiredTrash(mergeNotesCloudWins(cloud.notes ?? [], local)))
 
+      setLastSyncedAt(Date.now())
       pushToast('Synced', 'Latest data pulled from the cloud.')
     } catch (_) {
       // non-fatal — user can try again
@@ -3371,6 +3409,8 @@ export default function Home() {
                 </a>
               )}
             </div>
+
+            <BuildInfo lastSyncedAt={lastSyncedAt} signedIn={!!currentUser} />
 
             {/* Google Calendar */}
             <SidebarGoogleSection

@@ -303,6 +303,8 @@ The cards answer *"what is the state of Physics?"*. They cannot answer the quest
 - **Swipe, trackpad, and ← / → all page the month.** A horizontal drag of at least 60px, a horizontal wheel flick, or the arrow keys. A mostly-vertical drag is left alone so the tab can still scroll, the trackpad is rate-limited so one momentum flick doesn't skip three months, and the arrow keys stand down for modifier combos, for any focused text field, and while a modal is open above the tab — otherwise typing a class name would page the calendar underneath the form
 - **An empty week says when the next thing lands** — *"Nothing due in the next 7 days. Next up Fri, Mar 20."* Without that, a clear week reads as *no work exists* when the truth is it's a fortnight out
 - **Overdue is a red dot on the day and a red mark on the chip.** Completed work is never overdue, however old
+- **Outstanding work sits above finished work in a cell.** A cell fits three chips, and items arrived in the order they were built — so a Thursday with two things ticked off and three still due could show two struck-through chips and hide one of the three under *"+1 more"*. The cell's job is to say what's **left**, so the thing it truncates should be the thing you've already dealt with. Sorted rather than filtered: a day whose work is all done should still show it, and the counter needs the finished items to count
+- **Each day carries a `done / total` counter** beside the date — *"1/3"* — so a glance says how much of a day is behind you, not just how much landed on it. It turns green when the day is clear. **Exams are left out of both halves**: an exam isn't something you tick off, so counting it as outstanding would leave a day with one exam and one finished assignment reading *"1/2"* for ever, and a week of exams would look like a week of unfinished work. A day with nothing on it shows no counter at all
 - **A count of what's still outstanding in the month on screen** — the number that says whether this month is calm or brutal, which no single cell can
 - **On a phone the cells are too small for text**, so a day collapses to coloured dots and the strip below does the reading
 - Paging to April and clicking a day doesn't snap back to today, and midnight doesn't yank your selected day out from under you — **Today** is a button for when you want it
@@ -328,7 +330,7 @@ One expandable card per class, holding:
 - **When and where it meets** — the day pattern, the hours, the term dates, and the room. A real room links to Google Maps, a Zoom class offers its join link, because the app already knows the difference
 - **Its coursework** — every task filed under the class, soonest first, with completed ones behind a count. Tick one off in place, or click through to the real editor. **+ Add task** opens the task form already filed under that class
 - **Its Canvas assignments**, when the class is linked to a Canvas course — with bulk select and mark-done, and the detail view on any row
-- **What's coming up** — the next few meetings with exams among them rather than in a list of their own, because an exam *is* the period
+- **What's coming up — exams only.** This used to list the next few meetings with exams among them, on the reasoning that an exam *is* the period and splitting them would mean reading two lists to find out what happens next Tuesday. In practice it buried the exams: a class that meets three times a week filled all six rows with the Mon/Wed/Fri you can already recite, and the one row that actually changes your week scrolled off the end. The recurring schedule is stated above it and the card header still says when the next meeting is, so the periods were never the news here. A class with no exams scheduled says so
 - **Its notes** — the reverse of a note's "link to"
 - **Its grade**, when Canvas-linked: what you have earned so far, and what you finish at if the rate holds
 - **Study time** in the last seven days, when Canvas-linked — the Focus Timer tags sessions with a *Canvas* course id, so an unlinked class has nothing to show
@@ -457,6 +459,16 @@ There were **three** implementations of the merge rule, and a collection was res
 
 The refresh button had the same problem from the other end. It kept its **own** hand-rolled merge for classes, study sessions and categories — keyed by id, cloud overwrites local, no notion of a tombstone. Classes soft-delete, and the background pull had been tombstone-aware since tombstones landed, so **deleting a class and then pressing Sync brought it back**: the cloud's copy simply hadn't heard about the delete yet, and nothing stopped it from overwriting the tombstone. Every collection now goes through the shared `mergeCloudWinsWithTombstones`, and the duplicate helper is gone — a second implementation of a merge is a second place for a rule like this to be missed.
 
+### 🔖 Which build is this, and when did it last sync
+
+At the bottom of Settings, under the account block: `Synced 2 min ago · build a1b2c3d`.
+
+Both halves exist for the same reason. When two devices disagreed there was nothing in the UI that could tell you **why** — a real sync bug, a device still running last week's bundle, and a device that simply hadn't polled yet all look identical from the outside, and all three look like "sync is broken". Answering it meant diffing deployed JavaScript against a local build, which is not a thing to do twice.
+
+- **The commit** comes from `VERCEL_GIT_COMMIT_SHA` on Vercel, and from `git rev-parse` when building locally, so the marker works on a dev server too — which is where *"are both of these on the same code?"* is hardest to answer by eye. It's injected through `env` in `next.config.mjs`, **not** `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`: that one only reaches the bundle if *"Automatically expose System Environment Variables"* is enabled on the Vercel project, so relying on it would leave the marker silently blank depending on a setting nobody remembers. Hovering gives the build time
+- **The sync age** is the last *successful* read of the cloud, set by both the background poll and the manual refresh. A signed-in device that has never synced says `not yet` rather than implying it has. Signed out, the sync half is omitted entirely — there's nothing to sync, and a sync state would be noise — but the build marker stays, since that's the question it exists to answer
+- **Seconds are rounded to "just now".** The poll runs on a scale of minutes, so a count of seconds would claim a precision the underlying thing doesn't have
+
 ### 👁 Hidden, recoloured and important events
 
 `eventPrefs` holds per-event display state — hidden, colour, important — keyed by event id. It lives apart from the events themselves so it works for events that aren't ours to edit: a Google invite, a Canvas due date and a class period all get the same treatment. That part was right; how it *synced* was not.
@@ -486,7 +498,11 @@ The handler already ignores any key missing from the body, so the fix was entire
 - An unserialisable value is treated as always-changed rather than silently dropped from every future push
 - A re-render that touched no data now sends **nothing**; it used to cost a full rewrite of all nine tables
 
-**Idle back-off on the pull side.** A left-open tab asked the database the same question every 2 minutes forever. Since the bill is compute *time*, the cost of an idle tab was an endpoint that never got to sleep. The poll now doubles its gap each time a pull finds nothing new, up to **10 minutes**, and snaps back to 2 minutes the moment a pull finds something or you refocus the tab — so an active phone-then-laptop handoff is as responsive as before. It's a self-rescheduling timeout rather than a fixed interval, which is what lets the gap grow.
+**Idle back-off on the pull side.** A left-open tab asked the database the same question every 2 minutes forever. Since the bill is compute *time*, the cost of an idle tab was an endpoint that never got to sleep. The poll doubles its gap each time a pull finds nothing new, up to **4 minutes**, and snaps back to 2 minutes the moment a pull finds something or you come back to the window. It's a self-rescheduling timeout rather than a fixed interval, which is what lets the gap grow.
+
+**Coming back to the window is not the same event as coming back to the tab**, and conflating the two is what made cross-device sync feel broken. The catch-up pull was wired to `visibilitychange`, which fires when the *tab* is hidden — switched away from, or the window minimised. A laptop sitting open on this tab **behind another application is still `visible`**, so returning to it fired nothing and the back-off kept running. Tick something off on your phone, look over at the laptop, and you'd wait — up to the full ten-minute ceiling the back-off used to allow. Indistinguishable from a sync bug, and it's what sent us looking for one in the merge logic.
+
+So the catch-up also listens for `focus`, which is the event that actually means *"the user is here now"*, and for `pageshow`, which covers a tab restored from the back/forward cache — that runs no effects and would otherwise show whatever it was frozen holding. The ceiling came down from 10 minutes to 4 for the one case no event can catch: two devices in front of you and nobody touching the second one. Roughly 15 idle polls an hour instead of 6.
 
 ### 🚫 When the database is out of allowance
 
@@ -1427,6 +1443,7 @@ src/
 │   ├── ClassesPanel.js               # My Classes tab — coursework month + one card per class
 │   ├── ClassCalendar.js              # The coursework month grid + floating day + strip
 │   ├── TaskActionMenu.js             # Done / edit / delete for a task clicked on a calendar
+│   ├── BuildInfo.js                  # "Synced 2 min ago · build a1b2c3d" under the account block
 │   ├── ColorSwatches.js              # The shared event colour grid + the event palette
 │   ├── ClassRemindersEditor.js       # Per-class reminder rules (tasks / exams)
 │   ├── AssignmentRow.js              # One Canvas assignment, as a row
