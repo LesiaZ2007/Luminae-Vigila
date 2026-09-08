@@ -465,3 +465,101 @@ describe('nextDateAfter', () => {
     expect(nextDateAfter([item('2026-03-01')], '2026-03-11')).toBeNull()
   })
 })
+
+// ── What is left to do, first ───────────────────────────────────────────────
+
+describe('outstanding work sorts ahead of finished work', () => {
+  const CLASSES = [{ id: 'c1', courseName: 'Physics', color: '#3a6fa8' }]
+
+  it('puts undone items first within a day', () => {
+    const items = buildCourseworkItems({
+      classes: CLASSES,
+      todos: [
+        { id: 'a', title: 'Aardvark', category: 'class:c1', dueDate: '2026-03-04', completed: true },
+        { id: 'z', title: 'Zebra',    category: 'class:c1', dueDate: '2026-03-04' },
+      ],
+    })
+    // Alphabetically 'Aardvark' would lead; it is done, so it does not.
+    expect(items.map(i => i.title)).toEqual(['Zebra', 'Aardvark'])
+  })
+
+  it('keeps exams at the front of the outstanding items', () => {
+    const items = buildCourseworkItems({
+      classes: CLASSES,
+      todos: [{ id: 't', title: 'Reading', category: 'class:c1', dueDate: '2026-03-04' }],
+      classEvents: [{
+        id: 'e', title: 'Midterm', start: '2026-03-04T09:00:00',
+        extendedProps: { isExam: true, classId: 'c1' },
+      }],
+    })
+    expect(items.map(i => i.kind)).toEqual(['exam', 'task'])
+  })
+
+  it('still orders days before anything else', () => {
+    const items = buildCourseworkItems({
+      classes: CLASSES,
+      todos: [
+        { id: 'later',  title: 'Later',  category: 'class:c1', dueDate: '2026-03-05' },
+        { id: 'sooner', title: 'Sooner', category: 'class:c1', dueDate: '2026-03-04', completed: true },
+      ],
+    })
+    expect(items.map(i => i.title)).toEqual(['Sooner', 'Later'])
+  })
+})
+
+/* The counter's own tests live with the other `dayProgress` cases further up. The
+   three that stood here came from the second implementation of this feature and
+   asserted the exam-counting behaviour that was not kept — see the note on
+   `dayProgress` in classCalendar.js for why. */
+
+// ── Linked lab / studio sections ────────────────────────────────────────────
+// One class, one colour, one entry in the legend — however many meeting patterns it
+// has. See lib/classLinks.js.
+
+describe('buildCourseworkItems with linked sections', () => {
+  const LINKED = [
+    { id: 'chem',     courseName: 'Chemistry',     color: '#3a6fa8' },
+    { id: 'chem_lab', courseName: 'Chemistry Lab', color: '#10b981', linkedToClassId: 'chem', canvasCourseId: 55 },
+  ]
+
+  it('files a task from the lab under the class, in the class colour', () => {
+    const [item] = buildCourseworkItems({
+      classes: LINKED,
+      todos:   [{ id: 't', title: 'Lab report', category: 'class:chem_lab', dueDate: '2026-03-04' }],
+    })
+    expect(item.classId).toBe('chem')
+    expect(item.className).toBe('Chemistry')
+    expect(item.color).toBe('#3a6fa8')
+  })
+
+  it("files the lab's Canvas assignments under the class too", () => {
+    const [item] = buildCourseworkItems({
+      classes:     LINKED,
+      assignments: [{ id: 'a', courseId: 55, title: 'Titration', dueAt: '2026-03-04T23:59:00' }],
+    })
+    expect(item.className).toBe('Chemistry')
+    expect(item.classId).toBe('chem')
+  })
+
+  it("files the lab's exams under the class", () => {
+    const [item] = buildCourseworkItems({
+      classes:     LINKED,
+      classEvents: [{
+        id: 'e', title: 'Lab practical', start: '2026-03-10T14:00:00',
+        extendedProps: { isExam: true, classId: 'chem_lab' },
+      }],
+    })
+    expect(item.classId).toBe('chem')
+    expect(item.className).toBe('Chemistry')
+  })
+
+  it('keeps them apart again once unlinked', () => {
+    const unlinked = [LINKED[0], { ...LINKED[1], linkedToClassId: null }]
+    const [item] = buildCourseworkItems({
+      classes: unlinked,
+      todos:   [{ id: 't', title: 'Lab report', category: 'class:chem_lab', dueDate: '2026-03-04' }],
+    })
+    expect(item.classId).toBe('chem_lab')
+    expect(item.className).toBe('Chemistry Lab')
+  })
+})

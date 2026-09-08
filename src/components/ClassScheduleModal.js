@@ -7,12 +7,13 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, Trash2, MapPin, CalendarX, CalendarPlus, GraduationCap } from 'lucide-react'
+import { X, Trash2, MapPin, CalendarX, CalendarPlus, GraduationCap, Link2 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import Select     from '@/components/Select'
 import { describeLocation } from '@/lib/maps'
 import { getExceptions, isDateStr, EXAM_COLOR } from '@/lib/classInstances'
+import { linkCandidates, linkedParentId, hasLinkedSections, classLinksFor } from '@/lib/classLinks'
 
 const DAY_LABELS  = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -47,6 +48,9 @@ function fmt12(hhmm) {
 
 export default function ClassScheduleModal({
   editClass, onSave, onDelete, onClose,
+  // The rest of the schedule, so this class can be declared a section of one of them.
+  // Optional: without it the "part of another class" picker simply isn't offered.
+  classes = [],
   // One-off exceptions, applied immediately rather than on Save: they are edits to the
   // stored class, not to this form's draft, and mixing the two would mean a cancelled
   // holiday vanished if you closed the form without saving.
@@ -85,6 +89,7 @@ export default function ClassScheduleModal({
   const [semesterEnd,    setSemesterEnd]    = useState(editClass?.semesterEnd     || '')
   const [color,          setColor]          = useState(editClass?.color           || '#3a6fa8')
   const [canvasCourseId, setCanvasCourseId] = useState(editClass?.canvasCourseId  ?? null)
+  const [linkedTo,       setLinkedTo]       = useState(linkedParentId(editClass) ?? '')
   const [canvasCourses,  setCanvasCourses]  = useState([])   // [{id, name, courseCode}]
   const [error,          setError]          = useState('')
   const [closing,        setClosing]        = useState(false)
@@ -101,6 +106,23 @@ export default function ClassScheduleModal({
       .then(({ courses }) => setCanvasCourses(courses ?? []))
       .catch(() => {})
   }, [])
+
+  /* Which classes this one could be a section of. `linkCandidates` is what refuses the
+     nonsensical answers — itself, a class that is already someone's section, one that
+     has sections of its own — so this form does not restate those rules. */
+  const parentOptions = useMemo(
+    () => (isEdit ? linkCandidates(classes, editClass) : []),
+    [classes, editClass, isEdit],
+  )
+  /* A class with sections *of its own* is the parent, not the child. Offering it the
+     picker would be offering to make a two-level chain, which the resolver flattens
+     anyway — so it gets a sentence naming its sections instead. */
+  const ownSections = useMemo(() => {
+    const links = classLinksFor(classes)
+    if (!isEdit || !hasLinkedSections(links, editClass.id)) return []
+    const ids = links.childrenOf.get(String(editClass.id)) ?? []
+    return ids.map(id => classes.find(c => String(c?.id) === id)).filter(Boolean)
+  }, [classes, editClass, isEdit])
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
@@ -138,6 +160,10 @@ export default function ClassScheduleModal({
       color,
       enabled:        editClass?.enabled !== undefined ? editClass.enabled : true,
       canvasCourseId: canvasCourseId || null,
+      /* Only ever written from this form's own picker, so a class that cannot be a
+         section (a new one, or one with sections of its own) keeps whatever it had
+         rather than having the field cleared out from under it. */
+      linkedToClassId: parentOptions.length > 0 ? (linkedTo || null) : (editClass?.linkedToClassId ?? null),
     }
     onSave(entry)
     handleClose()
@@ -248,6 +274,58 @@ export default function ClassScheduleModal({
                   Assignments for this course will show up linked to this class.
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Part of another class — a lab, studio or recitation.
+              Only offered on a saved class: the link is stored by id, and a draft has
+              none to point at yet. See lib/classLinks.js for what a link resolves. */}
+          {parentOptions.length > 0 && (
+            <div>
+              <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Link2 size={12} style={{ color: 'var(--blue)' }} />
+                Section of{' '}
+                <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-3)' }}>(optional)</span>
+              </label>
+              <Select
+                value={linkedTo}
+                placeholder="— Its own class —"
+                onChange={v => {
+                  setLinkedTo(v || '')
+                  // The two sections are one class everywhere else; matching the colour
+                  // is what stops the calendar being the one place still saying they
+                  // are two. Still an ordinary field afterwards, so it can be changed.
+                  const parent = parentOptions.find(c => String(c.id) === String(v))
+                  if (parent?.color) setColor(parent.color)
+                }}
+                options={parentOptions.map(c => ({
+                  value: String(c.id),
+                  label: c.section ? `${c.courseName} · ${c.section}` : c.courseName,
+                }))}
+              />
+              <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.45 }}>
+                {linkedTo
+                  ? 'Its meetings stay on the calendar at their own times, but its tasks, exams, notes and reminders all belong to the class above — one entry in the task picker instead of two.'
+                  : 'For a lab, studio or recitation that meets separately but is really part of another class.'}
+              </p>
+            </div>
+          )}
+
+          {/* The other end of the same relationship, stated rather than editable — a
+              class with sections is the parent, and re-parenting it would just flatten
+              back to the same place. */}
+          {ownSections.length > 0 && (
+            <div style={{
+              display: 'flex', gap: 8, padding: '9px 12px', borderRadius: 9,
+              background: 'var(--surface2)', border: '1px solid var(--border)',
+            }}>
+              <Link2 size={13} style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 2 }} />
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-3)', lineHeight: 1.45 }}>
+                {ownSections.map(c => c.courseName).join(' and ')}{' '}
+                {ownSections.length === 1 ? 'is a section' : 'are sections'} of this class.
+                Their coursework is filed here. Unlink from{' '}
+                {ownSections.length === 1 ? 'its' : 'their'} own edit screen.
+              </span>
             </div>
           )}
 

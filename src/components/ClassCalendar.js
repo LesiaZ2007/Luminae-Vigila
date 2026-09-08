@@ -540,6 +540,8 @@ export default function ClassCalendar({
           const progress   = dayProgress(dayItems)
           const level      = loadLevel(dayLoad(dayItems, cutoffs))
           const isDropZone = dragOver === cell.date
+          // `progress` is null on a day with no tickable work, so guard before reading it.
+          const allDone    = !!progress && progress.done === progress.total
 
           return (
             <div
@@ -580,17 +582,23 @@ export default function ClassCalendar({
                 {anyOverdue && (
                   <span title="Something here is overdue" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--red)' }} />
                 )}
-                {/* How much of the day is done. Pushed to the right so the date stays
-                    where the eye looks for it, and it goes quiet once the day is
-                    clear — a finished day should read as settled, not as a score. */}
+                {/* How much of the day is behind you. Sits opposite the date so the
+                    date stays where the eye looks for it, and because this is a fact
+                    about the whole cell rather than any one chip — the chips are cut
+                    off at three, so on a busy day this is the only complete count. It
+                    goes quiet once the day is clear: a finished day should read as
+                    settled rather than as a score. */}
                 {progress && (
                   <span
                     title={`${progress.done} of ${progress.total} done`}
                     style={{
                       marginLeft: 'auto', flexShrink: 0,
-                      fontSize: '0.6rem', fontWeight: 700,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: progress.done === progress.total ? 'var(--green)' : 'var(--text-3)',
+                      /* Sized down a touch on a phone, where the cell is 62px tall and
+                         the counter shares the row with the date. */
+                      fontSize: isMobile ? '0.58rem' : '0.62rem',
+                      fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                      color: allDone ? 'var(--green)' : 'var(--text-3)',
+                      opacity: progress.done > 0 || !isMobile ? 1 : 0.6,
                     }}
                   >
                     {progress.done}/{progress.total}
