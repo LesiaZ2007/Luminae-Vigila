@@ -42,7 +42,7 @@
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileJson, CheckCircle2 } from 'lucide-react'
 import { parseIcs }     from '@/lib/ics'
-import { serializeIcs } from '@/lib/icsExport'
+import { serializeIcs, collectIcsRows } from '@/lib/icsExport'
 import {
   BACKUP_COLLECTIONS, buildBackup, readBackup, looksLikeBackup,
   readLocalPrefs, applyLocalPrefs,
@@ -86,12 +86,20 @@ export default function ImportExportButton({
 
   function initiateExport(format = 'json') {
     if (format === 'ics') {
-      /* Class meetings are expanded from the schedule rather than stored, so an
-         export of `events` alone contained none of them. Deleted events drop out: a
-         tombstone records a deletion, and no calendar wants to import one. */
-      const events = listOf('events').filter(e => !e?.deletedAt)
+      /* Everything dated, not just events. Class meetings are expanded from the
+         schedule rather than stored, so `events` alone contained none of them — and
+         tasks and checklist due dates were missing entirely, which made a file named
+         after your calendar leave out most of what a planner holds. `collectIcsRows`
+         owns those rules so they can be tested; see lib/icsExport.js on why tasks go
+         out as ☑-prefixed all-day entries rather than VTODO. */
+      const rows = collectIcsRows({
+        events:        listOf('events'),
+        classMeetings,
+        todos:         listOf('todos'),
+        customLists:   listOf('customLists'),
+      })
       download(
-        new Blob([serializeIcs([...events, ...classMeetings])], { type: 'text/calendar;charset=utf-8' }),
+        new Blob([serializeIcs(rows)], { type: 'text/calendar;charset=utf-8' }),
         'ics',
       )
       return
@@ -448,7 +456,9 @@ export default function ImportExportButton({
           {!status && (
             <>
               <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', margin: '0 0 12px', lineHeight: 1.45 }}>
-                Export everything as a JSON backup, or your calendar and class meetings as ICS. Import supports both.
+                Export everything as a JSON backup — events, tasks, notes, lists, classes and settings. ICS
+                carries the dated things any calendar app can read: events, class meetings, and tasks and
+                checklist due dates as all-day entries. Import supports both.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <button onClick={() => initiateExport('json')} style={btnStyle('var(--green)', 'var(--surface2)')}>
