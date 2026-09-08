@@ -31,9 +31,15 @@ function getClient() {
  *
  * sql.transaction([query, query, ...]) — runs multiple tagged-template query objects
  * in a single atomic transaction via the Neon HTTP driver.
+ *
+ * sql.unsafe(str) — inlines a raw SQL fragment with no escaping. Only ever for
+ * identifiers the code itself chose (a table name from a hardcoded map). Never for
+ * anything that came in on a request; values belong in `${}` placeholders, which is
+ * what makes them parameters.
  */
 const sql = (strings, ...values) => getClient()(strings, ...values)
 
 sql.transaction = (queries) => getClient().transaction(queries)
+sql.unsafe      = (str)     => getClient().unsafe(str)
 
 export default sql
