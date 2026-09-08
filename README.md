@@ -65,6 +65,26 @@ Two details worth knowing:
 
 **A note on a bug this replaced.** For a while, clicking an event opened the *new event* form instead. The cause was the now-indicator: FullCalendar gives its container `left/right/top/bottom: 0`, making it a full-column overlay, and raising that container's `z-index` to keep the red line legible on top of events laid a transparent sheet over the entire day. Every click landed on the sheet, FullCalendar read it as a click on empty time, and the create form opened. The fix is `pointer-events: none` on the overlay rather than lowering the z-index, because the line genuinely does need to paint above events — and nothing in there is interactive, so there is nothing to lose by making it transparent to input.
 
+### 🗓 All-day and multi-day events
+
+The event form has always had an **All day / multi-day** toggle with a start and end date, and FullCalendar has always drawn the bar across the week correctly. But nothing else in the app understood a **span** — everything looked only at `start` — and there was no gesture that could create one.
+
+**A multi-day event vanished the moment it began.** The agenda filed events under `start.slice(0, 10)` and skipped anything whose start was before today; the glance (which drives `/today` *and* the daily push notification) asked `dateStrOf(e.start) === dateStr`. So a competition running Monday to Wednesday appeared on Monday, was absent from Tuesday and Wednesday, and disappeared entirely once Monday had passed. The one kind of event you most want a planner to keep telling you about was the one it forgot first.
+
+[`lib/eventSpan.js`](src/lib/eventSpan.js) answers the question these places actually have — *which days does this cover?* — and both now ask it:
+
+- **The agenda lists a spanning event on every day it covers**, labelled *"Day 2 of 3"*, and keeps listing one that's already under way. On days after the first it sorts to the top of the day: a multi-day event is context for the day rather than something that happens at 9am on it
+- **The glance includes an in-progress event** and says which day of it today is
+- **A single-day event is untouched** — no *"Day 1 of 1"* on every row to serve the few that span
+
+**The two end-date conventions are opposite, and that's the whole difficulty.** An all-day end is **exclusive** (FullCalendar's convention, and what the form writes: a single day on the 4th is `04 → 05`), so the last covered day is the day *before* `end`. A timed end is **inclusive** — 10pm Monday to 2am Tuesday genuinely happens on both days. They're separate branches rather than one clever expression, because getting them backwards is exactly the bug. A corrupt end is capped at a year rather than walked.
+
+**Drag across days or hours to create one.** `selectable` was already enabled but nothing consumed the selection, so dragging drew a highlight and threw it away — leaving no way at all to make a multi-day event by hand. A drag now opens the form spanning exactly what was dragged, with the **inclusive** last day shown (reporting FullCalendar's exclusive end verbatim would claim a day more than you selected), and a timed drag takes its end time from the drag instead of defaulting to an hour.
+
+Only real drags count. FullCalendar fires `select` for a plain click too, and a click already means something in both view families — *navigate to this day* in month view, *add a task* in the all-day lane, *new event at this slot* in the time grid. A single-cell or single-slot selection is that click, so it falls through untouched and nothing existing changes behaviour. The slot size is one constant, shared by `slotDuration` and the drag test, so the two can't drift apart and start turning clicks into events.
+
+ICS export already did the right thing here: `VALUE=DATE` with the exclusive `DTEND` iCalendar requires.
+
 ### 📍 Locations open in Google Maps
 
 Any class or event with a location gets a **map button**, sitting on the same line as the address — the two belong together, and a full-width button underneath pushed everything after it down for something one tap wide. It reads `Maps` on screen to fit beside the text, while the full "Open in Google Maps" stays as its tooltip and accessible name. It appears on the event and class detail views, beside the Location input in both edit forms, and on the location line of every agenda row (which is a link, with the row's own click suppressed so tapping the address doesn't also open the event).
@@ -1229,6 +1249,7 @@ Tests live in `src/lib/` alongside the modules they cover:
 - `src/lib/tombstones.test.js` — soft-delete merge behaviour: a delete beating a stale copy in either direction, an edit-after-delete winning, and manual refresh never resurrecting a local delete. Also pins the completion-sync tie-break — a stamped toggle winning, and the equal-timestamp case that used to revert it
 - `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating a stale tick, legacy unstamped rows unioning, `setCompletionForDate` stamping the row as well as the register, and `purgeTodos` expiring untick stamps while never dropping the stamp of a date that is still done. Also the subtask register — two devices ticking different steps, a deleted subtask staying deleted, and `applySubtaskEdits` tombstoning removals without resurrecting the tombstones a caller passes back in
 - `src/lib/eventPrefs.test.js` — per-event pref resolution: an un-mark beating a stale mark in both directions, two events resolving separately, the one-sided-stamp cases, sign-in and the refresh button giving the same answer, and a restored backup winning the next merge
+- `src/lib/eventSpan.test.js` — the two opposite end-date conventions: an exclusive all-day end covering one day, a timed event crossing midnight covering two, month and leap-day boundaries, a corrupt end capped rather than walked, and `eventDaysWithin` keeping the remaining days of an event already under way
 - `src/lib/todoMerge.test.js` — the per-date completion register: two devices ticking different occurrences both surviving, an untick beating an older tick (and vice versa), the unstamped-legacy union fallback, stamp expiry, and ordinary tasks not gaining an empty `completedDates`
 - `src/lib/customLists.test.js` — per-item merging: a check winning in either direction, a deleted item staying deleted, two edits to one list both surviving, tombstones surviving a reorder, and the mutation helpers stamping both the item and the list
 - `src/lib/dateShift.test.js` — whole-day date arithmetic across DST boundaries, month/year rollover, and leap day
@@ -1476,6 +1497,8 @@ src/
     ├── customLists.js      # Custom list localStorage helpers + per-item cloud-merge
     ├── todoMerge.js        # Todo merge: row-level LWW + per-date completion register
     ├── tombstones.js       # Soft-delete helpers shared by every id-keyed collection
+    ├── eventPrefs.js       # Per-event display prefs, merged one entry at a time
+    ├── eventSpan.js        # Which days an event covers (all-day end is exclusive)
     ├── appBadge.js         # PWA App Icon Badge API helpers (feature-detected)
     ├── db.js               # Neon PostgreSQL client
     ├── session.js          # JWT session via jose
