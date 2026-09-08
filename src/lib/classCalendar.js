@@ -139,7 +139,35 @@ export function groupByDate(items = []) {
     if (!map.has(it.date)) map.set(it.date, [])
     map.get(it.date).push(it)
   }
+
+  /* Outstanding work first, finished work after it.
+     A month cell fits four chips, and the order items happen to be built in put
+     finished work among them — so a Thursday with two ticked-off assignments and
+     three still due showed two struck-through chips and hid one of the three under
+     "+1 more". The cell's job is to say what is left, and the thing it truncates
+     should be the thing you have already dealt with.
+     Sorted rather than filtered: a day whose work is all done should still show it,
+     and the "3/3" counter beside the date needs the finished items to count.
+     Array.sort is stable, so the soonest-first order the items arrive in survives
+     inside each group — this only moves finished work to the end. */
+  for (const list of map.values()) {
+    list.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0))
+  }
+
   return map
+}
+
+/**
+ * How much of a day's work is finished — `{ done, total }`, or null if there is none.
+ *
+ * Exams are left out of both halves. An exam is not a thing you tick off, so counting
+ * it as outstanding would mean a day with one exam and one finished assignment reads
+ * "1/2" forever, and a week of exams would look like a week of unfinished work.
+ */
+export function dayProgress(items = []) {
+  const countable = items.filter(it => it.kind !== 'exam')
+  if (countable.length === 0) return null
+  return { done: countable.filter(it => it.done).length, total: countable.length }
 }
 
 /**

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   localDayOf, buildCourseworkItems, groupByDate, monthGrid, isOverdue, describeDay,
   itemWeight, bigAssignmentCutoffs, dayLoad, loadLevel, canReschedule,
-  addDays, overdueItems, upcomingDays, nextDateAfter,
+  addDays, overdueItems, upcomingDays, nextDateAfter, dayProgress,
 } from '@/lib/classCalendar'
 
 const CLASSES = [
@@ -168,6 +168,69 @@ describe('groupByDate', () => {
     expect(map.get('2026-03-04')).toHaveLength(2)
     expect(map.get('2026-03-05')).toHaveLength(1)
     expect(map.get('2026-03-06')).toBeUndefined()
+  })
+
+  /* A cell shows three chips. With finished work left in build order it could fill
+     them with struck-through rows and hide outstanding work under "+1 more", which
+     is the opposite of what the cell is for. */
+  it('puts outstanding work before finished work', () => {
+    const map = groupByDate([
+      { id: 'a', date: '2026-03-04', done: true },
+      { id: 'b', date: '2026-03-04', done: false },
+      { id: 'c', date: '2026-03-04', done: true },
+      { id: 'd', date: '2026-03-04', done: false },
+    ])
+    expect(map.get('2026-03-04').map(i => i.id)).toEqual(['b', 'd', 'a', 'c'])
+  })
+
+  it('keeps the incoming order within each group', () => {
+    const map = groupByDate([
+      { id: 'first',  date: '2026-03-04', done: false },
+      { id: 'second', date: '2026-03-04', done: false },
+      { id: 'third',  date: '2026-03-04', done: false },
+    ])
+    expect(map.get('2026-03-04').map(i => i.id)).toEqual(['first', 'second', 'third'])
+  })
+
+  it('keeps finished work rather than dropping it — the counter still needs it', () => {
+    const map = groupByDate([{ id: 'a', date: '2026-03-04', done: true }])
+    expect(map.get('2026-03-04')).toHaveLength(1)
+  })
+
+  it('treats a missing done flag as outstanding', () => {
+    const map = groupByDate([
+      { id: 'done', date: '2026-03-04', done: true },
+      { id: 'bare', date: '2026-03-04' },
+    ])
+    expect(map.get('2026-03-04').map(i => i.id)).toEqual(['bare', 'done'])
+  })
+})
+
+describe('dayProgress', () => {
+  it('counts finished against total', () => {
+    expect(dayProgress([
+      { kind: 'task', done: true }, { kind: 'assignment', done: false }, { kind: 'task', done: false },
+    ])).toEqual({ done: 1, total: 3 })
+  })
+
+  it('is null for a day with nothing on it', () => {
+    expect(dayProgress([])).toBeNull()
+  })
+
+  /* An exam is not something you tick off. Counting it as outstanding would leave a
+     day with one exam and one finished assignment reading "1/2" for ever. */
+  it('leaves exams out of both halves', () => {
+    expect(dayProgress([
+      { kind: 'exam', done: false }, { kind: 'assignment', done: true },
+    ])).toEqual({ done: 1, total: 1 })
+  })
+
+  it('is null for a day that is nothing but exams', () => {
+    expect(dayProgress([{ kind: 'exam', done: false }])).toBeNull()
+  })
+
+  it('reports a fully finished day', () => {
+    expect(dayProgress([{ kind: 'task', done: true }])).toEqual({ done: 1, total: 1 })
   })
 })
 
