@@ -77,7 +77,9 @@ export async function GET(request) {
       // Identity only — find or create the user record, then issue a session.
       // Calendar tokens are NOT stored here; that's a separate opt-in step.
       const user = await findOrCreateUser(email)
-      await createSession(user.id)
+      // Email as a claim: /api/auth/me then answers from the cookie rather than
+      // querying `users` on every page load. See lib/session.
+      await createSession(user.id, user.email ?? email)
 
       const next = (state.next ?? '/').startsWith('/') ? (state.next ?? '/') : '/'
       return Response.redirect(new URL(next, request.url))

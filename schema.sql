@@ -208,6 +208,9 @@ CREATE INDEX IF NOT EXISTS idx_custom_lists_user     ON custom_lists(user_id);
 CREATE INDEX IF NOT EXISTS idx_event_categories_user ON event_categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_todo_categories_user  ON todo_categories(user_id);
 CREATE INDEX IF NOT EXISTS idx_note_images_user      ON note_images(user_id);
+-- class_schedule was missed when the list above was written, and it is the one the
+-- reminder cron reads on every scan to resolve per-class reminder rules.
+CREATE INDEX IF NOT EXISTS idx_class_schedule_user   ON class_schedule(user_id);
 
 -- ── Sent Reminders ──────────────────────────────────────────────────────────
 -- Dedup log so the server-side reminder cron (/api/push/reminders) sends each
