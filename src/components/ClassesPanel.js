@@ -309,18 +309,26 @@ function ClassCard({
   const openTasks = todos.filter(t => !t.completed)
   const doneTasks = todos.filter(t => t.completed)
 
-  // Meetings are already ordered by the expansion; everything ahead of `now`, exams
-  // first-class among them rather than in a list of their own — an exam *is* the
-  // period, and splitting them would mean reading two lists to find next Tuesday.
-  const upcoming = useMemo(
-    () => meetings.filter(ev => new Date(ev.start).getTime() >= now).slice(0, 6),
+  // Meetings are already ordered by the expansion, so "ahead of now" is a filter.
+  const upcomingMeetings = useMemo(
+    () => meetings.filter(ev => new Date(ev.start).getTime() >= now),
     [meetings, now],
   )
-  const nextExam = useMemo(
-    () => meetings.find(ev => ev.extendedProps?.isExam && new Date(ev.start).getTime() >= now) ?? null,
-    [meetings, now],
+
+  /* "Coming up" lists exams only.
+     It used to list every remaining meeting with exams among them, on the reasoning
+     that an exam *is* the period and splitting them would mean reading two lists.
+     In practice that buried the exams: a class that meets three times a week fills
+     the six rows with periods you already know about — the same Mon/Wed/Fri you
+     could recite — and the one row that actually changes your week scrolls off the
+     end. The recurring schedule is already shown above, and the card header still
+     says when the next meeting is, so the periods were never the news here. */
+  const upcomingExams = useMemo(
+    () => upcomingMeetings.filter(ev => ev.extendedProps?.isExam).slice(0, 6),
+    [upcomingMeetings],
   )
-  const nextMeeting = upcoming[0] ?? null
+  const nextExam    = upcomingExams[0] ?? null
+  const nextMeeting = upcomingMeetings[0] ?? null
 
   // The grade is computed from every assignment, not from the filtered view — "your
   // grade in this class" does not mean "your grade this week".
@@ -595,16 +603,16 @@ function ClassCard({
             </div>
           )}
 
-          {/* ── Upcoming meetings, exams among them ── */}
+          {/* ── Upcoming exams ── */}
           {!isCanvasOnly && (
             <div style={{ marginBottom: 14 }}>
               <SectionHeading icon={CalendarDays}>Coming up</SectionHeading>
-              {upcoming.length === 0 ? (
+              {upcomingExams.length === 0 ? (
                 <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--text-3)' }}>
-                  No meetings left this term.
+                  No exams scheduled.
                 </p>
               ) : (
-                upcoming.map(ev => <MeetingRow key={ev.id} ev={ev} onClick={onEventClick} />)
+                upcomingExams.map(ev => <MeetingRow key={ev.id} ev={ev} onClick={onEventClick} />)
               )}
             </div>
           )}

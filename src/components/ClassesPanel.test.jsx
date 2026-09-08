@@ -209,19 +209,39 @@ describe('ClassesPanel — meetings and exams', () => {
     { ...meeting('2026-03-06'), extendedProps: { classId: 'c9' } },  // another class
   ]
 
-  it('lists what is ahead and drops what has already happened', () => {
-    renderPanel({ canvasClassEvents: events })
-    openCard()
-    expect(cards().getAllByText('Physics 101 (002)')).toHaveLength(1)
-  })
-
-  // An exam *is* the period — splitting them into two lists would mean reading
-  // both to find out what happens next Tuesday.
-  it('keeps exams in the same list as ordinary meetings', () => {
+  /* "Coming up" used to list every remaining meeting with exams among them. That
+     buried the exams: a class meeting three times a week filled the list with the
+     Mon/Wed/Fri you can already recite, and the one row that changes your week
+     scrolled off the end. The recurring schedule is shown above it and the header
+     still says when the next meeting is, so the periods were never the news. */
+  it('lists exams only, not the ordinary meetings', () => {
     renderPanel({ canvasClassEvents: events })
     openCard()
     const comingUp = cards().getByText('Coming up').closest('div').parentElement
     expect(within(comingUp).getByText('Midterm')).toBeInTheDocument()
+    expect(within(comingUp).queryByText('Physics 101 (002)')).toBeNull()
+  })
+
+  it('says so plainly when a class has no exams scheduled', () => {
+    renderPanel({ canvasClassEvents: [meeting('2026-03-02')] })
+    openCard()
+    expect(cards().getByText('No exams scheduled.')).toBeInTheDocument()
+  })
+
+  it('drops an exam that has already happened', () => {
+    renderPanel({ canvasClassEvents: [
+      meeting('2026-02-27', { title: 'Quiz 1', extendedProps: { source: 'canvas-class', classId: 'c1', isExam: true } }),
+    ] })
+    openCard()
+    expect(cards().getByText('No exams scheduled.')).toBeInTheDocument()
+  })
+
+  it('leaves another class’s exam out', () => {
+    renderPanel({ canvasClassEvents: [
+      meeting('2026-03-06', { title: 'Chem final', extendedProps: { source: 'canvas-class', classId: 'c9', isExam: true } }),
+    ] })
+    openCard()
+    expect(cards().getByText('No exams scheduled.')).toBeInTheDocument()
   })
 
   it('flags the next exam on the header, where it is visible while collapsed', () => {
@@ -437,6 +457,47 @@ describe('ClassesPanel — the calendar is the main spread', () => {
     renderPanel({ todos, canvasClassEvents: events })
     expect(screen.getByTitle(/Lab report/)).toBeInTheDocument()
     expect(screen.getByTitle(/Midterm/)).toBeInTheDocument()
+  })
+
+  /* The counter beside the date, and the ordering that goes with it: a cell holds
+     three chips, so finished work sitting in build order could fill them and push
+     outstanding work under "+1 more". */
+  describe('what is done on a day', () => {
+    const threeOnOneDay = [
+      { id: 'd1', title: 'Read ch. 4',  category: 'class:c1', dueDate: '2026-03-12', completed: true },
+      { id: 'd2', title: 'Lab report',  category: 'class:c1', dueDate: '2026-03-12' },
+      { id: 'd3', title: 'Problem set', category: 'class:c1', dueDate: '2026-03-12' },
+    ]
+
+    it('counts what is finished against the day’s total', () => {
+      renderPanel({ todos: threeOnOneDay })
+      expect(screen.getByTitle('1 of 3 done')).toHaveTextContent('1/3')
+    })
+
+    it('shows nothing on a day with no coursework', () => {
+      renderPanel({ todos: threeOnOneDay })
+      // Only the one day carries work, so exactly one counter is on the month.
+      expect(screen.getAllByTitle(/ of \d+ done$/)).toHaveLength(1)
+    })
+
+    it('reads the whole day as done once it is', () => {
+      renderPanel({ todos: [{ ...threeOnOneDay[0] }] })
+      expect(screen.getByTitle('1 of 1 done')).toBeInTheDocument()
+    })
+
+    it('leaves an exam out of the count — it is not something you tick off', () => {
+      renderPanel({
+        todos: [{ id: 'd9', title: 'Essay', category: 'class:c1', dueDate: '2026-03-04' }],
+        canvasClassEvents: events,
+      })
+      expect(screen.getByTitle('0 of 1 done')).toBeInTheDocument()
+    })
+
+    it('shows outstanding chips ahead of finished ones', () => {
+      renderPanel({ todos: threeOnOneDay })
+      const chips = screen.getAllByTitle(/Read ch\. 4|Lab report|Problem set/)
+      expect(chips[chips.length - 1]).toHaveAttribute('title', expect.stringMatching(/Read ch\. 4/))
+    })
   })
 
   // The calendar tab already shows every lecture. Here they would bury the four
