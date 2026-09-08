@@ -137,3 +137,53 @@ describe('EventModal — colour on edit', () => {
     expect(onRecolor).not.toHaveBeenCalled()
   })
 })
+
+/* Dragging a range across the calendar is the only gesture that creates a multi-day
+   event — the editor could always store one, but nothing could make one. The form has
+   to open already describing what was dragged, in inclusive terms: FullCalendar hands
+   over an exclusive end for an all-day selection, and showing that verbatim would
+   claim a day more than was selected. */
+describe('EventModal — a range dragged on the calendar', () => {
+  const dateValue = label =>
+    screen.getByText(label).closest('div').querySelector('input, [role="button"], button')?.textContent
+    ?? screen.getByText(label).parentElement.textContent
+
+  it('opens in all-day mode when an all-day range was dragged', () => {
+    renderModal({ initialDate: '2026-08-17', initialEnd: '2026-08-20', initialAllDay: true })
+    // The all-day branch is the one with two date fields.
+    expect(screen.getByText('Start Date')).toBeInTheDocument()
+    expect(screen.getByText('End Date')).toBeInTheDocument()
+  })
+
+  it('shows the last selected day, not FullCalendar’s exclusive end', () => {
+    renderModal({ initialDate: '2026-08-17', initialEnd: '2026-08-20', initialAllDay: true })
+    // Dragged Mon 17 → Wed 19; FullCalendar reports the 20th. (Matched on the day
+    // within the month, since the year string contains "20" itself.)
+    expect(dateValue('End Date')).toMatch(/Aug 19/)
+    expect(dateValue('End Date')).not.toMatch(/Aug 20/)
+  })
+
+  it('stays a timed single-day event when a time range was dragged', () => {
+    renderModal({
+      initialDate: '2026-08-17T09:00:00',
+      initialEnd:  '2026-08-17T11:30:00',
+      initialAllDay: false,
+    })
+    expect(screen.queryByText('End Date')).toBeNull()
+    expect(screen.getByText('Start')).toBeInTheDocument()
+  })
+
+  it('takes its end time from the drag rather than defaulting to an hour', () => {
+    renderModal({
+      initialDate: '2026-08-17T09:00:00',
+      initialEnd:  '2026-08-17T11:30:00',
+      initialAllDay: false,
+    })
+    expect(document.body.textContent).toMatch(/11:30/)
+  })
+
+  it('is unchanged when no range was dragged', () => {
+    renderModal({ initialDate: '2026-08-17' })
+    expect(screen.queryByText('End Date')).toBeNull()
+  })
+})

@@ -9,6 +9,7 @@ import CategoryManager from '@/components/CategoryManager'
 import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
 import ColorSwatches, { sameColor } from '@/components/ColorSwatches'
+import { lastDayOf } from '@/lib/eventSpan'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',   ms: 0 },
@@ -49,7 +50,7 @@ function initColor(event, colorOverride, categories, categoryId) {
   return stored && !sameColor(stored, catColor) ? stored : null
 }
 
-function initState(event, initialDate, categories, colorOverride) {
+function initState(event, initialDate, categories, colorOverride, initialEnd, initialAllDay) {
   if (event) {
     const s    = event.start instanceof Date ? event.start : new Date(event.start || Date.now())
     const eRaw = event.end instanceof Date
@@ -81,12 +82,24 @@ function initState(event, initialDate, categories, colorOverride) {
   const base   = initialDate || new Date().toISOString()
   const d      = new Date(base)
   const hasTime = base.length > 10
+
+  /* A range dragged out on the calendar. `initialEnd` arrives in FullCalendar's own
+     terms — exclusive for an all-day selection — so the inclusive last day the form
+     shows is derived with the same helper the rest of the app uses, rather than by
+     subtracting a day here and getting it subtly wrong. */
+  const aDay    = !!initialAllDay
+  const endD    = initialEnd ? new Date(initialEnd) : null
+  const spanEnd = aDay && initialEnd
+    ? lastDayOf({ allDay: true, start: hasTime ? toYMDLocal(d) : base.slice(0, 10), end: initialEnd })
+    : ''
+
   return {
-    title: '', category: categories[0].id, color: null, allDay: false,
+    title: '', category: categories[0].id, color: null, allDay: aDay,
     date:    hasTime ? toYMDLocal(d) : d.toISOString().slice(0, 10),
-    endDate: '',
+    endDate: spanEnd,
     startTime: hasTime ? toHHMM(d) : '09:00',
-    endTime:   hasTime ? toHHMM(new Date(d.getTime() + 3600_000)) : '10:00',
+    endTime:   (!aDay && endD) ? toHHMM(endD)
+             : hasTime ? toHHMM(new Date(d.getTime() + 3600_000)) : '10:00',
     reminderMs: 0,
     repeats:    false,
     repeatType: 'weekly',
@@ -167,7 +180,7 @@ function detectConflicts({ date, startTime, endTime, allDay, editingEventId, exi
   return conflicts
 }
 
-export default function EventModal({ event, initialDate, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
+export default function EventModal({ event, initialDate, initialEnd, initialAllDay, initialTitle, initialNotes, categories, onCategoriesChange, onSave, onDelete, onHide, onClose, existingEvents = [], canvasClasses = [],
   /* The per-event override in eventPrefs. The form no longer writes colours there —
      an event the app stores keeps its own `color`, which is the field the picker now
      edits. These two are still needed to *read* an override set earlier (by the
@@ -183,7 +196,7 @@ export default function EventModal({ event, initialDate, initialTitle, initialNo
   const isEdit         = !!event
   const isRecurringEdit = isEdit && !!event?.extendedProps?.recurrenceGroupId
   const hasSeriesData   = isRecurringEdit && !!event?.extendedProps?.seriesRecurrence
-  const init   = initState(event, initialDate, categories, colorOverride)
+  const init   = initState(event, initialDate, categories, colorOverride, initialEnd, initialAllDay)
   // Seed values used when creating from elsewhere (e.g. turning a note into an
   // event). Only applied in create mode — an existing event owns its own data.
   if (!event) {

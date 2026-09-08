@@ -107,3 +107,37 @@ describe('AgendaView overdue handling', () => {
     expect(within(heading).getByText('2 items')).toBeInTheDocument()
   })
 })
+
+/* A multi-day event used to be filed under its start date only, and skipped
+   altogether once that date had passed — so an event you were in the middle of was
+   the one thing the agenda would not tell you about. */
+describe('AgendaView multi-day events', () => {
+  const spanning = (over = {}) => ({
+    id: 'e-span', title: 'Robotics comp', allDay: true,
+    start: todayStr(), end: addDaysStr(3), ...over,
+  })
+
+  it('lists the event on each day it covers', () => {
+    render(<AgendaView events={[spanning()]} />)
+    expect(screen.getAllByText('Robotics comp')).toHaveLength(3)
+  })
+
+  it('says which day of the run each row is', () => {
+    render(<AgendaView events={[spanning()]} />)
+    expect(screen.getByText('Day 1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('Day 3 of 3')).toBeInTheDocument()
+  })
+
+  it('still shows an event that began before today', () => {
+    render(<AgendaView events={[spanning({ start: addDaysStr(-2), end: addDaysStr(2) })]} />)
+    // Started two days ago, ends the day after tomorrow: today, +1 are left.
+    expect(screen.getAllByText('Robotics comp').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('Day 3 of 4')).toBeInTheDocument()
+  })
+
+  it('leaves a single-day event as one row with no day label', () => {
+    render(<AgendaView events={[spanning({ end: addDaysStr(1) })]} />)
+    expect(screen.getAllByText('Robotics comp')).toHaveLength(1)
+    expect(screen.queryByText(/Day \d+ of/)).toBeNull()
+  })
+})

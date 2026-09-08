@@ -5,6 +5,8 @@ import { CalendarDays, CheckSquare, BookOpen, Clock, MapPin, ListChecks, AlertTr
 import { todayStr } from '@/lib/localDate'
 import { describeLocation } from '@/lib/maps'
 import { visibleItems } from '@/lib/customLists'
+import { eventDaysWithin, isMultiDay, spanLabel } from '@/lib/eventSpan'
+import { toYMDLocal } from '@/lib/calendarView'
 
 const DAYS_AHEAD = 14
 
@@ -119,29 +121,46 @@ export default function AgendaView({
 
     const result = []
 
-    // ── User events ──────────────────────────────────────────────────────────
+    /* ── User events ──
+       One row per day the event covers, not one row for its start.
+
+       This used to file an event under `start.slice(0, 10)` and skip anything whose
+       start was before today, which broke multi-day events twice over: a conference
+       running Monday to Wednesday appeared only on Monday, and once Monday had passed
+       it vanished from the agenda entirely — the event was *in progress* and the
+       agenda had stopped mentioning it. `eventDaysWithin` asks the question the
+       agenda actually has: which of the days I am showing does this cover? */
+    const windowFrom = toYMDLocal(today)
+    const windowTo   = toYMDLocal(endDate)
+
     for (const ev of events) {
       if (!ev.start) continue
-      const start = new Date(ev.start)
-      if (start < today || start > endDate) continue
-      const dateStr = ev.start.slice(0, 10)
       const catColor = eventCategories.find(c => c.id === ev.extendedProps?.category)?.color || ev.color || 'var(--blue)'
-      result.push({
-        type: 'event',
-        id: ev.id,
-        dateStr,
-        sortKey: ev.start,
-        allDay: !!ev.allDay,
-        title: ev.title || 'Untitled event',
-        subtitle: ev.allDay
-          ? (ev.extendedProps?.notes || null)
-          : formatTimeRange(ev.start, ev.end),
-        color: ev.color || catColor,
-        // Events carry a real location field now; this used to borrow `notes`, which
-        // meant every note body was labelled with a map pin.
-        location: ev.extendedProps?.location || null,
-        raw: ev,
-      })
+      const span = isMultiDay(ev)
+
+      for (const dateStr of eventDaysWithin(ev, windowFrom, windowTo)) {
+        result.push({
+          type: 'event',
+          // A row per day needs a key per day; the bare event id would collide.
+          id: span ? `${ev.id}-${dateStr}` : ev.id,
+          dateStr,
+          /* Sort within the day by the event's own start on its first day, and to the
+             top of the day on every day after — a multi-day event is context for the
+             day rather than something happening at 9am on it. */
+          sortKey: dateStr === toYMDLocal(new Date(ev.start)) ? ev.start : `${dateStr}T00:00:00`,
+          allDay: !!ev.allDay,
+          title: ev.title || 'Untitled event',
+          subtitle: ev.allDay
+            ? (spanLabel(ev, dateStr) ?? ev.extendedProps?.notes ?? null)
+            : formatTimeRange(ev.start, ev.end),
+          span: spanLabel(ev, dateStr),
+          color: ev.color || catColor,
+          // Events carry a real location field now; this used to borrow `notes`, which
+          // meant every note body was labelled with a map pin.
+          location: ev.extendedProps?.location || null,
+          raw: ev,
+        })
+      }
     }
 
     // ── Class schedule instances ─────────────────────────────────────────────
