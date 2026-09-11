@@ -520,9 +520,22 @@ describe('foldFurledTags', () => {
     expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['plain', '[chem x1]', 'bio'])
   })
 
-  it('hides a note whose tag is furled even when its other tag is not', () => {
+  // Furling one category must not drag a second one's notes away with it.
+  it('keeps a note visible while any of its tags is still unfurled', () => {
+    const notes = [makeNote({ id: 'both', tags: ['chem', 'lab'] }), makeNote({ id: 'solo', tags: ['chem'] })]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['both', '[chem x1]'])
+  })
+
+  it('folds that note away once its last tag is furled too', () => {
     const notes = [makeNote({ id: 'both', tags: ['chem', 'lab'] })]
-    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['[chem x1]'])
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem'), tagGroupKey('lab')])))
+      .toEqual(['[chem x1]', '[lab x1]'])
+  })
+
+  it('counts only what a bundle actually folded, not every note wearing the tag', () => {
+    const notes = [makeNote({ id: 'both', tags: ['chem', 'lab'] }), makeNote({ id: 'solo', tags: ['chem'] })]
+    const [, bundle] = foldFurledTags(notes, [tagGroupKey('chem')])
+    expect(bundle.notes.map(n => n.id)).toEqual(['solo'])
   })
 
   it('lists a note once when two of its tags are furled, but counts it in both', () => {

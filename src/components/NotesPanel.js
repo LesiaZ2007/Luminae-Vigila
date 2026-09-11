@@ -279,11 +279,12 @@ export default function NotesPanel({
                                 ? `Unfurl ${t} — show its notes in the list again`
                                 : `Furl ${t} — collapse its notes into one row`}
                               style={{
-                                display: 'flex', alignItems: 'center', padding: '2px 5px 2px 3px',
-                                border: 'none', background: 'transparent', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', alignSelf: 'stretch',
+                                padding: '2px 6px', cursor: 'pointer', background: 'transparent',
+                                border: 'none', borderLeft: `1px solid ${active ? 'var(--blue)' : 'var(--border)'}`,
                                 color: isFurled ? 'var(--blue-text)' : 'var(--text-3)',
                               }}>
-                        {isFurled ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                        {isFurled ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                       </button>
                     </span>
                   )
