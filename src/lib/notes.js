@@ -30,6 +30,14 @@
 
 const LS_KEY = 'lv-notes'
 
+/* How the notes list is *viewed* — which tag groups are furled shut, and whether
+   grouping is on at all. Deliberately device-local rather than synced: furling a
+   group on your phone to fit more on screen says nothing about how you want the
+   list to look on a laptop, and syncing it would make notes vanish on one device
+   because of something you did on another. */
+const FURL_KEY  = 'lv-notes-furled'
+const GROUP_KEY = 'lv-notes-grouped'
+
 /** Notes older than this in the trash are purged on load. */
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
 
@@ -219,6 +227,170 @@ export function noteMatches(note, query) {
     notePlainText(note.html).toLowerCase().includes(q) ||
     (note.tags ?? []).some(t => t.toLowerCase().includes(q))
   )
+}
+
+/* ── Tags ─────────────────────────────────────────────────────────────────
+ *
+ * A tag is just a string on a note — there is no tag registry, and deliberately
+ * so: a tag exists exactly as long as some note wears it, which means there is
+ * never a list of empty tags to clean up. The cost is that "the same tag" has to
+ * be decided by comparison rather than by id, so every function below matches
+ * case-insensitively and the *first* casing seen wins for display. Type "Chem"
+ * on one note and "chem" on the next and you get one group, not two.
+ */
+
+/** Trim a typed tag into its stored form. Returns '' for anything unusable. */
+export function normalizeTag(raw) {
+  return String(raw ?? '')
+    .trim()
+    .replace(/^#+\s*/, '')   // "#chem" and "chem" are the same tag
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24)            // matches the maxLength on the editor's tag input
+    .trim()                  // in case the cut landed mid-space
+}
+
+/** Do two tags refer to the same tag? */
+export function sameTag(a, b) {
+  return normalizeTag(a).toLowerCase() === normalizeTag(b).toLowerCase()
+}
+
+/** Does this note carry this tag? */
+export function noteHasTag(note, tag) {
+  return (note?.tags ?? []).some(t => sameTag(t, tag))
+}
+
+/**
+ * Every tag in use, with how many notes wear it — sorted by name.
+ *
+ * Trashed notes are excluded by default: a tag whose only notes are in the bin
+ * would otherwise keep offering a filter that shows nothing.
+ */
+export function collectTags(notes, { includeTrashed = false } = {}) {
+  const byKey = new Map() // lowercase → { tag, count }
+  for (const n of notes ?? []) {
+    if (n?.trashedAt && !includeTrashed) continue
+    // A note tagged ["chem", "Chem"] counts once for the group, not twice.
+    const seenHere = new Set()
+    for (const raw of n?.tags ?? []) {
+      const tag = normalizeTag(raw)
+      if (!tag) continue
+      const key = tag.toLowerCase()
+      if (seenHere.has(key)) continue
+      seenHere.add(key)
+      const entry = byKey.get(key)
+      if (entry) entry.count += 1
+      else byKey.set(key, { tag, count: 1 })
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.tag.localeCompare(b.tag))
+}
+
+/** Add a tag to a note's tag list, or return the list unchanged if it's there. */
+export function addTagTo(tags, tag) {
+  const clean = normalizeTag(tag)
+  const existing = tags ?? []
+  if (!clean || existing.some(t => sameTag(t, clean))) return existing
+  return [...existing, clean]
+}
+
+/** Remove a tag from a note's tag list. */
+export function removeTagFrom(tags, tag) {
+  return (tags ?? []).filter(t => !sameTag(t, tag))
+}
+
+/**
+ * Does a note pass the active tag filter?
+ *
+ * Multiple selected tags are OR'd, not AND'd. Selecting "chem" and "bio" reads
+ * as "show me both subjects" — the AND reading ("notes tagged with both") is the
+ * rarer question, and with OR you can still get there by picking one tag and
+ * searching. An empty filter matches everything.
+ */
+export function matchesTagFilter(note, selected) {
+  if (!selected || selected.length === 0) return true
+  return selected.some(tag => noteHasTag(note, tag))
+}
+
+/**
+ * Stable identity for a group, used as the furl key in localStorage.
+ *
+ * Prefixed rather than being the bare tag so that the "no tags" bucket can never
+ * be shadowed by someone who actually tags a note `untagged`.
+ */
+export const tagGroupKey = tag => `tag:${normalizeTag(tag).toLowerCase()}`
+export const UNTAGGED_KEY = 'untagged:'
+
+/**
+ * Split notes into one group per tag, for the furlable list.
+ *
+ * A note with three tags appears in three groups — that is the point of grouping
+ * by tag rather than filing each note in one folder, and it's why furling a
+ * group hides a *view* of a note rather than the note itself. Untagged notes go
+ * last, under a group with a null tag, so nothing can quietly disappear from the
+ * list just because it was never tagged.
+ *
+ * Groups are ordered by tag name and each group's notes are sorted the same way
+ * the flat list is (see `sortNotes`), so pinned notes stay at the top of the
+ * group they're in.
+ */
+export function groupNotesByTag(notes) {
+  const groups = new Map() // lowercase key → { key, tag, notes }
+  const untagged = []
+
+  for (const note of notes ?? []) {
+    const tags = (note?.tags ?? []).map(normalizeTag).filter(Boolean)
+    if (tags.length === 0) { untagged.push(note); continue }
+    const seenHere = new Set()
+    for (const tag of tags) {
+      const key = tag.toLowerCase()
+      if (seenHere.has(key)) continue // ["chem", "CHEM"] is one group, once
+      seenHere.add(key)
+      const group = groups.get(key)
+      if (group) group.notes.push(note)
+      else groups.set(key, { key: tagGroupKey(tag), tag, notes: [note] })
+    }
+  }
+
+  const sorted = [...groups.values()]
+    .sort((a, b) => a.tag.localeCompare(b.tag))
+    .map(g => ({ ...g, notes: sortNotes(g.notes) }))
+
+  if (untagged.length > 0) {
+    sorted.push({ key: UNTAGGED_KEY, tag: null, notes: sortNotes(untagged) })
+  }
+  return sorted
+}
+
+/** Which tag groups are furled. Device-local — furling is a view, not data. */
+export function loadFurledTags() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FURL_KEY) ?? '[]')
+    return Array.isArray(parsed) ? parsed.filter(k => typeof k === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function saveFurledTags(keys) {
+  try {
+    localStorage.setItem(FURL_KEY, JSON.stringify([...(keys ?? [])]))
+  } catch {}
+}
+
+/** Whether the list is grouped by tag. Also device-local, same reasoning. */
+export function loadTagGrouping() {
+  try {
+    return localStorage.getItem(GROUP_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveTagGrouping(on) {
+  try {
+    localStorage.setItem(GROUP_KEY, on ? '1' : '0')
+  } catch {}
 }
 
 /** Escape text that's about to be embedded in a note's HTML body. */
