@@ -18,6 +18,7 @@
  *  onChange      (patch) => void            — merged into the note by the parent
  *  onDelete      () => void                 — soft delete (parent shows undo)
  *  linkOptions   { type, id, label }[]      — courses/events/todos to link to
+ *  knownTags     string[]                   — tags already used on other notes
  *  isMobile      bool
  *
  * The editor is uncontrolled between note switches: Tiptap owns the document
@@ -38,10 +39,10 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   List, ListOrdered, ListChecks, Quote, Code, Heading1, Heading2,
   Undo2, Redo2, Star, Pin, Trash2, Bell, BellOff, Link2, Tag, X, Check,
-  ArrowUpRight, CalendarPlus, ListPlus, ImagePlus, Loader2,
+  ArrowUpRight, CalendarPlus, ListPlus, ImagePlus, Loader2, Plus,
 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
-import { notePlainText, noteDisplayTitle } from '@/lib/notes'
+import { notePlainText, noteDisplayTitle, addTagTo, removeTagFrom, noteHasTag, normalizeTag } from '@/lib/notes'
 import { imageFilesFrom, uploadNoteImage } from '@/lib/imagePaste'
 import TimePicker from '@/components/TimePicker'
 
@@ -95,8 +96,8 @@ const Divider = () => (
 )
 
 export default function NoteEditor({
-  note, onChange, onDelete, onConvert, linkOptions = [], isMobile = false,
-  pushToast, signedIn = false,
+  note, onChange, onDelete, onConvert, linkOptions = [], knownTags = [],
+  isMobile = false, pushToast, signedIn = false,
 }) {
   const [showConvert, setShowConvert] = useState(false)
   const [uploading,   setUploading]   = useState(0)
@@ -233,15 +234,33 @@ export default function NoteEditor({
 
   const activeHighlight = editor?.getAttributes('highlight')?.color
 
+  /** Put a tag on this note. No-op if it's already there, in any casing. */
+  const applyTag = useCallback(tag => {
+    const existing = note?.tags ?? []
+    const next = addTagTo(existing, tag)
+    if (next !== existing) onChange({ tags: next })
+  }, [note, onChange])
+
   const addTag = useCallback(() => {
-    const t = tagDraft.trim().replace(/^#/, '')
-    if (!t) return
-    const existing = note.tags ?? []
-    if (!existing.some(x => x.toLowerCase() === t.toLowerCase())) {
-      onChange({ tags: [...existing, t] })
-    }
+    applyTag(tagDraft)
     setTagDraft('')
-  }, [tagDraft, note, onChange])
+  }, [tagDraft, applyTag])
+
+  /**
+   * Tags already in use elsewhere that this note doesn't have yet.
+   *
+   * This is the whole reason a tag is worth creating: re-using one is a click,
+   * so "chem" stays one group instead of splintering into "chem", "chemistry"
+   * and "Chem 2" because nobody could remember what they typed last time.
+   * Typing filters the list, so it doubles as autocomplete.
+   */
+  const tagSuggestions = useMemo(() => {
+    const draft = normalizeTag(tagDraft).toLowerCase()
+    return knownTags
+      .filter(t => !noteHasTag(note, t))
+      .filter(t => (draft ? t.toLowerCase().includes(draft) : true))
+      .slice(0, 8)
+  }, [knownTags, note, tagDraft])
 
   if (!note) return null
 
@@ -406,7 +425,7 @@ export default function NoteEditor({
               background: 'var(--blue-bg)', color: 'var(--blue-text)',
             }}>
               {t}
-              <button type="button" onClick={() => onChange({ tags: note.tags.filter(x => x !== t) })}
+              <button type="button" onClick={() => onChange({ tags: removeTagFrom(note.tags, t) })}
                       aria-label={`Remove tag ${t}`}
                       style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'inherit', display: 'flex' }}>
                 <X size={11} />
@@ -427,6 +446,32 @@ export default function NoteEditor({
             }}
           />
         </div>
+
+        {/* Tags used on other notes — one click puts one on this note too.
+            onMouseDown is swallowed so the input's onBlur doesn't fire first and
+            commit a half-typed draft out from under the click. */}
+        {tagSuggestions.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.62rem', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+              Reuse
+            </span>
+            {tagSuggestions.map(t => (
+              <button key={t} type="button"
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => { applyTag(t); setTagDraft('') }}
+                      title={`Tag this note ${t}`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                        padding: '1px 7px', borderRadius: 999, cursor: 'pointer',
+                        border: '1px dashed var(--border)', background: 'transparent',
+                        color: 'var(--text-3)', fontFamily: 'inherit',
+                        fontSize: '0.66rem', fontWeight: 700,
+                      }}>
+                <Plus size={9} /> {t}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Color swatches + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
