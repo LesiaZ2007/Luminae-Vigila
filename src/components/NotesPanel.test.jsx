@@ -180,6 +180,97 @@ describe('tag filtering', () => {
   })
 })
 
+describe('furling in the ordinary list', () => {
+  const notes = [
+    note({ id: 'a', title: 'Titration',     tags: ['chem'] }),
+    note({ id: 'b', title: 'Moles',         tags: ['chem'] }),
+    note({ id: 'c', title: 'Cell walls',    tags: ['bio'] }),
+    note({ id: 'd', title: 'Loose thought', tags: [] }),
+  ]
+
+  const furlChip = name => screen.getByRole('button', { name: `Furl ${name}` })
+
+  it('offers a furl control on every tag chip, without turning on grouping', () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    expect(furlChip('chem')).toBeInTheDocument()
+    expect(furlChip('bio')).toBeInTheDocument()
+  })
+
+  it('collapses a tag into a single row that says how many notes it holds', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+
+    expect(screen.queryByText('Titration')).not.toBeInTheDocument()
+    expect(screen.queryByText('Moles')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unfurl chem (2 notes)' })).toBeInTheDocument()
+    expect(screen.getByText('2 notes')).toBeInTheDocument()
+  })
+
+  it('leaves every other note in the list', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+    expect(screen.getByText('Cell walls')).toBeInTheDocument()
+    expect(screen.getByText('Loose thought')).toBeInTheDocument()
+  })
+
+  it('unfurls again from the bundle row itself', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+    await userEvent.click(screen.getByRole('button', { name: 'Unfurl chem (2 notes)' }))
+    expect(screen.getByText('Titration')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Unfurl chem/ })).not.toBeInTheDocument()
+  })
+
+  it('unfurls from the chip too', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+    await userEvent.click(screen.getByRole('button', { name: 'Unfurl chem' }))
+    expect(screen.getByText('Titration')).toBeInTheDocument()
+  })
+
+  it('shows the notes anyway while their tag is the active filter', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+    await userEvent.click(chip('chem'))
+    expect(screen.getByText('Titration')).toBeInTheDocument()
+
+    // …and folds them back up once the filter is cleared: the furl is remembered.
+    await userEvent.click(chip('chem'))
+    expect(screen.queryByText('Titration')).not.toBeInTheDocument()
+  })
+
+  it('furls every tag at once, leaving untagged notes in place', async () => {
+    render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(screen.getByRole('button', { name: /Furl all/ }))
+    expect(screen.queryByText('Titration')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cell walls')).not.toBeInTheDocument()
+    expect(screen.getByText('Loose thought')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Unfurl all/ }))
+    expect(screen.getByText('Titration')).toBeInTheDocument()
+  })
+
+  it('never furls anything in Trash', async () => {
+    render(<NotesPanel {...noop} notes={[
+      ...notes,
+      note({ id: 'e', title: 'Dead', tags: ['chem'], trashedAt: '2026-02-01T00:00:00.000Z' }),
+    ]} />)
+    await userEvent.click(furlChip('chem'))
+    await userEvent.click(screen.getByText('Trash (1)'))
+    expect(screen.getByText('Dead')).toBeInTheDocument()
+  })
+
+  it('remembers what was furled across a remount', async () => {
+    const { unmount } = render(<NotesPanel {...noop} notes={notes} />)
+    await userEvent.click(furlChip('chem'))
+    unmount()
+
+    render(<NotesPanel {...noop} notes={notes} />)
+    expect(screen.queryByText('Titration')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unfurl chem (2 notes)' })).toBeInTheDocument()
+  })
+})
+
 describe('tag groups', () => {
   const notes = [
     note({ id: 'a', title: 'Titration',     tags: ['chem', 'lab'] }),
@@ -187,14 +278,18 @@ describe('tag groups', () => {
     note({ id: 'c', title: 'Loose thought', tags: [] }),
   ]
 
-  // Group headers read "Furl chem (2 notes)"; the lookahead keeps the
-  // "Furl all" shortcut out of these queries.
-  const HEADER_RE = /^(Furl|Unfurl) (?!all\b)/
-  const groupBtn = () => screen.getByRole('button', { name: /Group notes by tag|Show one flat list/ })
-  const header   = name => screen.getByRole('button', { name: new RegExp(`^(Furl|Unfurl) ${name} `) })
-  const headerNames = () =>
-    screen.getAllByRole('button', { name: HEADER_RE })
-      .map(h => h.textContent.replace(/\d+$/, '').trim())
+  // Group headers are the only thing in a grouped list carrying aria-expanded
+  // — the "Furl all" shortcut and the chip furl buttons don't, so this picks
+  // out headers in DOM order without matching on their labels.
+  const headerEls   = () => [...document.querySelectorAll('button[aria-expanded]')]
+  const headerNames = () => headerEls().map(h => h.textContent.replace(/\d+$/, '').trim())
+  const groupBtn    = () => screen.getByRole('button', { name: /Group notes by tag|Show one flat list/ })
+  const header      = name => {
+    const match = headerEls().find(h =>
+      new RegExp(`^(Furl|Unfurl) ${name} \\(`).test(h.getAttribute('aria-label') ?? ''))
+    if (!match) throw new Error(`no group header for "${name}"`)
+    return match
+  }
 
   it('offers grouping only once a tag exists', () => {
     const { rerender } = render(<NotesPanel {...noop} notes={[note({ tags: [] })]} />)
@@ -239,7 +334,7 @@ describe('tag groups', () => {
     await userEvent.click(screen.getByRole('button', { name: /Furl all/ }))
     expect(screen.queryByText('Titration')).not.toBeInTheDocument()
     expect(screen.queryByText('Loose thought')).not.toBeInTheDocument()
-    const headers = screen.getAllByRole('button', { name: HEADER_RE })
+    const headers = headerEls()
     expect(headers).toHaveLength(4)
     expect(headers.every(h => h.getAttribute('aria-expanded') === 'false')).toBe(true)
 
@@ -265,7 +360,7 @@ describe('tag groups', () => {
     ]} />)
     await userEvent.click(groupBtn())
     await userEvent.click(screen.getByText('Trash (1)'))
-    expect(screen.queryByRole('button', { name: HEADER_RE })).not.toBeInTheDocument()
+    expect(headerEls()).toHaveLength(0)
     expect(screen.getByText('Dead')).toBeInTheDocument()
   })
 
