@@ -4,7 +4,7 @@ import {
   notePlainText, noteDisplayTitle, notePreview, noteHasImage, sortNotes, noteMatches,
   TRASH_RETENTION_MS, sharedTextToHtml, isNoteEmpty, dropEmptyNotes,
   normalizeTag, sameTag, noteHasTag, collectTags, addTagTo, removeTagFrom,
-  matchesTagFilter, groupNotesByTag, tagGroupKey, UNTAGGED_KEY,
+  matchesTagFilter, groupNotesByTag, tagGroupKey, UNTAGGED_KEY, foldFurledTags,
 } from './notes'
 
 const at = iso => iso
@@ -482,5 +482,68 @@ describe('groupNotesByTag', () => {
 
   it('tolerates nullish input', () => {
     expect(groupNotesByTag(null)).toEqual([])
+  })
+})
+
+describe('foldFurledTags', () => {
+  const shape = items => items.map(i => (i.type === 'note' ? i.note.id : `[${i.tag} x${i.notes.length}]`))
+
+  it('leaves the list alone when nothing is furled', () => {
+    const notes = [makeNote({ id: 'a', tags: ['chem'] }), makeNote({ id: 'b' })]
+    expect(shape(foldFurledTags(notes, []))).toEqual(['a', 'b'])
+  })
+
+  it('replaces a furled tag\'s notes with one row', () => {
+    const notes = [
+      makeNote({ id: 'a', tags: ['chem'] }),
+      makeNote({ id: 'b', tags: ['chem'] }),
+      makeNote({ id: 'c', tags: ['bio'] }),
+    ]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['[chem x2]', 'c'])
+  })
+
+  it('collapses the tag in place rather than moving it to an end', () => {
+    const notes = [
+      makeNote({ id: 'first' }),
+      makeNote({ id: 'a', tags: ['chem'] }),
+      makeNote({ id: 'last' }),
+    ]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['first', '[chem x1]', 'last'])
+  })
+
+  it('keeps untagged notes and notes with other tags visible', () => {
+    const notes = [
+      makeNote({ id: 'plain' }),
+      makeNote({ id: 'chem', tags: ['chem'] }),
+      makeNote({ id: 'bio',  tags: ['bio'] }),
+    ]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['plain', '[chem x1]', 'bio'])
+  })
+
+  it('hides a note whose tag is furled even when its other tag is not', () => {
+    const notes = [makeNote({ id: 'both', tags: ['chem', 'lab'] })]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['[chem x1]'])
+  })
+
+  it('lists a note once when two of its tags are furled, but counts it in both', () => {
+    const notes = [makeNote({ id: 'both', tags: ['chem', 'lab'] }), makeNote({ id: 'solo', tags: ['lab'] })]
+    const items = foldFurledTags(notes, [tagGroupKey('chem'), tagGroupKey('lab')])
+    expect(shape(items)).toEqual(['[chem x1]', '[lab x2]'])
+    const ids = items.flatMap(i => i.notes.map(n => n.id))
+    expect(ids.filter(id => id === 'both')).toHaveLength(2)
+  })
+
+  it('matches the furled tag case-insensitively', () => {
+    const notes = [makeNote({ id: 'a', tags: ['Chem'] })]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['[Chem x1]'])
+  })
+
+  it('emits nothing for a furled tag no visible note carries', () => {
+    const notes = [makeNote({ id: 'a', tags: ['bio'] })]
+    expect(shape(foldFurledTags(notes, [tagGroupKey('chem')]))).toEqual(['a'])
+  })
+
+  it('tolerates nullish input', () => {
+    expect(foldFurledTags(null, null)).toEqual([])
   })
 })

@@ -362,6 +362,72 @@ export function groupNotesByTag(notes) {
   return sorted
 }
 
+/**
+ * Fold the furled tags of an ordinary (ungrouped) list into single rows.
+ *
+ * This is the everyday way to use furling: you keep one list of all your notes,
+ * and a tag you're not working on right now collapses into one row that sits
+ * where its notes were, instead of costing you a screenful of scrolling. Group
+ * mode is the stronger version — everything filed under a header — but you
+ * shouldn't have to turn the whole list inside out just to get a tag out of the
+ * way.
+ *
+ * Takes an already-sorted list and returns render items in that same order:
+ *
+ *   { type: 'note',   key, note }
+ *   { type: 'bundle', key, tag, notes }   ← one row standing in for its notes
+ *
+ * A bundle is emitted at the position of the first note it swallows, so the
+ * list doesn't reshuffle when you furl — the tag collapses in place. A note
+ * carrying two furled tags is emitted once (by whichever bundle reaches it
+ * first) but counted in both, because each bundle is honestly reporting how
+ * many notes wear that tag.
+ */
+export function foldFurledTags(sortedNotes, furledKeys) {
+  const notes  = sortedNotes ?? []
+  const furled = new Set(furledKeys ?? [])
+  const asRow  = note => ({ type: 'note', key: note.id, note })
+  if (furled.size === 0) return notes.map(asRow)
+
+  const furledKeysOf = note => {
+    const keys = []
+    for (const raw of note?.tags ?? []) {
+      const tag = normalizeTag(raw)
+      if (!tag) continue
+      const key = tagGroupKey(tag)
+      if (furled.has(key) && !keys.includes(key)) keys.push(key)
+    }
+    return keys
+  }
+
+  // Counts first, so a bundle can state its full size the moment it's emitted.
+  const bundles = new Map() // key → { key, tag, notes }
+  for (const note of notes) {
+    for (const raw of note?.tags ?? []) {
+      const tag = normalizeTag(raw)
+      if (!tag) continue
+      const key = tagGroupKey(tag)
+      if (!furled.has(key)) continue
+      const bundle = bundles.get(key)
+      if (!bundle) bundles.set(key, { key, tag, notes: [note] })
+      else if (!bundle.notes.includes(note)) bundle.notes.push(note)
+    }
+  }
+
+  const items   = []
+  const emitted = new Set()
+  for (const note of notes) {
+    const keys = furledKeysOf(note)
+    if (keys.length === 0) { items.push(asRow(note)); continue }
+    for (const key of keys) {
+      if (emitted.has(key)) continue
+      emitted.add(key)
+      items.push({ type: 'bundle', ...bundles.get(key) })
+    }
+  }
+  return items
+}
+
 /** Which tag groups are furled. Device-local — furling is a view, not data. */
 export function loadFurledTags() {
   try {
