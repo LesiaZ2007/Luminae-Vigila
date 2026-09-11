@@ -3,6 +3,8 @@ import {
   mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash,
   notePlainText, noteDisplayTitle, notePreview, noteHasImage, sortNotes, noteMatches,
   TRASH_RETENTION_MS, sharedTextToHtml, isNoteEmpty, dropEmptyNotes,
+  normalizeTag, sameTag, noteHasTag, collectTags, addTagTo, removeTagFrom,
+  matchesTagFilter, groupNotesByTag, tagGroupKey, UNTAGGED_KEY,
 } from './notes'
 
 const at = iso => iso
@@ -306,5 +308,179 @@ describe('dropEmptyNotes', () => {
   it('tolerates nullish input', () => {
     expect(dropEmptyNotes(null)).toEqual([])
     expect(dropEmptyNotes(undefined)).toEqual([])
+  })
+})
+
+describe('normalizeTag', () => {
+  it('strips a leading hash so #chem and chem are one tag', () => {
+    expect(normalizeTag('#chem')).toBe('chem')
+    expect(normalizeTag('##chem')).toBe('chem')
+  })
+
+  it('trims and collapses whitespace', () => {
+    expect(normalizeTag('  lab   report ')).toBe('lab report')
+  })
+
+  it('caps length at what the editor input accepts', () => {
+    expect(normalizeTag('x'.repeat(40))).toHaveLength(24)
+  })
+
+  it('returns empty for nothing usable', () => {
+    expect(normalizeTag('   ')).toBe('')
+    expect(normalizeTag('#')).toBe('')
+    expect(normalizeTag(null)).toBe('')
+  })
+})
+
+describe('sameTag / noteHasTag', () => {
+  it('compares case-insensitively', () => {
+    expect(sameTag('Chem', 'chem')).toBe(true)
+    expect(sameTag('chem', 'bio')).toBe(false)
+  })
+
+  it('compares normalized forms, so #chem matches chem', () => {
+    expect(sameTag('#Chem', ' chem ')).toBe(true)
+  })
+
+  it('finds a tag on a note regardless of casing', () => {
+    expect(noteHasTag(makeNote({ tags: ['Chem'] }), 'chem')).toBe(true)
+    expect(noteHasTag(makeNote({ tags: [] }), 'chem')).toBe(false)
+    expect(noteHasTag(null, 'chem')).toBe(false)
+  })
+})
+
+describe('collectTags', () => {
+  it('counts notes per tag and sorts by name', () => {
+    const tags = collectTags([
+      makeNote({ tags: ['chem', 'lab'] }),
+      makeNote({ tags: ['chem'] }),
+      makeNote({ tags: ['bio'] }),
+    ])
+    expect(tags).toEqual([
+      { tag: 'bio', count: 1 },
+      { tag: 'chem', count: 2 },
+      { tag: 'lab', count: 1 },
+    ])
+  })
+
+  it('collapses casing onto the first spelling seen', () => {
+    const tags = collectTags([makeNote({ tags: ['Chem'] }), makeNote({ tags: ['chem'] })])
+    expect(tags).toEqual([{ tag: 'Chem', count: 2 }])
+  })
+
+  it('counts a note once even if it carries the same tag twice', () => {
+    expect(collectTags([makeNote({ tags: ['chem', 'CHEM'] })])).toEqual([{ tag: 'chem', count: 1 }])
+  })
+
+  it('ignores trashed notes unless asked, so a chip never shows an empty group', () => {
+    const notes = [makeNote({ tags: ['chem'], trashedAt: '2026-01-01T00:00:00Z' })]
+    expect(collectTags(notes)).toEqual([])
+    expect(collectTags(notes, { includeTrashed: true })).toEqual([{ tag: 'chem', count: 1 }])
+  })
+
+  it('skips blank tags and tolerates nullish input', () => {
+    expect(collectTags([makeNote({ tags: ['', '  ', '#'] })])).toEqual([])
+    expect(collectTags(null)).toEqual([])
+  })
+})
+
+describe('addTagTo / removeTagFrom', () => {
+  it('adds a tag', () => {
+    expect(addTagTo(['chem'], 'lab')).toEqual(['chem', 'lab'])
+  })
+
+  it('returns the same array when the tag is already there in any casing', () => {
+    const tags = ['Chem']
+    expect(addTagTo(tags, 'chem')).toBe(tags)
+  })
+
+  it('normalizes on the way in', () => {
+    expect(addTagTo([], ' #Lab Report ')).toEqual(['Lab Report'])
+  })
+
+  it('refuses a blank tag', () => {
+    const tags = ['chem']
+    expect(addTagTo(tags, '  ')).toBe(tags)
+  })
+
+  it('removes case-insensitively', () => {
+    expect(removeTagFrom(['Chem', 'lab'], 'chem')).toEqual(['lab'])
+  })
+
+  it('tolerates nullish tag lists', () => {
+    expect(addTagTo(null, 'chem')).toEqual(['chem'])
+    expect(removeTagFrom(null, 'chem')).toEqual([])
+  })
+})
+
+describe('matchesTagFilter', () => {
+  const note = makeNote({ tags: ['chem', 'lab'] })
+
+  it('matches everything when nothing is selected', () => {
+    expect(matchesTagFilter(note, [])).toBe(true)
+    expect(matchesTagFilter(note, null)).toBe(true)
+  })
+
+  it('ORs several selected tags rather than ANDing them', () => {
+    expect(matchesTagFilter(note, ['chem', 'history'])).toBe(true)
+    expect(matchesTagFilter(makeNote({ tags: ['history'] }), ['chem', 'history'])).toBe(true)
+    expect(matchesTagFilter(makeNote({ tags: ['bio'] }), ['chem', 'history'])).toBe(false)
+  })
+})
+
+describe('groupNotesByTag', () => {
+  it('puts a multi-tagged note in every one of its groups', () => {
+    const groups = groupNotesByTag([makeNote({ id: 'a', tags: ['chem', 'lab'] })])
+    expect(groups.map(g => g.tag)).toEqual(['chem', 'lab'])
+    expect(groups.every(g => g.notes[0].id === 'a')).toBe(true)
+  })
+
+  it('orders groups by tag name', () => {
+    const groups = groupNotesByTag([
+      makeNote({ tags: ['zoology'] }),
+      makeNote({ tags: ['art'] }),
+      makeNote({ tags: ['music'] }),
+    ])
+    expect(groups.map(g => g.tag)).toEqual(['art', 'music', 'zoology'])
+  })
+
+  it('collects untagged notes into a last group with a null tag', () => {
+    const groups = groupNotesByTag([
+      makeNote({ id: 'untagged' }),
+      makeNote({ id: 'tagged', tags: ['chem'] }),
+    ])
+    expect(groups.map(g => g.tag)).toEqual(['chem', null])
+    expect(groups.at(-1).key).toBe(UNTAGGED_KEY)
+    expect(groups.at(-1).notes.map(n => n.id)).toEqual(['untagged'])
+  })
+
+  it('omits the untagged group entirely when everything is tagged', () => {
+    const groups = groupNotesByTag([makeNote({ tags: ['chem'] })])
+    expect(groups).toHaveLength(1)
+  })
+
+  it('sorts pinned notes to the top within a group', () => {
+    const groups = groupNotesByTag([
+      makeNote({ id: 'old',    tags: ['chem'], updatedAt: '2026-01-01T00:00:00Z' }),
+      makeNote({ id: 'pinned', tags: ['chem'], pinned: true, updatedAt: '2020-01-01T00:00:00Z' }),
+    ])
+    expect(groups[0].notes.map(n => n.id)).toEqual(['pinned', 'old'])
+  })
+
+  it('lists a note once per group even when it repeats a tag', () => {
+    const groups = groupNotesByTag([makeNote({ id: 'a', tags: ['chem', 'CHEM'] })])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].notes).toHaveLength(1)
+  })
+
+  it('keys tag groups so they cannot collide with the untagged bucket', () => {
+    const groups = groupNotesByTag([makeNote({ tags: ['untagged'] }), makeNote({ id: 'plain' })])
+    const keys = groups.map(g => g.key)
+    expect(keys).toEqual([tagGroupKey('untagged'), UNTAGGED_KEY])
+    expect(new Set(keys).size).toBe(2)
+  })
+
+  it('tolerates nullish input', () => {
+    expect(groupNotesByTag(null)).toEqual([])
   })
 })

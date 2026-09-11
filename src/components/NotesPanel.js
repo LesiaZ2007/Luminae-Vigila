@@ -28,11 +28,13 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import {
   Plus, Search, Star, Pin, Bell, Trash2, ArrowLeft, NotebookPen,
-  RotateCcw, X, Link2,
+  RotateCcw, X, Link2, Tags, ChevronRight, ChevronDown,
 } from 'lucide-react'
 import NoteEditor from '@/components/NoteEditor'
 import {
-  noteDisplayTitle, notePreview, sortNotes, noteMatches,
+  noteDisplayTitle, notePreview, sortNotes, noteMatches, collectTags,
+  matchesTagFilter, groupNotesByTag, sameTag, UNTAGGED_KEY,
+  loadFurledTags, saveFurledTags, loadTagGrouping, saveTagGrouping,
 } from '@/lib/notes'
 
 const FILTERS = [
@@ -48,7 +50,29 @@ export default function NotesPanel({
 }) {
   const [query,  setQuery]  = useState('')
   const [filter, setFilter] = useState('all')
-  const [tag,    setTag]    = useState(null)
+  // Several tags can be active at once — see matchesTagFilter for why that ORs.
+  const [tags,   setTags]   = useState(() => [])
+
+  // Grouping and furling are view state, restored from localStorage rather than
+  // synced (see lib/notes.js). The panel is client-only (`ssr: false` in page.js),
+  // so reading storage in the initializer is safe.
+  const [grouped, setGrouped] = useState(loadTagGrouping)
+  const [furled,  setFurled]  = useState(() => new Set(loadFurledTags()))
+
+  useEffect(() => { saveTagGrouping(grouped) }, [grouped])
+  useEffect(() => { saveFurledTags([...furled]) }, [furled])
+
+  const toggleTag = useCallback(t => {
+    setTags(prev => (prev.some(x => sameTag(x, t)) ? prev.filter(x => !sameTag(x, t)) : [...prev, t]))
+  }, [])
+
+  const toggleFurl = useCallback(key => {
+    setFurled(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }, [])
 
   // Ids currently playing their removal animation. The note is still in `notes`
   // during this window — we hold the parent's delete until the row has collapsed,
@@ -69,23 +93,28 @@ export default function NotesPanel({
   const handlePurge   = useCallback(id => animateOut(id, onPurge),   [animateOut, onPurge])
   const handleRestore = useCallback(id => animateOut(id, onRestore), [animateOut, onRestore])
 
-  const allTags = useMemo(() => {
-    const seen = new Map() // lowercase → original casing, so "Chem" and "chem" collapse
-    for (const n of notes) {
-      if (n.trashedAt) continue
-      for (const t of n.tags ?? []) if (!seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t)
-    }
-    return [...seen.values()].sort((a, b) => a.localeCompare(b))
-  }, [notes])
+  // { tag, count }[] — counts are of live notes, so a chip never promises rows
+  // it can't show.
+  const allTags = useMemo(() => collectTags(notes), [notes])
 
   const visible = useMemo(() => {
     const inScope = notes.filter(n => (filter === 'trash' ? !!n.trashedAt : !n.trashedAt))
     const filtered = inScope
       .filter(n => (filter === 'starred' ? n.starred : true))
-      .filter(n => (tag ? (n.tags ?? []).some(t => t.toLowerCase() === tag.toLowerCase()) : true))
+      .filter(n => matchesTagFilter(n, tags))
       .filter(n => noteMatches(n, query))
     return sortNotes(filtered)
-  }, [notes, filter, tag, query])
+  }, [notes, filter, tags, query])
+
+  // Grouping is for browsing the live list; Trash is a flat "what did I throw
+  // away" view and stays one list.
+  const showGroups = grouped && filter !== 'trash'
+  const groups     = useMemo(() => (showGroups ? groupNotesByTag(visible) : []), [showGroups, visible])
+
+  const allFurled = groups.length > 0 && groups.every(g => furled.has(g.key))
+  const furlAll   = useCallback(() => {
+    setFurled(prev => (allFurled ? new Set() : new Set(groups.map(g => g.key))))
+  }, [allFurled, groups])
 
   const activeNote = notes.find(n => n.id === activeNoteId && !n.trashedAt) ?? null
   const trashCount = notes.filter(n => n.trashedAt).length
@@ -141,7 +170,7 @@ export default function NotesPanel({
             </div>
 
             {/* Filters */}
-            <div style={{ display: 'flex', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
               {FILTERS.map(f => {
                 if (f.id === 'trash' && trashCount === 0) return null
                 const active = filter === f.id
@@ -158,15 +187,39 @@ export default function NotesPanel({
                   </button>
                 )
               })}
+
+              <div style={{ flex: 1 }} />
+
+              {/* Group by tag. Hidden until there's a tag to group by, so the
+                  control never appears as a toggle that does nothing. */}
+              {allTags.length > 0 && filter !== 'trash' && (
+                <button
+                  onClick={() => setGrouped(v => !v)}
+                  title={grouped ? 'Show one flat list' : 'Group notes by tag'}
+                  aria-label={grouped ? 'Show one flat list' : 'Group notes by tag'}
+                  aria-pressed={grouped}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px',
+                    borderRadius: 999, cursor: 'pointer', flexShrink: 0,
+                    border: `1px solid ${grouped ? 'var(--blue)' : 'var(--border)'}`,
+                    background: grouped ? 'var(--blue-bg)' : 'transparent',
+                    color: grouped ? 'var(--blue-text)' : 'var(--text-3)',
+                    fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700,
+                  }}>
+                  <Tags size={12} /> Group
+                </button>
+              )}
             </div>
 
-            {/* Tag chips */}
+            {/* Tag chips — multi-select, so two subjects can be on screen at once */}
             {allTags.length > 0 && filter !== 'trash' && (
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8 }}>
-                {allTags.map(t => {
-                  const active = tag?.toLowerCase() === t.toLowerCase()
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+                {allTags.map(({ tag: t, count }) => {
+                  const active = tags.some(x => sameTag(x, t))
                   return (
-                    <button key={t} onClick={() => setTag(active ? null : t)}
+                    <button key={t} onClick={() => toggleTag(t)}
+                            aria-pressed={active}
+                            title={`${count} note${count === 1 ? '' : 's'} tagged ${t}`}
                             style={{
                               padding: '2px 8px', borderRadius: 999, cursor: 'pointer',
                               border: `1px solid ${active ? 'var(--blue)' : 'var(--border)'}`,
@@ -174,10 +227,37 @@ export default function NotesPanel({
                               color: active ? 'var(--blue-text)' : 'var(--text-3)',
                               fontFamily: 'inherit', fontSize: '0.66rem', fontWeight: 700,
                             }}>
-                      {t}
+                      {t} <span style={{ opacity: .65 }}>{count}</span>
                     </button>
                   )
                 })}
+                {tags.length > 0 && (
+                  <button onClick={() => setTags([])}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 3, padding: '2px 6px',
+                            borderRadius: 999, border: 'none', background: 'transparent',
+                            color: 'var(--text-3)', cursor: 'pointer',
+                            fontFamily: 'inherit', fontSize: '0.64rem', fontWeight: 700,
+                          }}>
+                    <X size={10} /> Clear
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Furl-everything shortcut. Only useful once the list is grouped. */}
+            {showGroups && groups.length > 0 && (
+              <div style={{ display: 'flex', marginTop: 8 }}>
+                <button onClick={furlAll}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px',
+                          borderRadius: 7, border: 'none', background: 'transparent',
+                          color: 'var(--text-3)', cursor: 'pointer',
+                          fontFamily: 'inherit', fontSize: '0.64rem', fontWeight: 700,
+                        }}>
+                  {allFurled ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  {allFurled ? 'Unfurl all' : 'Furl all'}
+                </button>
               </div>
             )}
           </div>
@@ -185,7 +265,32 @@ export default function NotesPanel({
           {/* List */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 10px 12px' }}>
             {visible.length === 0 ? (
-              <EmptyState filter={filter} query={query} onCreate={onCreate} />
+              <EmptyState filter={filter} query={query} tags={tags} onCreate={onCreate} />
+            ) : showGroups ? (
+              groups.map(group => {
+                const isFurled = furled.has(group.key)
+                return (
+                  <div key={group.key} style={{ marginBottom: 4 }}>
+                    <GroupHeader
+                      group={group}
+                      furled={isFurled}
+                      onToggle={() => toggleFurl(group.key)}
+                    />
+                    {!isFurled && group.notes.map(note => (
+                      <NoteRow
+                        key={note.id}
+                        note={note}
+                        indented
+                        active={note.id === activeNoteId}
+                        trashed={false}
+                        exiting={exitingIds.has(note.id)}
+                        onClick={() => onSelect(note.id)}
+                        onToggleStar={() => onUpdate(note.id, { starred: !note.starred })}
+                      />
+                    ))}
+                  </div>
+                )
+              })
             ) : visible.map(note => (
               <NoteRow
                 key={note.id}
@@ -229,6 +334,7 @@ export default function NotesPanel({
                 onChange={patch => onUpdate(activeNote.id, patch)}
                 onDelete={() => handleTrash(activeNote.id)}
                 onConvert={onConvert}
+                knownTags={allTags.map(t => t.tag)}
                 linkOptions={linkOptions}
                 isMobile={isMobile}
                 pushToast={pushToast}
@@ -253,8 +359,49 @@ export default function NotesPanel({
   )
 }
 
+// ── A furlable tag group header ─────────────────────────────────────────────
+//
+// Sticky, so that scrolling through a long group still tells you which tag
+// you're inside. Furling collapses the group to this one row — the whole point
+// of the grouped view is that a tag you're not working on costs 28px, not a
+// screenful.
+function GroupHeader({ group, furled, onToggle }) {
+  const label = group.tag ?? 'Untagged'
+  const Chevron = furled ? ChevronRight : ChevronDown
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!furled}
+      aria-label={`${furled ? 'Unfurl' : 'Furl'} ${label} (${group.notes.length} note${group.notes.length === 1 ? '' : 's'})`}
+      className="lv-focusable"
+      style={{
+        position: 'sticky', top: 0, zIndex: 1,
+        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+        padding: '6px 8px', marginBottom: 2, borderRadius: 8,
+        border: 'none', background: 'var(--surface)', cursor: 'pointer',
+        fontFamily: 'inherit', textAlign: 'left',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+      onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+    >
+      <Chevron size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+      <span style={{
+        flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        fontSize: '0.72rem', fontWeight: 800, letterSpacing: '.02em',
+        color: group.tag ? 'var(--text-2)' : 'var(--text-3)',
+      }}>
+        {label}
+      </span>
+      <span style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--text-3)', flexShrink: 0 }}>
+        {group.notes.length}
+      </span>
+    </button>
+  )
+}
+
 // ── One row in the note list ────────────────────────────────────────────────
-function NoteRow({ note, active, trashed, exiting, onClick, onToggleStar, onRestore, onPurge }) {
+function NoteRow({ note, active, trashed, exiting, indented = false, onClick, onToggleStar, onRestore, onPurge }) {
   const preview = notePreview(note, 90)
   const tags    = note.tags ?? []
   return (
@@ -273,6 +420,7 @@ function NoteRow({ note, active, trashed, exiting, onClick, onToggleStar, onRest
       className={`lv-focusable ${exiting ? 'lv-note-row-exit' : 'lv-note-row-enter'}`}
       style={{
         display: 'flex', gap: 8, padding: '9px 10px', borderRadius: 10, marginBottom: 3,
+        marginLeft: indented ? 10 : 0,
         cursor: trashed ? 'default' : 'pointer',
         background: active ? 'var(--blue-bg)' : 'transparent',
         border: `1px solid ${active ? 'var(--blue)' : 'transparent'}`,
@@ -359,9 +507,10 @@ function IconBtn({ title, onClick, children }) {
   )
 }
 
-function EmptyState({ filter, query, onCreate }) {
+function EmptyState({ filter, query, tags = [], onCreate }) {
   const message =
-    query          ? 'No notes match that search.' :
+    query                ? 'No notes match that search.' :
+    tags.length > 0      ? `Nothing tagged ${tags.join(' or ')}.` :
     filter === 'starred' ? 'No starred notes yet.' :
     filter === 'trash'   ? 'Trash is empty.' :
                            'No notes yet.'
@@ -369,7 +518,7 @@ function EmptyState({ filter, query, onCreate }) {
     <div style={{ padding: '28px 14px', textAlign: 'center', color: 'var(--text-3)' }}>
       <NotebookPen size={26} style={{ opacity: .45, marginBottom: 8 }} />
       <div style={{ fontSize: '0.78rem', fontWeight: 700, marginBottom: 4 }}>{message}</div>
-      {filter === 'all' && !query && (
+      {filter === 'all' && !query && tags.length === 0 && (
         <>
           <div style={{ fontSize: '0.7rem', marginBottom: 10 }}>Jot down anything — it syncs across your devices.</div>
           <button onClick={onCreate}
