@@ -33,7 +33,7 @@ import {
 import NoteEditor from '@/components/NoteEditor'
 import {
   noteDisplayTitle, notePreview, sortNotes, noteMatches, collectTags,
-  matchesTagFilter, groupNotesByTag, sameTag, UNTAGGED_KEY,
+  matchesTagFilter, groupNotesByTag, foldFurledTags, sameTag, tagGroupKey,
   loadFurledTags, saveFurledTags, loadTagGrouping, saveTagGrouping,
 } from '@/lib/notes'
 
@@ -107,14 +107,49 @@ export default function NotesPanel({
   }, [notes, filter, tags, query])
 
   // Grouping is for browsing the live list; Trash is a flat "what did I throw
-  // away" view and stays one list.
-  const showGroups = grouped && filter !== 'trash'
-  const groups     = useMemo(() => (showGroups ? groupNotesByTag(visible) : []), [showGroups, visible])
+  // away" view and stays one list — and furling there would hide exactly what
+  // you came to look at, so neither applies to it.
+  const canFurl    = filter !== 'trash'
+  const showGroups = grouped && canFurl
 
-  const allFurled = groups.length > 0 && groups.every(g => furled.has(g.key))
+  /**
+   * Asking to see a tag beats having furled it.
+   *
+   * Clicking a tag chip to filter by it is a direct request for those notes;
+   * leaving them folded away behind a bundle row would be answering a question
+   * with a shrug. The furl itself is remembered — clear the filter and the tag
+   * is folded up again.
+   */
+  const effectiveFurl = useMemo(() => {
+    if (!canFurl) return new Set()
+    const selected = new Set(tags.map(tagGroupKey))
+    return new Set([...furled].filter(k => !selected.has(k)))
+  }, [furled, tags, canFurl])
+
+  const groups = useMemo(() => (showGroups ? groupNotesByTag(visible) : []), [showGroups, visible])
+
+  // The flat list is a mix of note rows and one-row stand-ins for furled tags.
+  const items = useMemo(
+    () => (showGroups ? [] : foldFurledTags(visible, effectiveFurl)),
+    [showGroups, visible, effectiveFurl],
+  )
+
+  // Furl-all covers whatever is furlable in the current view: every group when
+  // grouped (Untagged included), every tag when flat.
+  const furlTargets = useMemo(
+    () => (showGroups ? groups.map(g => g.key) : allTags.map(t => tagGroupKey(t.tag))),
+    [showGroups, groups, allTags],
+  )
+  const allFurled = furlTargets.length > 0 && furlTargets.every(k => furled.has(k))
   const furlAll   = useCallback(() => {
-    setFurled(prev => (allFurled ? new Set() : new Set(groups.map(g => g.key))))
-  }, [allFurled, groups])
+    setFurled(prev => {
+      const next = new Set(prev)
+      for (const key of furlTargets) {
+        if (allFurled) next.delete(key); else next.add(key)
+      }
+      return next
+    })
+  }, [allFurled, furlTargets])
 
   const activeNote = notes.find(n => n.id === activeNoteId && !n.trashedAt) ?? null
   const trashCount = notes.filter(n => n.trashedAt).length
@@ -211,24 +246,46 @@ export default function NotesPanel({
               )}
             </div>
 
-            {/* Tag chips — multi-select, so two subjects can be on screen at once */}
+            {/* Tag chips — multi-select filtering on the left half, furl on the
+                right. Two buttons rather than one because a chip does two
+                different things, and a click has to mean one of them. */}
             {allTags.length > 0 && filter !== 'trash' && (
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
                 {allTags.map(({ tag: t, count }) => {
-                  const active = tags.some(x => sameTag(x, t))
+                  const active   = tags.some(x => sameTag(x, t))
+                  const key      = tagGroupKey(t)
+                  const isFurled = furled.has(key)
                   return (
-                    <button key={t} onClick={() => toggleTag(t)}
-                            aria-pressed={active}
-                            title={`${count} note${count === 1 ? '' : 's'} tagged ${t}`}
-                            style={{
-                              padding: '2px 8px', borderRadius: 999, cursor: 'pointer',
-                              border: `1px solid ${active ? 'var(--blue)' : 'var(--border)'}`,
-                              background: active ? 'var(--blue-bg)' : 'transparent',
-                              color: active ? 'var(--blue-text)' : 'var(--text-3)',
-                              fontFamily: 'inherit', fontSize: '0.66rem', fontWeight: 700,
-                            }}>
-                      {t} <span style={{ opacity: .65 }}>{count}</span>
-                    </button>
+                    <span key={t} style={{
+                      display: 'inline-flex', alignItems: 'center', borderRadius: 999,
+                      border: `1px solid ${active ? 'var(--blue)' : 'var(--border)'}`,
+                      background: active ? 'var(--blue-bg)' : 'transparent',
+                      overflow: 'hidden',
+                    }}>
+                      <button onClick={() => toggleTag(t)}
+                              aria-pressed={active}
+                              title={`Show only notes tagged ${t} (${count})`}
+                              style={{
+                                padding: '2px 4px 2px 8px', border: 'none', background: 'transparent',
+                                cursor: 'pointer', color: active ? 'var(--blue-text)' : 'var(--text-3)',
+                                fontFamily: 'inherit', fontSize: '0.66rem', fontWeight: 700,
+                              }}>
+                        {t} <span style={{ opacity: .65 }}>{count}</span>
+                      </button>
+                      <button onClick={() => toggleFurl(key)}
+                              aria-label={isFurled ? `Unfurl ${t}` : `Furl ${t}`}
+                              aria-pressed={isFurled}
+                              title={isFurled
+                                ? `Unfurl ${t} — show its notes in the list again`
+                                : `Furl ${t} — collapse its notes into one row`}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '2px 5px 2px 3px',
+                                border: 'none', background: 'transparent', cursor: 'pointer',
+                                color: isFurled ? 'var(--blue-text)' : 'var(--text-3)',
+                              }}>
+                        {isFurled ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                      </button>
+                    </span>
                   )
                 })}
                 {tags.length > 0 && (
@@ -245,8 +302,8 @@ export default function NotesPanel({
               </div>
             )}
 
-            {/* Furl-everything shortcut. Only useful once the list is grouped. */}
-            {showGroups && groups.length > 0 && (
+            {/* Furl-everything shortcut. */}
+            {canFurl && furlTargets.length > 0 && (
               <div style={{ display: 'flex', marginTop: 8 }}>
                 <button onClick={furlAll}
                         style={{
@@ -268,7 +325,7 @@ export default function NotesPanel({
               <EmptyState filter={filter} query={query} tags={tags} onCreate={onCreate} />
             ) : showGroups ? (
               groups.map(group => {
-                const isFurled = furled.has(group.key)
+                const isFurled = effectiveFurl.has(group.key)
                 return (
                   <div key={group.key} style={{ marginBottom: 4 }}>
                     <GroupHeader
@@ -291,18 +348,27 @@ export default function NotesPanel({
                   </div>
                 )
               })
-            ) : visible.map(note => (
-              <NoteRow
-                key={note.id}
-                note={note}
-                active={note.id === activeNoteId && filter !== 'trash'}
-                trashed={filter === 'trash'}
-                exiting={exitingIds.has(note.id)}
-                onClick={() => (filter === 'trash' ? null : onSelect(note.id))}
-                onToggleStar={() => onUpdate(note.id, { starred: !note.starred })}
-                onRestore={() => handleRestore(note.id)}
-                onPurge={() => handlePurge(note.id)}
-              />
+            ) : items.map(item => (
+              item.type === 'bundle' ? (
+                <FurledBundle
+                  key={item.key}
+                  bundle={item}
+                  hasActive={item.notes.some(n => n.id === activeNoteId)}
+                  onUnfurl={() => toggleFurl(item.key)}
+                />
+              ) : (
+                <NoteRow
+                  key={item.note.id}
+                  note={item.note}
+                  active={item.note.id === activeNoteId && filter !== 'trash'}
+                  trashed={filter === 'trash'}
+                  exiting={exitingIds.has(item.note.id)}
+                  onClick={() => (filter === 'trash' ? null : onSelect(item.note.id))}
+                  onToggleStar={() => onUpdate(item.note.id, { starred: !item.note.starred })}
+                  onRestore={() => handleRestore(item.note.id)}
+                  onPurge={() => handlePurge(item.note.id)}
+                />
+              )
             ))}
           </div>
         </div>
@@ -356,6 +422,57 @@ export default function NotesPanel({
         </div>
       )}
     </div>
+  )
+}
+
+// ── A furled tag, standing in for its notes in the flat list ────────────────
+//
+// Deliberately the size of one note row: that is the deal furling offers — a
+// tag you're not working on today costs you one row instead of a screenful,
+// and it sits exactly where its notes were rather than being banished to the
+// bottom, so the list doesn't jump around as you furl and unfurl.
+function FurledBundle({ bundle, hasActive, onUnfurl }) {
+  const count  = bundle.notes.length
+  // A few of the member notes' spines, stacked — enough of a hint that this row
+  // is standing in for several notes rather than being one odd note.
+  const spines = bundle.notes.slice(0, 3).map(n => n.color)
+  return (
+    <button
+      type="button"
+      onClick={onUnfurl}
+      aria-expanded={false}
+      aria-label={`Unfurl ${bundle.tag} (${count} note${count === 1 ? '' : 's'})`}
+      className="lv-focusable lv-note-row-enter"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+        padding: '9px 10px', borderRadius: 10, marginBottom: 3,
+        border: '1px dashed var(--border)', background: 'transparent',
+        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        transition: 'background .12s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+    >
+      <span style={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+        {spines.map((c, i) => (
+          <span key={i} style={{ width: 3, height: 18, borderRadius: 2, background: c, opacity: 1 - i * 0.28 }} />
+        ))}
+      </span>
+      <ChevronRight size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+      <span style={{
+        flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-2)',
+      }}>
+        {bundle.tag}
+      </span>
+      {/* Without this, opening a note and then furling its tag looks like the
+          note was closed — the editor is still showing something the list no
+          longer admits to having. */}
+      {hasActive && <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }} />}
+      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-3)', flexShrink: 0 }}>
+        {count} note{count === 1 ? '' : 's'}
+      </span>
+    </button>
   )
 }
 
