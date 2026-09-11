@@ -250,6 +250,23 @@ describe('furling in the ordinary list', () => {
     expect(screen.getByText('Titration')).toBeInTheDocument()
   })
 
+  // "Furl one category at a time" — furling chem must not take the chem+lab
+  // note away from lab as well.
+  it('furls one tag at a time, leaving multi-tag notes their other homes', async () => {
+    render(<NotesPanel {...noop} notes={[
+      ...notes,
+      note({ id: 'e', title: 'Buffer prep', tags: ['chem', 'lab'] }),
+    ]} />)
+    await userEvent.click(furlChip('chem'))
+
+    expect(screen.getByText('Buffer prep')).toBeInTheDocument()
+    expect(screen.queryByText('Titration')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unfurl chem (2 notes)' })).toBeInTheDocument()
+
+    await userEvent.click(furlChip('lab'))
+    expect(screen.queryByText('Buffer prep')).not.toBeInTheDocument()
+  })
+
   it('never furls anything in Trash', async () => {
     render(<NotesPanel {...noop} notes={[
       ...notes,

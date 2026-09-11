@@ -378,10 +378,15 @@ export function groupNotesByTag(notes) {
  *   { type: 'bundle', key, tag, notes }   ← one row standing in for its notes
  *
  * A bundle is emitted at the position of the first note it swallows, so the
- * list doesn't reshuffle when you furl — the tag collapses in place. A note
- * carrying two furled tags is emitted once (by whichever bundle reaches it
- * first) but counted in both, because each bundle is honestly reporting how
- * many notes wear that tag.
+ * list doesn't reshuffle when you furl — the tag collapses in place.
+ *
+ * **Furling one tag folds away only what belongs to that tag alone.** A note
+ * tagged `chem` *and* `lab` stays in the list while `lab` is still unfurled:
+ * you furled one category, and taking a second category's notes with it would
+ * make furling feel like it reaches further than you asked. Such a note folds
+ * up once every tag it carries is furled, and is then listed once (under the
+ * first of its bundles) but counted in each — every bundle reports what it is
+ * actually standing in for.
  */
 export function foldFurledTags(sortedNotes, furledKeys) {
   const notes  = sortedNotes ?? []
@@ -389,25 +394,32 @@ export function foldFurledTags(sortedNotes, furledKeys) {
   const asRow  = note => ({ type: 'note', key: note.id, note })
   if (furled.size === 0) return notes.map(asRow)
 
-  const furledKeysOf = note => {
+  const tagKeysOf = note => {
     const keys = []
     for (const raw of note?.tags ?? []) {
       const tag = normalizeTag(raw)
       if (!tag) continue
       const key = tagGroupKey(tag)
-      if (furled.has(key) && !keys.includes(key)) keys.push(key)
+      if (!keys.includes(key)) keys.push(key)
     }
     return keys
   }
 
-  // Counts first, so a bundle can state its full size the moment it's emitted.
+  // A note folds away only when it has nowhere left to show: every one of its
+  // tags is furled. An untagged note is never foldable.
+  const foldedKeysOf = note => {
+    const keys = tagKeysOf(note)
+    return keys.length > 0 && keys.every(k => furled.has(k)) ? keys : []
+  }
+
+  // Counts first, so a bundle can state its size the moment it's emitted.
   const bundles = new Map() // key → { key, tag, notes }
   for (const note of notes) {
     for (const raw of note?.tags ?? []) {
       const tag = normalizeTag(raw)
       if (!tag) continue
       const key = tagGroupKey(tag)
-      if (!furled.has(key)) continue
+      if (!furled.has(key) || !foldedKeysOf(note).includes(key)) continue
       const bundle = bundles.get(key)
       if (!bundle) bundles.set(key, { key, tag, notes: [note] })
       else if (!bundle.notes.includes(note)) bundle.notes.push(note)
@@ -417,7 +429,7 @@ export function foldFurledTags(sortedNotes, furledKeys) {
   const items   = []
   const emitted = new Set()
   for (const note of notes) {
-    const keys = furledKeysOf(note)
+    const keys = foldedKeysOf(note)
     if (keys.length === 0) { items.push(asRow(note)); continue }
     for (const key of keys) {
       if (emitted.has(key)) continue
