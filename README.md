@@ -1071,6 +1071,27 @@ they were getting it wrong in the same two ways.
 - **`TimePicker` is now portaled.** It was `position: absolute` inside the trigger's wrapper, which meant any scrolling ancestor (the note editor's meta bar, modals) clipped it and it could only ever open downward, off the bottom of the screen. It now renders to `document.body` like `DatePicker`. Outside-click detection tests the popover *and* the trigger, so tapping the clock face no longer counts as clicking away
 - Recalculates on scroll (captured on **any** ancestor, not just the window), on resize, and on `visualViewport` resize — which is what actually fires when a mobile keyboard opens
 
+### ⏰ Setting a time, by hand or by clock
+
+`TimePicker` offers the same time two ways — a text field you type into and a radial
+clock you drag — and both were awkward in ways that pushed you to the other one.
+
+**Typing.**
+
+- **The field opens empty-with-a-placeholder, not pre-filled.** It used to open holding `3:30 PM` with the caret dropped mid-string, so the first keystroke appended to it and you had to select-all before you could type. Same bug on the clock's own hour and minute boxes
+- **The parser accepts how people actually type a time.** `330p`, `1530`, `930`, `3.30 pm`, `3:5`, `7 45`, `3h30`, `p.m.` with the dots, plus `noon` and `midnight`. It used to accept three tidy shapes only — `15:30`, `3:30 PM`, `9` — and anything else reverted silently on blur, with nothing to say why
+- **It shows what your text will become** in grey beside the field as you type, so `330p` is confirmed as *3:30 PM* before it commits, not after
+- **Text it can't read is marked red and kept.** Enter on unparseable text leaves the caret where it is instead of discarding what you typed. Opening the clock while mid-edit commits the text rather than throwing it away
+- **Digits typed on the clock face advance by themselves.** `9` is a complete hour and moves to minutes; `1` waits for a second digit. Typing `13`–`23` in the hour box is read as 24-hour time and flips to PM rather than being rejected. The advance is synchronous on purpose — on a timer, typing `930` quickly landed the `3` while the hour box was still up, where it read as hour `93` and was thrown away
+
+**The clock face.**
+
+- **It works on a touchscreen.** The face set `touchAction: 'none'` but listened only for `mousedown`/`mousemove`, so dragging the hand did *nothing* on a phone — the one device where a radial clock is the better input. It's on pointer events now, with pointer capture, which also means the drag survives your finger leaving the dial
+- **There's a dead zone in the middle.** A press near the centre has no meaningful angle, and used to snap the hand to whatever `atan2` returned — so a stray click in the middle of the dial silently changed the time
+- **Minutes aren't locked to multiples of five.** The whole ring used to snap to the twelve labels, which made 7:20 easy and 7:22 impossible without typing. Minutes now resolve to the exact minute under the pointer and snap to a label only when you're actually on one, so the gaps between labels are where odd minutes live. An off-label minute draws the hand at its true angle with a dot at the tip, since there is no number under it to highlight
+- **Keyboard works throughout.** `↑`/`↓` nudge the selected field (`⇧` for five minutes at a time), `←`/`→` switch between hours and minutes, `a`/`p` set AM/PM, digits start typing, `Esc` cancels a half-typed entry and then closes, `Enter` accepts. On the closed field, `↑`/`↓` nudge by five minutes without opening anything
+- **One auto-advance, not two.** Picking an hour armed a timer from both the label's `onClick` *and* the window `mouseup`, so every tap set two
+
 ### 🔖 The calendar stays where you left it
 
 Leave the calendar for Notes or Tasks and come back, and it reopens on the same view and the same dates. It used to reset to today in the default view, because the calendar is unmounted whenever you switch tabs (`activeNav === 'calendar' && …`) — so everything it was showing was thrown away. Survives a page reload too.
