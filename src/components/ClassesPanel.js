@@ -59,6 +59,7 @@ import { courseGradeSummary, gradeColor } from '@/lib/grades'
 import { getCourseColor, CANVAS_COLOR }   from '@/lib/courseColors'
 import { describeLocation }  from '@/lib/maps'
 import { buildCourseworkItems } from '@/lib/classCalendar'
+import { visibleSubtasks }    from '@/lib/todoMerge'
 import { toYMDLocal }        from '@/lib/calendarView'
 
 /** One icon per `describeLocation` kind — a Zoom class is not a place on a map. */
@@ -214,23 +215,38 @@ function IconButton({ icon: Icon, label, onClick, active, spinning, disabled }) 
  * A task as it appears inside a class card.
  *
  * Deliberately thinner than the To-Do panel's row — no drag handle, no swipe, no
- * subtask tree. This is a read-and-jump view: tick it off, or click through to the
- * real editor. Reimplementing the full row here would mean two rows to keep in step.
+ * inline composer. Reimplementing the full row here would mean two rows to keep
+ * in step.
+ *
+ * Its steps are the exception. A task with subtasks is the one kind whose row
+ * doesn't say enough on its own: "Lab report" tells you nothing about how much of
+ * it is left, and the only way to find out was to open the editor over the whole
+ * panel and close it again. So a row with steps unfurls in place instead of
+ * jumping, and the editor moves one click inside — the same trade the calendar
+ * chips already make. Rows without steps still go straight there; there is
+ * nothing to unfurl.
  */
-function TaskRow({ todo, color, onToggle, onClick }) {
-  const [hovered, setHovered] = useState(false)
+function TaskRow({ todo, color, onToggle, onToggleSubtask, onClick }) {
+  const [hovered, setHovered]   = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const due  = dueLabel(todo.dueDate)
   const done = !!todo.completed
 
+  /* Deleted subtasks stay in the array as tombstones so the deletion can sync —
+     every read has to go through visibleSubtasks or the count lies. */
+  const subtasks  = visibleSubtasks(todo)
+  const hasSteps  = subtasks.length > 0
+  const doneSteps = subtasks.filter(s => s.completed).length
+
   return (
     <div
-      onClick={() => onClick?.(todo)}
+      onClick={() => (hasSteps ? setExpanded(v => !v) : onClick?.(todo))}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'flex', alignItems: 'flex-start', gap: 9, padding: '7px 10px',
         borderRadius: 8, cursor: 'pointer', transition: 'background .12s',
-        background: hovered ? 'var(--surface2)' : 'transparent',
+        background: hovered || expanded ? 'var(--surface2)' : 'transparent',
       }}
     >
       <button
@@ -252,10 +268,77 @@ function TaskRow({ todo, color, onToggle, onClick }) {
         }}>
           {todo.title}
         </div>
-        {due && !done && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, fontSize: '0.71rem', fontWeight: 500, color: dueColor(due.tone) }}>
-            {due.tone !== 'plain' && <AlertCircle size={10} />}
-            {due.label}
+
+        {((due && !done) || hasSteps) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginTop: 3 }}>
+            {due && !done && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.71rem', fontWeight: 500, color: dueColor(due.tone) }}>
+                {due.tone !== 'plain' && <AlertCircle size={10} />}
+                {due.label}
+              </span>
+            )}
+            {hasSteps && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+                aria-expanded={expanded}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                  background: color + '18', color, border: 'none', cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {doneSteps}/{subtasks.length} step{subtasks.length !== 1 ? 's' : ''}
+                <svg width="8" height="8" viewBox="0 0 10 10" style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }}>
+                  <path d="M1 3l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
+
+        {expanded && hasSteps && (
+          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 4 }}
+               onClick={e => e.stopPropagation()}>
+            {subtasks.map(st => (
+              <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <button
+                  type="button"
+                  onClick={() => onToggleSubtask?.(todo.id, st.id)}
+                  title={st.completed ? 'Mark step not done' : 'Mark step done'}
+                  style={{
+                    flexShrink: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    display: 'flex', color: st.completed ? color : 'var(--text-3)',
+                    transition: 'color .15s',
+                  }}
+                >
+                  {st.completed ? <CircleCheck size={14} /> : <Circle size={14} strokeWidth={1.5} />}
+                </button>
+                <span style={{
+                  fontSize: '0.76rem', lineHeight: 1.3,
+                  color: st.completed ? 'var(--text-3)' : 'var(--text-2)',
+                  textDecoration: st.completed ? 'line-through' : 'none',
+                }}>
+                  {st.title}
+                </span>
+              </div>
+            ))}
+
+            {/* The jump the row itself no longer makes. */}
+            <button
+              type="button"
+              onClick={() => onClick?.(todo)}
+              style={{
+                alignSelf: 'flex-start', marginTop: 2, padding: 0, background: 'none',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '0.68rem', fontWeight: 600, color: 'var(--text-3)',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = color }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)' }}
+            >
+              Edit task →
+            </button>
           </div>
         )}
       </div>
@@ -304,7 +387,7 @@ function MeetingRow({ ev, onClick }) {
 
 function ClassCard({
   entry, todos, meetings, assignments, notes, studySessions, now, weekOnly,
-  defaultOpen, onEdit, onSaveReminders, onAdoptCourse, onTodoClick, onToggleTodo, onAddTask,
+  defaultOpen, onEdit, onSaveReminders, onAdoptCourse, onTodoClick, onToggleTodo, onToggleSubtask, onAddTask,
   onEventClick, onOpenNote, onCreateLinkedNote, onToggleAssignment, onAssignmentDetail,
   selectMode, selectedIds, onToggleSelect, isMobile,
 }) {
@@ -640,7 +723,7 @@ function ClassCard({
                 </p>
               ) : (
                 shownTasks.map(t => (
-                  <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onClick={onTodoClick} />
+                  <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onToggleSubtask={onToggleSubtask} onClick={onTodoClick} />
                 ))
               )}
 
@@ -654,7 +737,7 @@ function ClassCard({
                     {doneTasks.length} completed
                   </button>
                   {showDone && doneTasks.map(t => (
-                    <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onClick={onTodoClick} />
+                    <TaskRow key={t.id} todo={t} color={color} onToggle={onToggleTodo} onToggleSubtask={onToggleSubtask} onClick={onTodoClick} />
                   ))}
                 </>
               )}
@@ -783,6 +866,7 @@ export default function ClassesPanel({
   onAdoptCourse,
   onTodoClick,
   onToggleTodo,
+  onToggleSubtask,
   onDeleteTodo,
   onAddTask,
   onRescheduleTask,
@@ -1204,6 +1288,7 @@ export default function ClassesPanel({
                   onAdoptCourse={onAdoptCourse}
                   onTodoClick={onTodoClick}
                   onToggleTodo={onToggleTodo}
+                  onToggleSubtask={onToggleSubtask}
                   onAddTask={onAddTask ? c => onAddTask(classCategoryId(c.id)) : undefined}
                   onEventClick={onEventClick}
                   onOpenNote={onOpenNote}
