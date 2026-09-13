@@ -380,7 +380,8 @@ Design notes:
 - **Expandable cards, not a master/detail split.** It matches the panels either side of it and collapses to a phone without needing a second layout. The first card opens so the tab is never a wall of closed rows; the rest stay shut so a six-class term fits on one screen
 - **Everything / This week** filters the *work* — tasks and assignments. Meetings and grades are left alone: "your grade in this class" does not mean "your grade this week". When the filter hides everything, the card says how much is outstanding overall rather than claiming the class is clear
 - **A disabled class is listed, not hidden.** It is still yours, and it still holds its notes and its history — it just sorts below the classes you are actually taking
-- **The task rows are deliberately thinner than the To-Do panel's** — no drag handle, no swipe, no subtask tree. This is a read-and-jump view, and a second full-featured row would be a second row to keep in step
+- **The task rows are deliberately thinner than the To-Do panel's** — no drag handle, no swipe, no inline composer. A second full-featured row would be a second row to keep in step
+- **…except for steps, which unfurl in place.** A task with subtasks is the one kind whose row doesn't say enough on its own: *"Term paper"* tells you nothing about how much of it is left, and the only way to find out was to open the editor over the whole panel and close it again. So the row carries a `1/3 steps` chip, clicking it unfurls the checklist underneath, and the steps tick off from there. The editor moves one click inside, as **Edit task →** at the foot of the unfurled list — the same trade the calendar chips already make. A task with no steps still jumps straight to the editor, because there is nothing to unfurl. Steps read through `visibleSubtasks`, so a deleted one's tombstone never inflates the count
 - On mobile the tab is labelled **Classes**: every tab in the bottom bar is `flex: 1`, so each gets around 45px and the full name would wrap onto its icon
 
 Two fixes fell out of building it. The note-link picker labelled every class with the literal word **"Class"** — it read `name`/`title`, fields a class entry has never had; the field is `courseName`. And the grade arithmetic existed in three places and had begun to disagree: the Grades rail averaged each assignment's *percentage* while the GPA card summed *points*, which weights a 5-point warm-up like a 200-point final. Both now go through [`lib/grades.js`](src/lib/grades.js), which sums points.
@@ -1070,6 +1071,27 @@ they were getting it wrong in the same two ways.
 - **Clamped on both axes.** Neither picker clamped horizontally, so a trigger near the right edge pushed a fixed-width popover past it. When neither side fits at all — a short viewport, or a phone with the on-screen keyboard up — the popover is clamped into view and given a `maxHeight` so it scrolls instead of spilling
 - **`TimePicker` is now portaled.** It was `position: absolute` inside the trigger's wrapper, which meant any scrolling ancestor (the note editor's meta bar, modals) clipped it and it could only ever open downward, off the bottom of the screen. It now renders to `document.body` like `DatePicker`. Outside-click detection tests the popover *and* the trigger, so tapping the clock face no longer counts as clicking away
 - Recalculates on scroll (captured on **any** ancestor, not just the window), on resize, and on `visualViewport` resize — which is what actually fires when a mobile keyboard opens
+
+### ⏰ Setting a time, by hand or by clock
+
+`TimePicker` offers the same time two ways — a text field you type into and a radial
+clock you drag — and both were awkward in ways that pushed you to the other one.
+
+**Typing.**
+
+- **The field opens empty-with-a-placeholder, not pre-filled.** It used to open holding `3:30 PM` with the caret dropped mid-string, so the first keystroke appended to it and you had to select-all before you could type. Same bug on the clock's own hour and minute boxes
+- **The parser accepts how people actually type a time.** `330p`, `1530`, `930`, `3.30 pm`, `3:5`, `7 45`, `3h30`, `p.m.` with the dots, plus `noon` and `midnight`. It used to accept three tidy shapes only — `15:30`, `3:30 PM`, `9` — and anything else reverted silently on blur, with nothing to say why
+- **It shows what your text will become** in grey beside the field as you type, so `330p` is confirmed as *3:30 PM* before it commits, not after
+- **Text it can't read is marked red and kept.** Enter on unparseable text leaves the caret where it is instead of discarding what you typed. Opening the clock while mid-edit commits the text rather than throwing it away
+- **Digits typed on the clock face advance by themselves.** `9` is a complete hour and moves to minutes; `1` waits for a second digit. Typing `13`–`23` in the hour box is read as 24-hour time and flips to PM rather than being rejected. The advance is synchronous on purpose — on a timer, typing `930` quickly landed the `3` while the hour box was still up, where it read as hour `93` and was thrown away
+
+**The clock face.**
+
+- **It works on a touchscreen.** The face set `touchAction: 'none'` but listened only for `mousedown`/`mousemove`, so dragging the hand did *nothing* on a phone — the one device where a radial clock is the better input. It's on pointer events now, with pointer capture, which also means the drag survives your finger leaving the dial
+- **There's a dead zone in the middle.** A press near the centre has no meaningful angle, and used to snap the hand to whatever `atan2` returned — so a stray click in the middle of the dial silently changed the time
+- **Minutes aren't locked to multiples of five.** The whole ring used to snap to the twelve labels, which made 7:20 easy and 7:22 impossible without typing. Minutes now resolve to the exact minute under the pointer and snap to a label only when you're actually on one, so the gaps between labels are where odd minutes live. An off-label minute draws the hand at its true angle with a dot at the tip, since there is no number under it to highlight
+- **Keyboard works throughout.** `↑`/`↓` nudge the selected field (`⇧` for five minutes at a time), `←`/`→` switch between hours and minutes, `a`/`p` set AM/PM, digits start typing, `Esc` cancels a half-typed entry and then closes, `Enter` accepts. On the closed field, `↑`/`↓` nudge by five minutes without opening anything
+- **One auto-advance, not two.** Picking an hour armed a timer from both the label's `onClick` *and* the window `mouseup`, so every tap set two
 
 ### 🔖 The calendar stays where you left it
 

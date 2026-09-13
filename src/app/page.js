@@ -3314,6 +3314,7 @@ export default function Home() {
                 onAdoptCourse={adoptCanvasCourse}
                 onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
                 onToggleTodo={toggleTodo}
+                onToggleSubtask={toggleSubtask}
                 onDeleteTodo={deleteTodo}
                 arrowNavEnabled={!anyModalOpen}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
