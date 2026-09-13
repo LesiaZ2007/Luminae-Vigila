@@ -180,6 +180,82 @@ describe('ClassesPanel — coursework', () => {
     expect(onTodoClick).not.toHaveBeenCalled()
   })
 
+  /* A task with steps says nothing useful from its title alone, and the only way
+     to see how far in it was used to be the editor, opened over the whole panel.
+     It unfurls in place instead; the editor is still in there, one click down. */
+  describe('a task with steps', () => {
+    const stepped = [{
+      id: 't5', title: 'Term paper', category: 'class:c1', dueDate: '2026-03-04',
+      subtasks: [
+        { id: 's1', title: 'Pick a topic', completed: true },
+        { id: 's2', title: 'Draft outline' },
+        { id: 's3', title: 'Write it' },
+      ],
+    }]
+
+    it('says how many steps are done before it is opened', () => {
+      renderPanel({ todos: stepped })
+      openCard()
+      expect(cards().getByRole('button', { name: /1\/3 steps/ })).toBeInTheDocument()
+      expect(cards().queryByText('Draft outline')).not.toBeInTheDocument()
+    })
+
+    it('unfurls the steps when the row is clicked, rather than jumping to the editor', async () => {
+      const onTodoClick = vi.fn()
+      renderPanel({ todos: stepped, onTodoClick })
+      openCard()
+
+      await userEvent.click(cards().getByText('Term paper'))
+      expect(onTodoClick).not.toHaveBeenCalled()
+      expect(cards().getByText('Pick a topic')).toBeInTheDocument()
+      expect(cards().getByText('Write it')).toBeInTheDocument()
+
+      await userEvent.click(cards().getByText('Term paper'))
+      expect(cards().queryByText('Write it')).not.toBeInTheDocument()
+    })
+
+    it('ticks a step off from inside the class card', async () => {
+      const onToggleSubtask = vi.fn()
+      const onToggleTodo    = vi.fn()
+      renderPanel({ todos: stepped, onToggleSubtask, onToggleTodo })
+      openCard()
+      await userEvent.click(cards().getByText('Term paper'))
+
+      // 'Draft outline' is the first step not already ticked.
+      await userEvent.click(cards().getAllByRole('button', { name: 'Mark step done' })[0])
+      expect(onToggleSubtask).toHaveBeenCalledWith('t5', 's2')
+      // The step is its own decision — the task itself must not move.
+      expect(onToggleTodo).not.toHaveBeenCalled()
+    })
+
+    it('keeps the editor one click inside the unfurled row', async () => {
+      const onTodoClick = vi.fn()
+      renderPanel({ todos: stepped, onTodoClick })
+      openCard()
+      await userEvent.click(cards().getByText('Term paper'))
+      await userEvent.click(cards().getByRole('button', { name: /Edit task/ }))
+      expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't5' }))
+    })
+
+    // Deleted steps sync as tombstones; counting them would overstate the work.
+    it('ignores deleted steps in the count', () => {
+      renderPanel({ todos: [{
+        ...stepped[0],
+        subtasks: [...stepped[0].subtasks, { id: 's4', title: 'Scrapped', deletedAt: '2026-03-01T00:00:00.000Z' }],
+      }] })
+      openCard()
+      expect(cards().getByRole('button', { name: /1\/3 steps/ })).toBeInTheDocument()
+    })
+
+    it('still jumps straight to the editor for a task with no steps', async () => {
+      const onTodoClick = vi.fn()
+      renderPanel({ todos, onTodoClick })
+      openCard()
+      await userEvent.click(cards().getByText('Lab report'))
+      expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
+    })
+  })
+
   // The class is the answer to "which class is this for", so a task added from
   // inside the card should arrive already filed under it.
   it('files a new task under the class it was added from', async () => {
