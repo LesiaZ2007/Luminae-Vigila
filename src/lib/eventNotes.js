@@ -35,6 +35,15 @@ const RESERVED_MINUTES_MOBILE = 92 // narrower columns wrap the title further
 /** Never fill a whole block with grey text, however long the event is. */
 const MAX_NOTE_LINES = 6
 
+/** Same proxy as above, for the larger 0.76rem title line. */
+const TITLE_MINUTES_PER_LINE = 22
+
+/** The time row above the title. */
+const TIME_ROW_MINUTES = 16
+
+/** A title is a label, not a paragraph — past this it is not being read anyway. */
+const MAX_TITLE_LINES = 3
+
 /**
  * Collapse note text to a single readable run.
  *
@@ -80,4 +89,31 @@ export function noteLineBudget({ durationMins, allDay = false, isMobile = false,
   if (spare < MINUTES_PER_LINE) return 0 // not even one full line — show nothing
 
   return Math.min(MAX_NOTE_LINES, Math.floor(spare / MINUTES_PER_LINE))
+}
+
+/**
+ * Whole lines of title that fit in the block, for the tall (non-compact) layout.
+ *
+ * The title used to wrap freely and get sliced by the block's `overflow: hidden`,
+ * which cut the last visible line horizontally through the letters — the bottom half
+ * of a row of glyphs, which reads as broken rendering rather than as truncation.
+ * Turning this budget into a `max-height` of whole line boxes moves the cut onto a
+ * line boundary, so a long name simply stops at the end of a line.
+ *
+ * Deliberately a floor: rounding up buys a few more characters at the cost of
+ * reintroducing the half-line it exists to prevent.
+ *
+ * @param {object}  opts
+ * @param {number}  opts.durationMins  Event length; the renderer passes 999 for all-day.
+ * @param {boolean} [opts.allDay]      The all-day lane grows with its content, so there
+ *                                     is no block height to budget against.
+ */
+export function titleLineBudget({ durationMins, allDay = false }) {
+  if (allDay) return MAX_TITLE_LINES
+  if (!Number.isFinite(durationMins) || durationMins <= 0) return 1
+
+  const spare = durationMins - TIME_ROW_MINUTES
+  if (spare < TITLE_MINUTES_PER_LINE) return 1 // always show at least the first line
+
+  return Math.min(MAX_TITLE_LINES, Math.floor(spare / TITLE_MINUTES_PER_LINE))
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
+import { flattenNotes, noteLineBudget, titleLineBudget } from '@/lib/eventNotes'
 
 describe('flattenNotes', () => {
   it('collapses newlines into one readable run', () => {
@@ -70,5 +70,47 @@ describe('noteLineBudget', () => {
 
   it('never returns a negative count when linked tasks exceed the space', () => {
     expect(noteLineBudget({ durationMins: 90, linkedCount: 10 })).toBe(0)
+  })
+})
+
+describe('titleLineBudget', () => {
+  // The whole point: the block clips on a line boundary, never through one.
+  it('is always a whole number of lines', () => {
+    for (const durationMins of [15, 30, 45, 50, 60, 75, 90, 120, 240]) {
+      expect(Number.isInteger(titleLineBudget({ durationMins }))).toBe(true)
+    }
+  })
+
+  // Without a line the event would render as a coloured blank.
+  it('always allows at least one line, however short the event', () => {
+    expect(titleLineBudget({ durationMins: 5 })).toBe(1)
+    expect(titleLineBudget({ durationMins: 30 })).toBe(1)
+  })
+
+  it('lets the title wrap once the block is tall enough to hold a second line', () => {
+    expect(titleLineBudget({ durationMins: 60 })).toBe(2)
+  })
+
+  it('gives more lines to longer events', () => {
+    expect(titleLineBudget({ durationMins: 90 }))
+      .toBeGreaterThan(titleLineBudget({ durationMins: 45 }))
+  })
+
+  // A title is a label. Past three lines the block is a wall of text and the notes
+  // underneath — usually the room number — get pushed out of a block with room for them.
+  it('stops at three lines however long the event runs', () => {
+    expect(titleLineBudget({ durationMins: 8 * 60 })).toBe(3)
+  })
+
+  // The all-day lane grows with its content, so there is no height to budget against.
+  it('does not clamp all-day events by duration', () => {
+    expect(titleLineBudget({ durationMins: 999, allDay: true })).toBe(3)
+    expect(titleLineBudget({ durationMins: 30,  allDay: true })).toBe(3)
+  })
+
+  it('falls back to one line rather than NaN for a missing or nonsense duration', () => {
+    expect(titleLineBudget({ durationMins: undefined })).toBe(1)
+    expect(titleLineBudget({ durationMins: NaN })).toBe(1)
+    expect(titleLineBudget({ durationMins: -60 })).toBe(1)
   })
 })

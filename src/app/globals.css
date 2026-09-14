@@ -675,6 +675,67 @@ select option {
 
 .fc .fc-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ── Short events: name first, time last ────────────────────────────────────
+   A 30-minute block is one line tall, so its content is a race for horizontal
+   room. The name wins it — the time is already legible from the row the block
+   sits on, and a name truncated to "AP C…" identifies nothing.
+
+   The two rules below are container queries rather than JS because the decision
+   depends on the block's *rendered* width, which the React renderer never sees:
+   two overlapping events split a day column in half, and a day column is itself
+   a seventh of the week view. Under ~124px the time is dropped outright (a
+   half-clipped "9:0" is worse than no time at all) and the name is allowed a
+   second line, which roughly doubles what a squeezed block can say. */
+.fc .lv-ev-compact {
+  container-type: inline-size;
+  container-name: lvev;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 0 2px;
+}
+
+/* Content the block is too short to hold fades out at its bottom edge rather than
+   ending on a hard slice through a row of letters. Measured from the block, so a
+   title that fits is never touched: the fade lands on empty space. */
+.fc .lv-ev-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 6px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 6px), transparent);
+}
+
+.fc .lv-ev-compact .lv-ev-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  /* -webkit-box is what -webkit-line-clamp needs; at 1 line it behaves exactly
+     like the ellipsis it replaces, and the container query can raise it to 2
+     without the markup changing. Safe here only because this span holds plain
+     text — the star, priority dot and Google badge are siblings, not children. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.fc .lv-ev-compact .lv-ev-time {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 500;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+@container lvev (max-width: 124px) {
+  .fc .lv-ev-compact .lv-ev-time  { display: none; }
+  .fc .lv-ev-compact .lv-ev-title { -webkit-line-clamp: 2; }
+}
+
 .fc-direction-ltr .fc-timegrid-col-events,
 .fc-direction-rtl .fc-timegrid-col-events {
   margin-left: 0;
