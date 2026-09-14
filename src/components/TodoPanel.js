@@ -8,6 +8,7 @@ import { classLinksFor, canonicalCategoryId, canonicalClassId } from '@/lib/clas
 
 import Confetti from '@/components/Confetti'
 import { visibleSubtasks } from '@/lib/todoMerge'
+import { todoBucketBounds, bucketForDate, UPCOMING_DAYS } from '@/lib/todoBuckets'
 
 /**
  * Shared style for the per-row task actions (+ / trash).
@@ -967,6 +968,24 @@ function CanvasMiniItem({ a, onToggle }) {
   )
 }
 
+/**
+ * The headings, in order, and how loud each one is.
+ *
+ * The accent fades as the deadline recedes — red, amber, then the theme accent, then
+ * a muted version of it, then plain grey — so the top of the list reads as urgent
+ * without every heading shouting. Order matters: it is also the partition order in
+ * bucketForDate.
+ */
+const BUCKET_META = [
+  { id: 'overdue',  label: 'Overdue',      accent: 'var(--red)' },
+  { id: 'today',    label: 'Today',        accent: 'var(--amber)' },
+  { id: 'upcoming', label: 'Upcoming',     accent: 'var(--blue)' },
+  { id: 'week',     label: 'This Week',    accent: 'color-mix(in srgb, var(--blue) 55%, var(--text-3))' },
+  { id: 'later',    label: 'Next 2 Weeks', accent: 'var(--text-2)' },
+  { id: 'future',   label: 'Further Out',  accent: 'var(--text-3)' },
+  { id: 'none',     label: 'No Date',      accent: 'var(--text-3)' },
+]
+
 function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                        // optional: merge Canvas assignments inline
                        canvasAssignments = [], onToggleCanvas, onToggleSubtask,
@@ -974,50 +993,29 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
                        onDragStart, onDragOver, onDrop, draggingId, isMobile }) {
   const [showFuture, setShowFuture] = useState(false)
 
-  const weekStr = (() => {
-    const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10)
-  })()
-  const twoWeekStr = (() => {
-    const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10)
-  })()
+  const bounds = todoBucketBounds(todayStr)
 
   // Visible Canvas items (not hidden, filtered by same filter as parent)
   const visibleCanvas = canvasAssignments.filter(a => !a.hidden)
 
   function canvasDateStr(a) { return a.dueAt ? a.dueAt.slice(0, 10) : null }
 
-  const buckets = [
-    {
-      id: 'overdue', label: 'Overdue', accent: 'var(--red)',
-      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d < todayStr }),
-      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d < todayStr && !a.done }),
-    },
-    {
-      id: 'today', label: 'Today', accent: 'var(--amber)',
-      todos:  todos.filter(t => effectiveDate(t, events) === todayStr),
-      canvas: visibleCanvas.filter(a => canvasDateStr(a) === todayStr),
-    },
-    {
-      id: 'week', label: 'This Week', accent: 'var(--blue)',
-      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > todayStr && d <= weekStr }),
-      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > todayStr && d <= weekStr }),
-    },
-    {
-      id: 'later', label: 'Next 2 Weeks', accent: 'var(--text-2)',
-      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > weekStr && d <= twoWeekStr }),
-      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > weekStr && d <= twoWeekStr }),
-    },
-    {
-      id: 'future', label: 'Further Out', accent: 'var(--text-3)',
-      todos:  todos.filter(t => { const d = effectiveDate(t, events); return d && d > twoWeekStr }),
-      canvas: visibleCanvas.filter(a => { const d = canvasDateStr(a); return d && d > twoWeekStr }),
-    },
-    {
-      id: 'none', label: 'No Date', accent: 'var(--text-3)',
-      todos:  todos.filter(t => !effectiveDate(t, events)),
-      canvas: visibleCanvas.filter(a => !canvasDateStr(a)),
-    },
-  ].filter(b => b.todos.length + b.canvas.length > 0)
+  // One pass per list rather than a filter per heading: the headings are a partition,
+  // so every task belongs to exactly one of them by construction.
+  const grouped = Object.fromEntries(BUCKET_META.map(b => [b.id, { todos: [], canvas: [] }]))
+  for (const t of todos) {
+    grouped[bucketForDate(effectiveDate(t, events), bounds)].todos.push(t)
+  }
+  for (const a of visibleCanvas) {
+    const id = bucketForDate(canvasDateStr(a), bounds)
+    // A finished Canvas assignment past its date is history, not a warning.
+    if (id === 'overdue' && a.done) continue
+    grouped[id].canvas.push(a)
+  }
+
+  const buckets = BUCKET_META
+    .map(meta => ({ ...meta, ...grouped[meta.id] }))
+    .filter(b => b.todos.length + b.canvas.length > 0)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -1028,7 +1026,7 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
         return (
           <div key={bucket.id}>
             <div
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 8px 4px', marginTop: bi > 0 ? 6 : 0, cursor: isFuture ? 'pointer' : 'default' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 8px 4px', marginTop: bi > 0 ? 14 : 0, cursor: isFuture ? 'pointer' : 'default' }}
               onClick={isFuture ? () => setShowFuture(v => !v) : undefined}
             >
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: bucket.accent, flexShrink: 0 }} />
@@ -1036,6 +1034,13 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
                 {bucket.label}
               </span>
               <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-3)' }}>· {totalCount}</span>
+              {/* "Upcoming" and "This Week" both mean soon; only this says how soon,
+                  and without it the boundary between the two is a guess. */}
+              {bucket.id === 'upcoming' && (
+                <span style={{ fontSize: '0.62rem', fontWeight: 500, color: 'var(--text-3)', opacity: 0.8 }}>
+                  next {UPCOMING_DAYS} days
+                </span>
+              )}
               {isFuture && (
                 <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--text-3)', fontWeight: 600 }}>
                   {showFuture ? 'hide' : 'show'}
