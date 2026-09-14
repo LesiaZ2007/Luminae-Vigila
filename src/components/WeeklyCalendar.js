@@ -6,7 +6,7 @@ import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin   from '@fullcalendar/timegrid'
 import dayGridPlugin    from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
-import { flattenNotes, noteLineBudget } from '@/lib/eventNotes'
+import { flattenNotes, noteLineBudget, titleLineBudget } from '@/lib/eventNotes'
 import { loadCalendarPrefs, saveCalendarPrefs, slotRange, toYMDLocal } from '@/lib/calendarView'
 import { EVENT_SWATCHES } from '@/components/ColorSwatches'
 
@@ -54,6 +54,10 @@ function ImportantStar({ inline = false }) {
    `select` handler compares against it to tell a drag from a click — a plain click on
    a slot selects exactly one, so the two must agree or clicks start creating events. */
 const SLOT_MINUTES = 30
+
+/* The title's line-height, kept in a constant because the whole-line clamp turns it
+   into arithmetic (`lines × line-height` em) rather than just a style. */
+const TITLE_LINE_HEIGHT = 1.3
 
 export default function WeeklyCalendar({
   events, todos, onDateClick, onEventClick, onViewChange, isMobile, highlightEventId, targetDate,
@@ -438,20 +442,32 @@ export default function WeeklyCalendar({
     const isShort = durationMins <= (isMobile ? 30 : 45)
 
     if (isShort && !arg.event.allDay) {
-      // Compact single-line layout for short events
+      // Compact single-row layout for short events.
+      //
+      // The name leads and the time trails. A short block is one line wide, so
+      // whichever comes first gets the room — and the time is the half you can already
+      // read off the grid, whereas "9:00 AP C…" tells you nothing about which class it
+      // is. Both the drop-the-time and the wrap-to-two-lines behaviours below that
+      // width are container queries in globals.css, because what matters is the
+      // block's real width (an overlap column is a fraction of a day column), which
+      // the renderer cannot know.
       return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', padding: '0 2px', minWidth: 0 }}>
+        <div className="lv-ev-compact lv-ev-fade">
           {important && <ImportantStar />}
           {isTodo && priorityColor && (
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: priorityColor, flexShrink: 0, display: 'inline-block', boxShadow: '0 0 0 1px rgba(255,255,255,0.5)' }} />
           )}
-          <span style={{ fontSize: '0.72rem', opacity: 0.8, flexShrink: 0, whiteSpace: 'nowrap' }}>{arg.timeText}</span>
           {isGoogle && (
             <span style={{ fontSize: '0.58rem', fontWeight: 800, background: 'rgba(255,255,255,0.28)', borderRadius: 3, padding: '0 2px', lineHeight: '12px', flexShrink: 0 }}>G</span>
           )}
-          <span style={{ fontWeight: 600, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, textDecoration: isDone ? 'line-through' : 'none' }}>
+          <span
+            className="lv-ev-title"
+            title={arg.event.title}
+            style={{ textDecoration: isDone ? 'line-through' : 'none' }}
+          >
             {arg.event.title}
           </span>
+          <span className="lv-ev-time">{arg.timeText}</span>
         </div>
       )
     }
@@ -464,16 +480,35 @@ export default function WeeklyCalendar({
     const noteLines = notesText
       ? noteLineBudget({ durationMins, allDay: arg.event.allDay, isMobile, linkedCount: Math.min(linkedTodos.length, 4) })
       : 0
+    const titleLines = titleLineBudget({ durationMins, allDay: arg.event.allDay })
 
+    // lv-ev-fade: anything that still overflows the block fades out at its bottom edge
+    // instead of ending on a hard horizontal slice. The fade is measured from the
+    // block, not the text, so content that fits is untouched.
     return (
-      <div className="flex flex-col h-full overflow-hidden px-0.5" style={{ position: 'relative' }}>
+      <div className="flex flex-col h-full overflow-hidden px-0.5 lv-ev-fade" style={{ position: 'relative' }}>
         {!arg.event.allDay && (
           <div style={{ fontSize: '0.68rem', opacity: 0.85, lineHeight: 1.2, flexShrink: 0, whiteSpace: 'nowrap' }}>
             {arg.timeText}
           </div>
         )}
-        {/* Title: wraps so you can read the full name — block is clipped at event bottom */}
-        <div style={{ fontWeight: 600, fontSize: '0.76rem', lineHeight: 1.3, overflow: 'hidden', wordBreak: 'break-word' }}>
+        {/* Title: wraps so you can read the full name, but only ever by whole lines —
+            `maxHeight` in em of the line box lands the cut between rows instead of
+            through the middle of one. See titleLineBudget. `flex: 0 0 auto` keeps the
+            name at full height and lets the notes below it give way instead: the title
+            is the part you are scanning for. */}
+        <div
+          title={arg.event.title}
+          style={{
+            fontWeight: 600,
+            fontSize: '0.76rem',
+            lineHeight: TITLE_LINE_HEIGHT,
+            overflow: 'hidden',
+            wordBreak: 'break-word',
+            flex: '0 0 auto',
+            maxHeight: `${(titleLines * TITLE_LINE_HEIGHT).toFixed(2)}em`,
+          }}
+        >
           {important && <ImportantStar inline />}
           {isTodo && priorityColor && (
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: priorityColor, display: 'inline-block', marginRight: 3, verticalAlign: 'middle', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.5)', position: 'relative', top: -1 }} />
