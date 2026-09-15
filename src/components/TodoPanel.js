@@ -9,6 +9,7 @@ import { classLinksFor, canonicalCategoryId, canonicalClassId } from '@/lib/clas
 import Confetti from '@/components/Confetti'
 import { visibleSubtasks } from '@/lib/todoMerge'
 import { todoBucketBounds, bucketForDate, UPCOMING_DAYS } from '@/lib/todoBuckets'
+import { todayStr as localTodayStr } from '@/lib/localDate'
 
 /**
  * Shared style for the per-row task actions (+ / trash).
@@ -122,7 +123,12 @@ export default function TodoPanel({
     onToggle(id)
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  /* Local, not UTC. `new Date().toISOString().slice(0, 10)` converts to UTC first, so
+     from about 8pm Eastern onward it returns *tomorrow* — and this one string is what
+     the headings, the row badges and the Today chip all compare against. The panel
+     spent every evening insisting tomorrow's work was due today and today's was
+     overdue. See localDate.js. */
+  const todayStr = localTodayStr()
 
   // Only non-recurring completed todos are clearable — see clearCompletedTodos
   // in page.js for why recurring series are excluded.
