@@ -182,6 +182,52 @@ describe('TodoPanel — headings use the local date, not the UTC one', () => {
   })
 })
 
+/* Clicking away from the inline step composer has always added what you typed — blur is
+   what closes it. Escape threw the draft away instead, so the same half-typed step
+   survived or vanished depending on which way you left the field, and a lost one has no
+   undo. */
+describe('TodoPanel — leaving the step composer keeps what you typed', () => {
+  const TASK = { id: 't1', title: 'Essay', dueDate: '2026-09-10' }
+
+  async function typeAStep(user, key) {
+    const onAddSubtask = vi.fn()
+    renderPanel({ todos: [TASK], onAddSubtask })
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }))
+    await user.type(screen.getByPlaceholderText(/subtask/i), 'Find three sources')
+    await user.keyboard(key)
+    return onAddSubtask
+  }
+
+  it('adds the step on Escape', async () => {
+    const onAddSubtask = await typeAStep(await userEvent.setup(), '{Escape}')
+    expect(onAddSubtask).toHaveBeenCalledWith('t1', 'Find three sources')
+  })
+
+  it('still adds it on Enter', async () => {
+    const onAddSubtask = await typeAStep(await userEvent.setup(), '{Enter}')
+    expect(onAddSubtask).toHaveBeenCalledWith('t1', 'Find three sources')
+  })
+
+  // Escape commits by blurring, and the blur handler is the only thing that adds —
+  // if both fired on their own the step would be added twice.
+  it('adds it exactly once', async () => {
+    const onAddSubtask = await typeAStep(await userEvent.setup(), '{Escape}')
+    expect(onAddSubtask).toHaveBeenCalledTimes(1)
+  })
+
+  it('adds nothing when the field is empty', async () => {
+    const user = userEvent.setup()
+    const onAddSubtask = vi.fn()
+    renderPanel({ todos: [TASK], onAddSubtask })
+
+    await user.click(screen.getByRole('button', { name: 'Add subtask' }))
+    await user.keyboard('{Escape}')
+
+    expect(onAddSubtask).not.toHaveBeenCalled()
+  })
+})
+
 /* Priority used to be an 8px dot whose red and amber were the same red and amber the
    date badges use, so "high" sat next to "Overdue" saying nothing, and "low" was drawn
    in the border colour — identical to a task with no priority at all. */

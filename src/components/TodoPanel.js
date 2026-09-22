@@ -959,9 +959,15 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
                     if (title) { onAddSubtask?.(todo.id, title); setSubtaskDraft('') }
                     else setAddingSubtask(false)
                   } else if (e.key === 'Escape') {
+                    /* Escape keeps what you typed. Clicking away already added it —
+                       blur is what closes this composer — so throwing the draft away on
+                       Escape made the same half-finished step survive or vanish
+                       depending on which way you left the field, and there is no undo
+                       for a lost one. Deleting a step you didn't want is one click.
+                       Blurring rather than committing here keeps that one path: the
+                       blur handler is still the only thing that adds. */
                     e.preventDefault()
-                    setSubtaskDraft('')
-                    setAddingSubtask(false)
+                    e.currentTarget.blur()
                   }
                 }}
                 placeholder="Subtask… (Enter to add)"

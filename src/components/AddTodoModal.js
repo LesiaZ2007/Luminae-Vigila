@@ -75,6 +75,18 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
 
   function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
+  /* One definition of "add whatever is typed in the step field", so the Enter key, the
+     + button and Escape can't drift apart — they had already drifted, which is how
+     Escape ended up being the one exit that discarded the step. Returns whether it
+     added anything, so the caller can decide what to do next. */
+  function addStep() {
+    const t = newSubtask.trim()
+    if (!t || subtasks.length >= 20) return false
+    setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
+    setNewSubtask('')
+    return true
+  }
+
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') handleClose() }
     document.addEventListener('keydown', onKey)
@@ -428,7 +440,15 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                           }}
                           onKeyDown={e => {
                             if (e.key === 'Enter') e.currentTarget.blur()
-                            if (e.key === 'Escape') { setEditingIdx(-1) }
+                            if (e.key === 'Escape') {
+                              /* Same two bugs as the step field below, on a rename: the
+                                 edit was thrown away, and Escape then carried on to the
+                                 modal's handler and closed the form as well. Blur is
+                                 what commits a rename, so hand it to blur and stop it
+                                 there. */
+                              e.stopPropagation()
+                              e.currentTarget.blur()
+                            }
                           }}
                           style={{
                             flex: 1, fontSize: '0.82rem', border: 'none', outline: 'none',
@@ -469,11 +489,17 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
-                      const t = newSubtask.trim()
-                      if (t && subtasks.length < 20) {
-                        setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
-                        setNewSubtask('')
-                      }
+                      addStep()
+                    } else if (e.key === 'Escape' && newSubtask.trim()) {
+                      /* Escape in a half-typed step used to reach the modal's own
+                         Escape handler and close the whole form — losing the step and
+                         every other unsaved edit with it. With something typed it now
+                         means "I'm done with this step": add it and stay put. An empty
+                         field has nothing to lose, so Escape still closes the modal,
+                         which is what it means everywhere else. */
+                      e.preventDefault()
+                      e.stopPropagation()
+                      addStep()
                     }
                   }}
                   placeholder="Add a step…"
@@ -482,14 +508,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                 />
                 <button
                   type="button"
-                  onClick={() => {
-                    const t = newSubtask.trim()
-                    if (t && subtasks.length < 20) {
-                      setSubtasks(p => [...p, { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, title: t, completed: false }])
-                      setNewSubtask('')
-                      subtaskInputRef.current?.focus()
-                    }
-                  }}
+                  onClick={() => { if (addStep()) subtaskInputRef.current?.focus() }}
                   style={{
                     padding: '7px 12px', borderRadius: 9, border: 'none',
                     background: 'var(--blue)', color: '#fff', cursor: 'pointer',
