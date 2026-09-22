@@ -9,6 +9,7 @@ import TimePicker from '@/components/TimePicker'
 import { isClassCategoryId, classIdFromCategoryId } from '@/lib/classCategories'
 import { visibleSubtasks } from '@/lib/todoMerge'
 import { classLinksFor, canonicalCategoryId } from '@/lib/classLinks'
+import { PRIORITIES } from '@/lib/priority'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
@@ -18,11 +19,9 @@ const REMINDER_OPTIONS = [
   { label: 'Custom time…', ms: -1 },
 ]
 
-const PRIORITY = [
-  { id: 'low',    label: 'Low',    color: '#94a3b8' },
-  { id: 'medium', label: 'Medium', color: '#f59e0b' },
-  { id: 'high',   label: 'High',   color: '#ef4444' },
-]
+/* Least urgent first here — the picker reads left-to-right as a dial you turn up,
+   while priority.js lists them most-urgent-first for sorting. */
+const PRIORITY = [...PRIORITIES].reverse()
 
 export default function AddTodoModal({ events, canvasClasses = [], todoCategories, onAdd, onEdit, onEditCanvas, onClose, editTodo, initialDate, initialTitle, initialNotes, initialCategory,
   allNotes = [], onOpenNote, onCreateLinkedNote }) {

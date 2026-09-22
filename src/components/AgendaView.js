@@ -7,6 +7,7 @@ import { describeLocation } from '@/lib/maps'
 import { visibleItems } from '@/lib/customLists'
 import { eventDaysWithin, isMultiDay, spanLabel } from '@/lib/eventSpan'
 import { toYMDLocal } from '@/lib/calendarView'
+import { priorityMeta } from '@/lib/priority'
 
 const DAYS_AHEAD = 14
 
@@ -314,7 +315,6 @@ export default function AgendaView({
     // class events are read-only (match existing behavior)
   }
 
-  const priorityColors = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' }
 
   if (grouped.length === 0) {
     return (
@@ -440,14 +440,19 @@ export default function AgendaView({
                     }}>
                       {item.title}
                     </span>
-                    {/* Priority dot for todos */}
+                    {/* Priority dot for todos. Low stays unmarked here — the agenda is a
+                        day at a time, where the point is what's coming up, not a triage
+                        list; the task panel is where all three levels are shown. */}
                     {item.type === 'todo' && item.priority && item.priority !== 'low' && (
-                      <span style={{
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: priorityColors[item.priority] || '#94a3b8',
-                        flexShrink: 0,
-                        display: 'inline-block',
-                      }} />
+                      <span
+                        title={`${priorityMeta(item.priority)?.label} priority`}
+                        style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: priorityMeta(item.priority)?.color || '#94a3b8',
+                          flexShrink: 0,
+                          display: 'inline-block',
+                        }}
+                      />
                     )}
                   </div>
 

@@ -181,3 +181,47 @@ describe('TodoPanel — headings use the local date, not the UTC one', () => {
     expect(tasksUnder('Upcoming').join(' ')).not.toContain('Lab report')
   })
 })
+
+/* Priority used to be an 8px dot whose red and amber were the same red and amber the
+   date badges use, so "high" sat next to "Overdue" saying nothing, and "low" was drawn
+   in the border colour — identical to a task with no priority at all. */
+describe('TodoPanel — priority is legible on the row', () => {
+  const HIGH   = { id: 'h', title: 'Calc final review', priority: 'high',   dueDate: '2026-09-14' }
+  const MEDIUM = { id: 'm', title: 'Reading response',  priority: 'medium', dueDate: '2026-09-14' }
+  const LOW    = { id: 'l', title: 'Tidy notes',        priority: 'low',    dueDate: '2026-09-14' }
+  const NONE   = { id: 'n', title: 'Imported task',                          dueDate: '2026-09-14' }
+
+  it('names each level, so the meter is readable and not just decoration', () => {
+    renderPanel({ todos: [HIGH, MEDIUM, LOW] })
+
+    expect(screen.getByLabelText('High priority')).toBeTruthy()
+    expect(screen.getByLabelText('Medium priority')).toBeTruthy()
+    expect(screen.getByLabelText('Low priority')).toBeTruthy()
+  })
+
+  it('draws nothing for a task that never had a priority', () => {
+    renderPanel({ todos: [NONE] })
+
+    expect(screen.queryByLabelText(/priority/)).toBeNull()
+  })
+
+  // Medium is what every new task starts as — a chip on practically every row would
+  // stop carrying information.
+  it('spells out High and Low but leaves Medium to the meter alone', () => {
+    renderPanel({ todos: [HIGH, MEDIUM, LOW] })
+
+    expect(screen.getByText('High')).toBeTruthy()
+    expect(screen.getByText('Low')).toBeTruthy()
+    expect(screen.queryByText('Medium')).toBeNull()
+  })
+
+  it('puts the higher priority first when two tasks are due the same day', () => {
+    renderPanel({ todos: [LOW, HIGH, MEDIUM] })
+
+    const titles = [...document.querySelectorAll('li')].map(li => li.textContent).join(' | ')
+    expect(titles.indexOf('Calc final review'))
+      .toBeLessThan(titles.indexOf('Reading response'))
+    expect(titles.indexOf('Reading response'))
+      .toBeLessThan(titles.indexOf('Tidy notes'))
+  })
+})

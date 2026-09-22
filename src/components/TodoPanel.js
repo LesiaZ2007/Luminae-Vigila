@@ -10,6 +10,7 @@ import Confetti from '@/components/Confetti'
 import { visibleSubtasks } from '@/lib/todoMerge'
 import { todoBucketBounds, bucketForDate, UPCOMING_DAYS } from '@/lib/todoBuckets'
 import { todayStr as localTodayStr } from '@/lib/localDate'
+import { priorityMeta, comparePriority, PRIORITY_BARS } from '@/lib/priority'
 
 /**
  * Shared style for the per-row task actions (+ / trash).
@@ -24,6 +25,63 @@ function todoRowAction(hovered, isMobile) {
     opacity: isMobile ? 0.7 : hovered ? 1 : 0.4,
     transition: 'opacity .13s, color .13s',
   }
+}
+
+/**
+ * The priority indicator: a signal-strength meter, three bars, filled by level.
+ *
+ * It sits in the same place on every row, so priority is legible by scanning straight
+ * down the right-hand edge rather than by reading each row. Shape carries the level as
+ * well as colour, which matters here more than usual: the badges to its left are
+ * already red for overdue and amber for due-today, so a red dot next to a red "Overdue"
+ * told you nothing. One bar, two or three still does.
+ *
+ * Draws nothing for a task with no priority — see priority.js on why unset isn't Low.
+ */
+function PriorityMeter({ priority }) {
+  const meta = priorityMeta(priority)
+  if (!meta) return null
+  return (
+    <span
+      role="img"
+      aria-label={`${meta.label} priority`}
+      title={`${meta.label} priority`}
+      style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 11, marginTop: 4, flexShrink: 0 }}
+    >
+      {Array.from({ length: PRIORITY_BARS }, (_, i) => (
+        <span key={i} style={{
+          width: 2.5, height: 4 + i * 3.5, borderRadius: 1,
+          background: meta.color,
+          /* The empty bars stay visible, faintly: they are what make "one of three"
+             read as low rather than as a stray mark. */
+          opacity: i < meta.bars ? 1 : 0.2,
+        }} />
+      ))}
+    </span>
+  )
+}
+
+/**
+ * The word, for the two levels worth saying out loud.
+ *
+ * Medium is the default every new task gets, so labelling it would put a chip on
+ * practically every row and the label would stop meaning anything. High and Low are
+ * the deliberate choices, and they're the ones the meter's outer positions show.
+ */
+function PriorityChip({ priority }) {
+  const meta = priorityMeta(priority)
+  if (!meta || meta.id === 'medium') return null
+  const loud = meta.id === 'high'
+  return (
+    <span style={{
+      fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+      background: loud ? meta.color + '18' : 'var(--surface2)',
+      color:      loud ? meta.color        : 'var(--text-3)',
+      whiteSpace: 'nowrap',
+    }}>
+      {meta.label}
+    </span>
+  )
 }
 
 /**
@@ -153,10 +211,13 @@ export default function TodoPanel({
     if (b.sortOrder != null) return 1
     const ad = effectiveDate(a, events)
     const bd = effectiveDate(b, events)
-    if (!ad && !bd) return 0
+    /* Priority breaks ties only. Two things due the same day are in the same heading
+       anyway, so ordering them by priority costs nothing and puts the one that matters
+       on top; letting it outrank the date instead would scatter the deadlines. */
+    if (!ad && !bd) return comparePriority(a.priority, b.priority)
     if (!ad) return 1
     if (!bd) return -1
-    return ad.localeCompare(bd)
+    return ad.localeCompare(bd) || comparePriority(a.priority, b.priority)
   })
 
   const pendingCount = todos.filter(t => !t.completed).length
@@ -606,7 +667,10 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
   const effDate  = effectiveDate(todo, events)
   const isOverdue = effDate && effDate < todayStr && !todo.completed
   const isToday   = effDate === todayStr
-  const dotColor  = todo.priority === 'high' ? '#ef4444' : todo.priority === 'medium' ? '#f59e0b' : 'var(--border)'
+  /* High priority also gets a rail down the left edge of the row — the meter tells you
+     the level once you look at a row, the rail is what makes you look. Only high gets
+     one: a rail on every row is a striped list, not an emphasis. */
+  const isHighPriority = todo.priority === 'high' && !todo.completed
 
   // ── Touch handlers ──────────────────────────────────────────────────────
   function onTouchStart(e) {
@@ -730,6 +794,7 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
       {/* Main row — translated by swipe */}
       <div
         style={{
+          position: 'relative',
           display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 8px',
           borderRadius: 12, transition: swipeDone ? 'transform 0.22s' : 'background .15s, box-shadow .15s, transform .15s',
           background: hovered ? 'var(--surface2)' : 'transparent',
@@ -741,6 +806,15 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
             : (hovered ? 'translateY(-1px)' : 'none'),
         }}
       >
+        {/* High-priority rail. Absolutely positioned rather than a flex child so it
+            costs no width — every row stays indented the same, whatever its priority. */}
+        {isHighPriority && (
+          <span aria-hidden style={{
+            position: 'absolute', left: 0, top: 7, bottom: 7, width: 3,
+            borderRadius: 999, background: 'var(--red)', pointerEvents: 'none',
+          }} />
+        )}
+
         {/* Drag handle (desktop only) */}
         {!isMobile && onDragStart && (
           <div
@@ -771,6 +845,8 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
             {todo.title}
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            {/* First in the row, so it lands in the same spot on every task that has one */}
+            <PriorityChip priority={todo.priority} />
             {cat && (
               <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: cat.color + '18', color: cat.color }}>
                 {cat.label}
@@ -900,8 +976,8 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
           )}
         </div>
 
-        {/* Priority dot */}
-        <div style={{ marginTop: 5, width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+        {/* Priority meter */}
+        <PriorityMeter priority={todo.priority} />
 
         {/* Row actions — always present (dimmed until hover on desktop, and
             shown on touch where there is no hover) so add-subtask and delete

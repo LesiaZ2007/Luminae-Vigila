@@ -51,6 +51,7 @@ Works fully offline without an account. Sign in to sync across devices or manual
   - Toggling it leaves the popup open, unlike the actions around it: it's a toggle, and closing would hide the badge that confirms it took
 - **Recurring event edit scope** — clicking a repeating event asks whether to edit *this occurrence only* or *all events in the series*; choosing "all" reopens the full form pre-populated with the original recurrence config (type, days, end date) and the series start date so every occurrence is regenerated
 - **Recurring event delete** — deleting a repeating event shows an in-app panel: *Delete this event only* or *Delete all in series*
+- **Turning Repeats on for an event that already exists now actually creates the repeats.** It looked like a slow save — you'd tick Repeats, save, and the upcoming weeks stayed empty; they only ever showed up later, if the series happened to be rebuilt by an *edit all in series* save. Nothing was slow. An event that doesn't recur yet has no series to choose a scope for, so the save arrives as a single-instance edit, and that path replaced the edited event with the *first* occurrence of the expansion and dropped the rest on the floor. Stored events are the only copy — nothing re-expands a recurrence rule at load or render time — so the later occurrences were never written anywhere. The single-instance path now splices in the whole expansion, which for an ordinary non-repeating save is one event and the same swap it always was
 
 ### ✅ Completed tasks stay on the calendar, struck through
 
@@ -849,6 +850,22 @@ The grouped task list used to jump straight from **Today** to **This Week**, and
 - **Today means today where you are.** Both the panel's own "today" and the bucket boundaries were built on `toISOString`, which converts to UTC first — so from about 8pm Eastern onward the panel was a day ahead. Work due *tomorrow* appeared under **Today**, and work due today dropped into **Overdue**. It was one shared string, so the headings, the row badges and the Today filter chip were all wrong together, every evening, which is what made it look like the two headings had been merged
   - Both now go through the `localDate` helpers the rest of the app uses, and the bucket bounds take today as a parameter rather than reading the clock, so the list always agrees with the date the panel was handed
 - **Groups get more breathing room** between them, which is the other half of "a week is too much in one place"
+
+### 🔺 Priority you can see without reading the row
+
+Priority was an 8 px dot at the right edge, and it was doing almost nothing. Three problems compounded:
+
+- **It borrowed the colours the dates already use.** Overdue is red and due-today is amber, so a high-priority dot sat beside a red **⚠ Overdue** badge and an amber *due in 2 days* chip. In a column of red and amber, one more red dot is not a signal
+- **Low was drawn in the border colour**, which is also what a task with *no* priority got — so the one level you set to mean *this can wait* looked identical to never having answered the question
+- **Colour was the only channel.** Nothing distinguished the levels by shape, which is a problem for anyone who doesn't separate those reds and ambers, and a mild one for everybody scanning quickly
+
+The dot is now a **three-bar meter** — one bar for Low, two for Medium, three for High — in the same place on every row, so priority reads by scanning straight down the right edge rather than by stopping at each task. The unfilled bars stay faintly visible: they are what makes one-of-three read as *low* rather than as a stray mark.
+
+- **High and Low also get the word**, as a chip at the front of the badge row. **Medium doesn't** — it's the default every new task starts with, so labelling it would put a chip on practically every row and the label would stop meaning anything. The meter still shows it
+- **High priority gets a red rail** down the left edge of the row. The meter tells you the level once you're looking at a row; the rail is what makes you look. Only High gets one — a rail on every row is a striped list, not an emphasis. It's absolutely positioned, so it costs no width and rows stay aligned whatever their priority. It drops away when the task is completed
+- **A task with no priority still shows nothing.** Tasks that predate the field, and Canvas assignments, never had one — drawing them as Low would be inventing an answer nobody gave. New tasks default to Medium, which is a real answer, and does show
+- **Priority breaks ties in the sort, and only ties.** Two things due the same day are under the same heading anyway, so ordering them by priority costs nothing and puts the one that matters on top. Letting it outrank the date would scatter the deadlines, which is the list's actual job. A manual drag still wins over both — `sortOrder` is an explicit instruction
+- **The three levels are defined once**, in `lib/priority.js`. They had drifted: the add/edit modal painted Low slate, the agenda painted it green, and the task list painted it grey. The agenda still marks only High and Medium — it's a day at a time, where the point is what's coming, not triage — but it now uses the same colours as everywhere else
 
 ### ✅ Tasks — Drag-to-Reorder
 - Grab the **grip handle** (appears on hover, desktop only) to drag tasks into any order
