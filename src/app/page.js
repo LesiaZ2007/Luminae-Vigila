@@ -1278,9 +1278,16 @@ export default function Home() {
           ? events.filter(e => e.extendedProps?.studyPlanOf === ev.id)
           : []
 
-        // Single edit — replace just that one instance
-        setEvents(prev => prev.map(e => {
-          if (e.id === ev.id) return expanded[0]
+        /* Single edit — replace that one event with whatever the save expands to.
+           Usually that is one event and this is a plain swap. It is more than one when
+           the edit is what *made* the event repeat: an event that didn't recur before
+           has no series to "edit all" of, so turning Repeats on arrives here with a
+           full expansion. Writing `expanded[0]` dropped every occurrence after the
+           first, and nothing else ever re-expands a stored event — so the later weeks
+           never appeared at all until the series happened to be rebuilt by an "edit
+           all in series" save. */
+        setEvents(prev => prev.flatMap(e => {
+          if (e.id === ev.id) return expanded
           if (dayDiff !== 0 && e.extendedProps?.studyPlanOf === ev.id) {
             return touchEvent({ ...e, start: shiftIsoDays(e.start, dayDiff), end: shiftIsoDays(e.end, dayDiff) })
           }
