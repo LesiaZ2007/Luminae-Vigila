@@ -344,7 +344,11 @@ function SubtaskRow({ subtask, listColor, onToggle, onDelete, onUpdateText }) {
           value={val}
           onChange={e => setVal(e.target.value)}
           onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setVal(subtask.text); setEditing(false) } }}
+          onKeyDown={e => {
+            /* Escape commits, like clicking away does — see the same fix on the task
+               modal's step fields. Every way out of one of these means the same thing. */
+            if (e.key === 'Enter' || e.key === 'Escape') commit()
+          }}
           style={{
             flex: 1, background: 'transparent', border: 'none', borderBottom: `1.5px solid ${accent}`,
             color: 'var(--text)', fontSize: '0.78rem', fontFamily: 'inherit', outline: 'none', padding: '1px 0',
@@ -647,7 +651,10 @@ function ListItem({
                 value={textVal}
                 onChange={e => setTextVal(e.target.value)}
                 onBlur={commitText}
-                onKeyDown={e => { if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { setTextVal(item.text); setEditingText(false) } }}
+                onKeyDown={e => {
+                  // Escape keeps the rename, same as blurring — see the subtask row above.
+                  if (e.key === 'Enter' || e.key === 'Escape') commitText()
+                }}
                 style={{
                   width: '100%', background: 'transparent', border: 'none', borderBottom: `1.5px solid ${accent}`,
                   color: 'var(--text)', fontSize: '0.875rem', fontFamily: 'inherit', outline: 'none', padding: '1px 0',

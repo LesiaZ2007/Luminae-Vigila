@@ -635,6 +635,28 @@ is soft: the item leaves the view immediately, but todo/event unlinking is defer
 until the undo window closes, so a full restore is always possible. It works for single
 events and for *delete all in series*.
 
+### Escape keeps what you typed
+
+Every small text field here already committed on blur — clicking away from a half-typed
+step added it — but Escape threw the draft out, so the same typing survived or vanished
+depending on which way you happened to leave the field. Escape now commits everywhere:
+the inline step composer on a task row, the step field and the rename-a-step field in
+the Add/Edit modal, and the item and subtask renames on custom lists.
+
+In the modal it was losing more than the step. Escape there did not only discard the
+draft; nothing stopped it reaching the modal's own Escape handler, so it closed the
+entire form, and a modal that closes without saving takes the title, the date, the
+category and every other unsaved edit with it. Escape in a half-typed step field now
+adds the step and stays put. An empty field still closes the modal, because there is
+nothing to lose and Escape means *close* everywhere else in the app.
+
+The asymmetry is deliberate. Escape-as-cancel is the usual convention, but the cost
+here is not symmetrical: a step added by accident is one click to delete, and a step
+lost has no undo at all. When the two exits disagreed, the destructive one was the one
+you had to know about. Committing goes through blur rather than duplicating the add, so
+there is still exactly one code path that appends a step — otherwise an Escape followed
+by the browser's own blur could add the same step twice.
+
 ### Custom lists
 
 Lightweight standalone checklists alongside the main task list, for groceries, packing,
