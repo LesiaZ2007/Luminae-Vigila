@@ -1303,6 +1303,38 @@ permanent broken image, and the grace window makes that race require a 30-day-st
 device. A note that is *only* an image previews as "Image" rather than a blank card, and
 its reminder push says "Image" rather than sending an empty body.
 
+#### Laying images out
+
+Click an image and a small menu appears above it with three independent choices:
+
+- **Align** — left, center or right.
+- **Wrap text** — when on, the image floats to its side and the paragraphs after it flow
+  around it, the way a textbook sets a figure beside its caption. When off, the image
+  keeps a line to itself and alignment just slides it along that line.
+- **Size** — S, M and L are a third, a half and three quarters of the note's width;
+  **Fit** is the image's own size, capped at the full width.
+
+They are separate buttons rather than a list of Word-style presets because nearly every
+combination is meaningful. The one that is not is **center + wrap**: CSS can float an
+image left or right, but text on both sides would mean splitting each paragraph in two.
+So picking center turns wrapping off, and turning wrap on while centered moves the image
+left, the side text is read from. Turning wrap on for an image at Fit size also picks M,
+because a phone photo is already wider than the column and wrapping it would visibly do
+nothing — the click should have an effect.
+
+Sizes are percentages, not pixels, so a layout arranged on a laptop still reads on a
+phone. The exception is a large wrapped image on a screen under 520px wide, which would
+leave a column of text one or two words across; there it stops wrapping and sits on its
+own line. Lists and quotes next to a wrapped image move over as a block rather than
+tucking their bullets and quote bar underneath it.
+
+The layout is saved in the note itself as `data-align`, `data-wrap` and `data-size`
+attributes on the `<img>`, so it syncs like any other formatting. Defaults are left out
+of the HTML, which means every note written before this existed comes back byte-for-byte
+unchanged. Deliberately there is no inline `style`: a data-attribute can only mean what
+the app's stylesheet says it means, and values it does not recognise are dropped on load
+(`src/lib/noteImageLayout.js`).
+
 ### Everything else about notes
 
 - **Reminders** — an absolute date and time on any note, firing as an in-app toast while
@@ -2747,7 +2779,8 @@ The areas carrying the most test weight, because they are where a silent bug cos
   `icsExport` writes is read back by `parseIcs`, the same reader the Canvas feed uses.
 - **Domain logic** — `recurrence`, `classInstances`, `classCalendar`, `classLinks`,
   `classReminders`, `classCategories`, `grades`, `priority`, `glance`, `maps`,
-  `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`.
+  `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`,
+  `noteImageLayout`.
 
 New logic in `src/lib/` should come with a test beside it, matching the style of the
 existing ones.

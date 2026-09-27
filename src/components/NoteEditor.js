@@ -28,22 +28,25 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor, useEditorState, EditorContent } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
+import { NodeSelection } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight  from '@tiptap/extension-highlight'
 import TaskList   from '@tiptap/extension-task-list'
 import TaskItem   from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
-import Image      from '@tiptap/extension-image'
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   List, ListOrdered, ListChecks, Quote, Code, Heading1, Heading2,
   Undo2, Redo2, Star, Pin, Trash2, Bell, BellOff, Link2, Tag, X, Check,
   ArrowUpRight, CalendarPlus, ListPlus, ImagePlus, Loader2, Plus,
+  AlignLeft, AlignCenter, AlignRight, WrapText,
 } from 'lucide-react'
 import DatePicker from '@/components/DatePicker'
 import { notePlainText, noteDisplayTitle, addTagTo, removeTagFrom, noteHasTag, normalizeTag } from '@/lib/notes'
 import { imageFilesFrom, uploadNoteImage } from '@/lib/imagePaste'
+import { NoteImage, normalizeImageLayout, nextImageLayout } from '@/lib/noteImageLayout'
 import TimePicker from '@/components/TimePicker'
 
 // Highlighter swatches — deliberately light so text stays readable in both themes.
@@ -111,6 +114,9 @@ export default function NoteEditor({
   const [showLink,       setShowLink]       = useState(false)
   const [tagDraft,       setTagDraft]       = useState('')
   const [savedAt,        setSavedAt]        = useState(null)
+  // The body scrolls inside its own div, not the window — the image menu has to
+  // listen to that element or it would stay put while the image scrolls away.
+  const [scrollEl,       setScrollEl]       = useState(null)
 
   const saveTimer  = useRef(null)
   const loadedId   = useRef(null)
@@ -171,7 +177,9 @@ export default function NoteEditor({
       // allowBase64 stays off on purpose: a data: URI would put the whole image
       // inside the note body, which is exactly the localStorage-and-sync blowup
       // that lib/noteImages.js exists to avoid.
-      Image.configure({ allowBase64: false, HTMLAttributes: { class: 'lv-note-img' } }),
+      // NoteImage is the stock Image node plus align / wrap / size attributes
+      // (see lib/noteImageLayout.js and the image menu below).
+      NoteImage.configure({ allowBase64: false, HTMLAttributes: { class: 'lv-note-img' } }),
     ],
     content: note?.html ?? '',
     editorProps: {
@@ -402,11 +410,14 @@ export default function NoteEditor({
       </div>
 
       {/* ── Body ───────────────────────────────────────────────────────── */}
-      <div className="lv-note-scroll" style={{
+      <div ref={setScrollEl} className="lv-note-scroll" style={{
         flex: 1, minHeight: 0, overflowY: 'auto',
         padding: isMobile ? '0 14px 16px' : '0 20px 20px',
       }}>
         <EditorContent editor={editor} />
+        {/* Only mounted once the editor exists: BubbleMenu creates a DOM node while
+            rendering, which would throw during the server pass. */}
+        {editor && scrollEl && <ImageMenu editor={editor} scrollEl={scrollEl} />}
       </div>
 
       {/* ── Meta bar: color, tags, reminder, link, save state ─────────── */}
@@ -583,6 +594,73 @@ export default function NoteEditor({
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Image menu ──────────────────────────────────────────────────────────────
+// Appears above an image once you click it (ProseMirror node-selects it).
+// Alignment, text wrap, and size are three independent choices rather than a
+// list of Word-style presets, because the combinations are all meaningful —
+// the one exception, center + wrap, is resolved by nextImageLayout().
+const IMAGE_SIZE_OPTIONS = [
+  { value: 'small',  label: 'S',   title: 'Small — a third of the width' },
+  { value: 'medium', label: 'M',   title: 'Medium — half the width' },
+  { value: 'large',  label: 'L',   title: 'Large — three quarters of the width' },
+  { value: null,     label: 'Fit', title: 'Original size, up to the full width' },
+]
+
+const isImageSelected = ({ state }) =>
+  state.selection instanceof NodeSelection && state.selection.node.type.name === 'image'
+
+function ImageMenu({ editor, scrollEl }) {
+  // The parent does not re-render on every transaction, so read the selected
+  // image's layout through useEditorState to keep the pressed states current.
+  const layout = useEditorState({
+    editor,
+    selector: ({ editor: ed }) =>
+      ed && isImageSelected(ed) ? normalizeImageLayout(ed.getAttributes('image')) : null,
+  })
+
+  // BubbleMenu re-sends its options to the plugin whenever these identities
+  // change, so they are memoised rather than rebuilt every render.
+  const options = useMemo(() => ({
+    placement: 'top', offset: 8, flip: true, shift: { padding: 8 }, scrollTarget: scrollEl,
+  }), [scrollEl])
+
+  const apply = change => {
+    const next = nextImageLayout(layout, change)
+    editor.chain().focus().updateAttributes('image', next).run()
+  }
+
+  return (
+    <BubbleMenu editor={editor} pluginKey="lvImageMenu" shouldShow={isImageSelected} options={options}
+                style={{ zIndex: 40 }}>
+      <div role="toolbar" aria-label="Image layout" className="lv-pop-in" style={{
+        display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10,
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-modal)',
+      }}>
+        {layout && (
+          <>
+            <TBtn title="Align left"  active={layout.align === 'left'}   onClick={() => apply({ align: 'left' })}><AlignLeft size={15} /></TBtn>
+            <TBtn title="Center"      active={layout.align === 'center'} onClick={() => apply({ align: 'center' })}><AlignCenter size={15} /></TBtn>
+            <TBtn title="Align right" active={layout.align === 'right'}  onClick={() => apply({ align: 'right' })}><AlignRight size={15} /></TBtn>
+            <Divider />
+            <TBtn title={layout.wrap ? 'Stop wrapping text' : 'Wrap text around the image'}
+                  active={layout.wrap} onClick={() => apply({ wrap: !layout.wrap })}>
+              <WrapText size={15} />
+            </TBtn>
+            <Divider />
+            {IMAGE_SIZE_OPTIONS.map(o => (
+              <TBtn key={o.label} title={o.title} active={layout.size === o.value}
+                    onClick={() => apply({ size: o.value })}>
+                <span style={{ fontSize: '0.68rem', fontWeight: 800 }}>{o.label}</span>
+              </TBtn>
+            ))}
+          </>
+        )}
+      </div>
+    </BubbleMenu>
   )
 }
 

@@ -1116,6 +1116,48 @@ select option {
   margin: 0.6em 0;
 }
 
+/* Image layout — data-align / data-wrap / data-size come from lib/noteImageLayout.js.
+   Sizes are a share of the column, not pixels, so a layout picked on a laptop
+   still makes sense on a phone. */
+.lv-note-body img.lv-note-img[data-size='small']  { width: 33%; }
+.lv-note-body img.lv-note-img[data-size='medium'] { width: 50%; }
+.lv-note-body img.lv-note-img[data-size='large']  { width: 75%; }
+
+/* Not wrapping: the image keeps its own line and just moves along it. */
+.lv-note-body img.lv-note-img[data-align='center'] { margin-left: auto; margin-right: auto; }
+.lv-note-body img.lv-note-img[data-align='right']  { margin-left: auto; }
+
+/* Wrapping: a float, with the gap on the side the text is on. */
+.lv-note-body img.lv-note-img[data-wrap='true'] {
+  float: left;
+  margin: 0.3em 1.1em 0.6em 0;
+}
+.lv-note-body img.lv-note-img[data-wrap='true'][data-align='right'] {
+  float: right;
+  margin: 0.3em 0 0.6em 1.1em;
+}
+
+/* Beside a float, list bullets and the quote bar would otherwise sit underneath
+   the image (they hang outside their box). A new formatting context moves the
+   whole block over instead. The editor itself is one too, so a wrapped image
+   near the end never spills out below the note. */
+.lv-note-body,
+.lv-note-body ul,
+.lv-note-body ol,
+.lv-note-body blockquote { display: flow-root; }
+
+/* On a phone, a large wrapped image would leave a column of text one or two
+   words wide — stop wrapping it there and let it sit on its own line. */
+@media (max-width: 520px) {
+  .lv-note-body img.lv-note-img[data-wrap='true'][data-size='large'] {
+    float: none;
+    margin: 0.6em 0;
+  }
+  .lv-note-body img.lv-note-img[data-wrap='true'][data-size='large'][data-align='right'] {
+    margin-left: auto;
+  }
+}
+
 /* ProseMirror marks the selected node rather than using a text selection, so
    without this there is no feedback that clicking an image selected it. */
 .lv-note-body img.lv-note-img.ProseMirror-selectednode {
