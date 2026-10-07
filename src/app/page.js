@@ -61,7 +61,6 @@ import StudyPlanModal    from '@/components/StudyPlanModal'
 import ExamBlockModal    from '@/components/ExamBlockModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
-import Corvus from '@/components/Corvus'
 import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
 import BuildInfo from '@/components/BuildInfo'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
@@ -99,6 +98,16 @@ const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), {
 const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   ssr: false,
   loading: () => <NotesPanelSkeleton />,
+})
+/* Corvus is 1,100 lines that most sessions never open, and it needs the network to do
+   anything, so unlike the task and event editors it never has to open offline. That
+   makes it safe to split out: the service worker caches no code, so a chunk that has
+   not been fetched yet cannot load once the connection drops. The editors stay in the
+   main bundle for exactly that reason. Corvus is also fetched in the background once
+   the planner is idle (see the effect in Home), so opening it is still instant. */
+const Corvus = dynamic(() => import('@/components/Corvus'), {
+  ssr: false,
+  loading: () => <ListSkeleton rows={4} label="Loading Corvus" padding="20px" />,
 })
 
 // Seed values only. Event categories are user-editable and synced — read
@@ -439,6 +448,14 @@ export default function Home() {
     () => [...events, ...googleEvents].filter(e => eventPrefs[e.id]?.hidden).length,
     [events, googleEvents, eventPrefs],
   )
+
+  // Warm Corvus's chunk once the first render has settled — see the dynamic() above.
+  useEffect(() => {
+    const whenIdle   = window.requestIdleCallback ?? (cb => setTimeout(cb, 2000))
+    const cancelIdle = window.cancelIdleCallback  ?? clearTimeout
+    const id = whenIdle(() => { import('@/components/Corvus').catch(() => {}) })
+    return () => cancelIdle(id)
+  }, [])
 
   useEffect(() => {
     setMounted(true)
