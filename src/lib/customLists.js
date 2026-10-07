@@ -41,23 +41,6 @@ import {
   softDelete, visible,
 } from './tombstones'
 
-const LS_KEY = 'lv-custom-lists'
-
-export function loadCustomLists() {
-  try {
-    const raw = localStorage.getItem(LS_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-export function saveCustomLists(lists) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(lists))
-  } catch {}
-}
-
 /** The items a list should actually display — tombstones filtered out. */
 export function visibleItems(list) {
   return visible(list?.items ?? [])

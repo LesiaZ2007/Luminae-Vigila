@@ -364,25 +364,6 @@ select option {
 }
 
 /* ══════════════════════════════════════════════
-   CHIP / PILL TOGGLE
-══════════════════════════════════════════════ */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1.5px solid transparent;
-  background: var(--surface2);
-  color: var(--text-2);
-  transition: all 0.13s;
-}
-.chip:hover { color: var(--text); }
-
-/* ══════════════════════════════════════════════
    TOGGLE SWITCH
 ══════════════════════════════════════════════ */
 .toggle {
@@ -508,12 +489,6 @@ select option {
   40%  { transform: scale(1.4); }
   70%  { transform: scale(0.88); }
   100% { transform: scale(1); }
-}
-
-/* Todo item completion fade */
-@keyframes todo-complete {
-  from { opacity: 1; max-height: 80px; }
-  to   { opacity: 0; max-height: 0;    padding: 0; margin: 0; }
 }
 
 /* ══════════════════════════════════════════════
