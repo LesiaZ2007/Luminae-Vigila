@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { readStored, usePersist } from '@/lib/usePersist'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
@@ -142,6 +143,14 @@ const DEFAULT_TODO_CATS = [
   { id: 'health',   label: 'Health',   color: '#ef4444' },
 ]
 
+/* How a stored collection is read back (see lib/usePersist). Expired
+   tombstones are dropped on load, and so are blank notes a previous session left
+   behind (discardEmptyNote below is the live version of the same rule). An empty
+   event-category list falls through to the defaults: it would leave the user with
+   no categories at all and no obvious way back. */
+const reviveNotes           = list => dropEmptyNotes(purgeExpiredTrash(list))
+const reviveEventCategories = list => (Array.isArray(list) && list.length > 0 ? list : DEFAULT_EVENT_CATEGORIES)
+
 /** "14:05" from whatever shape an occurrence's start/end arrived in. */
 function hhmmLocal(value) {
   if (!value) return ''
@@ -177,13 +186,16 @@ export default function Home() {
   // Everything in the UI reads the derived `events` / `todos` / `customLists`,
   // which have tombstones filtered out, so no read site had to change. Only the
   // sync and persistence paths touch the raw arrays.
-  const [eventsRaw,      setEvents]         = useState([])
-  const [todosRaw,       setTodos]          = useState([])
+  //
+  // Each of these is read from localStorage on the first render and written back by
+  // usePersist further down — see lib/usePersist.
+  const [eventsRaw,      setEvents]         = useState(() => readStored('lv-events', [], purgeTombstones))
+  const [todosRaw,       setTodos]          = useState(() => readStored('lv-todos',  [], purgeTodos))
   const events = useMemo(() => visible(eventsRaw), [eventsRaw])
   const todos  = useMemo(() => visible(todosRaw),  [todosRaw])
-  const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
-  const [eventCategories, setEventCategories] = useState(DEFAULT_EVENT_CATEGORIES)
-  const [studySessions,  setStudySessions]  = useState([])
+  const [todoCategories, setTodoCategories] = useState(() => readStored('lv-todo-cats', DEFAULT_TODO_CATS))
+  const [eventCategories, setEventCategories] = useState(() => readStored('lv-event-cats', DEFAULT_EVENT_CATEGORIES, reviveEventCategories))
+  const [studySessions,  setStudySessions]  = useState(() => readStored('lv-study-sessions', []))
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
@@ -226,17 +238,17 @@ export default function Home() {
      marker: "is this device up to date" is otherwise unanswerable from the UI, which
      is exactly the question you have when two devices disagree. */
   const [lastSyncedAt,       setLastSyncedAt]       = useState(null)
-  const [eventPrefs,         setEventPrefs]         = useState({})
+  const [eventPrefs,         setEventPrefs]         = useState(() => readStored('lv-event-prefs', {}))
 
   // ── Custom Lists ──
-  const [customListsRaw,   setCustomLists]      = useState([])
+  const [customListsRaw,   setCustomLists]      = useState(() => readStored('lv-custom-lists', [], purgeTombstones))
   const customLists = useMemo(() => visible(customListsRaw), [customListsRaw])
   const [activeListId,     setActiveListId]     = useState('my-tasks')
   const [showNewListModal, setShowNewListModal] = useState(false)
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
   // ── Notes ──
-  const [notes,        setNotes]        = useState([])
+  const [notes,        setNotes]        = useState(() => readStored('lv-notes', [], reviveNotes))
   const [activeNoteId, setActiveNoteId] = useState(null)
   // Draft carried from a note into the task/event editor, plus which note to
   // link back to once the item is actually saved.
@@ -326,13 +338,13 @@ export default function Home() {
   }, [openSearchPopup])
 
   // ── Canvas state ──
-  const [canvasAssignments,  setCanvasAssignments]  = useState([])
+  const [canvasAssignments,  setCanvasAssignments]  = useState(() => readStored('lv-canvas-assignments', []))
   /* Raw vs visible, the same split events and todos use. The raw array keeps
      tombstones so a delete can reach other devices; everything on screen reads the
      visible one. Without this a deleted class was simply absent locally, which the
      merge cannot tell apart from a class created on another device — so it came
      back on the next sync. See lib/tombstones.js. */
-  const [canvasClassesRaw,   setCanvasClasses]      = useState([])
+  const [canvasClassesRaw,   setCanvasClasses]      = useState(() => readStored('lv-canvas-classes', [], purgeTombstones))
   const canvasClasses = useMemo(() => visible(canvasClassesRaw), [canvasClassesRaw])
 
   /* Task categories as the pickers see them: the user's own, plus one per class on the
@@ -343,8 +355,8 @@ export default function Home() {
     () => mergeCategories(todoCategories, classCategories(canvasClasses)),
     [todoCategories, canvasClasses],
   )
-  const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
-  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
+  const [canvasCalEvents,    setCanvasCalEvents]    = useState(() => readStored('lv-canvas-cal-events', []))
+  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState(() => readStored('lv-canvas-ics-events', []))
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
   const [showClassModal,     setShowClassModal]     = useState(false)
   const [editingClass,       setEditingClass]       = useState(null)
@@ -383,7 +395,7 @@ export default function Home() {
 
   const [clockTime,    setClockTime]    = useState(() => new Date())
   const [weather,      setWeather]      = useState(null)
-  const [militaryTime, setMilitaryTime] = useState(false)
+  const [militaryTime, setMilitaryTime] = useState(() => readStored('lv-clock-24h', false))
   const [currentUser,  setCurrentUser]  = useState(null)
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
@@ -496,16 +508,15 @@ export default function Home() {
         // truth at load time. Computing the merge synchronously lets us set state
         // AND POST the exact same object, eliminating the old 500ms "wait for
         // React to flush" race that could upload a stale snapshot.
-        const readLocal = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ?? fb) } catch { return JSON.parse(fb) } }
-        const localEvents   = readLocal('lv-events',         '[]')
-        const localTodos    = readLocal('lv-todos',          '[]')
-        const localCats     = readLocal('lv-todo-cats',      '[]')
-        const localEvCats   = readLocal('lv-event-cats',     '[]')
-        const localClasses  = readLocal('lv-canvas-classes', '[]')
-        const localPrefs    = readLocal('lv-event-prefs',    '{}')
-        const localSessions = readLocal('lv-study-sessions', '[]')
-        const localLists    = readLocal('lv-custom-lists',   '[]')
-        const localNotes    = readLocal('lv-notes',          '[]')
+        const localEvents   = readStored('lv-events',         [])
+        const localTodos    = readStored('lv-todos',          [])
+        const localCats     = readStored('lv-todo-cats',      [])
+        const localEvCats   = readStored('lv-event-cats',     [])
+        const localClasses  = readStored('lv-canvas-classes', [])
+        const localPrefs    = readStored('lv-event-prefs',    {})
+        const localSessions = readStored('lv-study-sessions', [])
+        const localLists    = readStored('lv-custom-lists',   [])
+        const localNotes    = readStored('lv-notes',          [])
 
         /* The hand-rolled mergeById that used to live here is gone. It was the
            pre-tombstone merge, and it survived here long after the collections it
@@ -909,8 +920,9 @@ export default function Home() {
 
   /* ── Incoming Web Share ──────────────────────────────────────────────────
      /share stashes the payload and redirects here (see src/app/share/page.js).
-     Runs after the localStorage load below has had a chance to populate notes,
-     so the shared note is prepended to real data rather than an empty array. */
+     `notes` is already read from localStorage by the time this runs, so the
+     shared note is prepended to the real list. It used to run *before* a separate
+     load effect, which then replaced the list and dropped the share. */
   useEffect(() => {
     let raw
     try {
@@ -966,59 +978,20 @@ export default function Home() {
     window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
   }, [])
 
-  /* ── Load from localStorage ── */
-  useEffect(() => {
-    try {
-      const e  = localStorage.getItem('lv-events')
-      const t  = localStorage.getItem('lv-todos')
-      const tc = localStorage.getItem('lv-todo-cats')
-      const ep = localStorage.getItem('lv-event-prefs')
-      const ss = localStorage.getItem('lv-study-sessions')
-      if (e)  setEvents(purgeTombstones(JSON.parse(e)))
-      if (t)  setTodos(purgeTodos(JSON.parse(t)))
-      if (tc) setTodoCategories(JSON.parse(tc))
-      const ec = localStorage.getItem('lv-event-cats')
-      if (ec) {
-        const parsed = JSON.parse(ec)
-        // An empty array would leave the user with no categories at all and no
-        // obvious way back, so fall through to the defaults.
-        if (Array.isArray(parsed) && parsed.length > 0) setEventCategories(parsed)
-      }
-      if (ep) setEventPrefs(JSON.parse(ep))
-      if (ss) setStudySessions(JSON.parse(ss))
-      // Custom Lists
-      const cl = localStorage.getItem('lv-custom-lists')
-      if (cl) setCustomLists(purgeTombstones(JSON.parse(cl)))
-      // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago,
-      // dropEmptyNotes clears out blanks left behind by a previous session
-      // (see discardEmptyNote below for the live version of the same rule).
-      const nt = localStorage.getItem('lv-notes')
-      if (nt) setNotes(dropEmptyNotes(purgeExpiredTrash(JSON.parse(nt))))
-      // Canvas
-      const ca  = localStorage.getItem('lv-canvas-assignments')
-      const cc  = localStorage.getItem('lv-canvas-classes')
-      const cce = localStorage.getItem('lv-canvas-cal-events')
-      const cie = localStorage.getItem('lv-canvas-ics-events')
-      if (ca)  setCanvasAssignments(JSON.parse(ca))
-      if (cc)  setCanvasClasses(purgeTombstones(JSON.parse(cc)))
-      if (cce) setCanvasCalEvents(JSON.parse(cce))
-      if (cie) setCanvasIcsEvents(JSON.parse(cie))
-    } catch (_) {}
-  }, [])
-
-  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(eventsRaw))      }, [eventsRaw])
-  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todosRaw))       }, [todosRaw])
-  useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
-  useEffect(() => { localStorage.setItem('lv-event-cats',     JSON.stringify(eventCategories)) }, [eventCategories])
-  useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
-  useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
-  useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customListsRaw)) }, [customListsRaw])
-  useEffect(() => { localStorage.setItem('lv-notes',          JSON.stringify(notes))          }, [notes])
-  // Canvas
-  useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
-  useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClassesRaw))  }, [canvasClassesRaw])
-  useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
-  useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
+  /* ── Save to localStorage ── read back in each useState initialiser above. */
+  usePersist('lv-events',             eventsRaw)
+  usePersist('lv-todos',              todosRaw)
+  usePersist('lv-todo-cats',          todoCategories)
+  usePersist('lv-event-cats',         eventCategories)
+  usePersist('lv-event-prefs',        eventPrefs)
+  usePersist('lv-study-sessions',     studySessions)
+  usePersist('lv-custom-lists',       customListsRaw)
+  usePersist('lv-notes',              notes)
+  usePersist('lv-canvas-assignments', canvasAssignments)
+  usePersist('lv-canvas-classes',     canvasClassesRaw)
+  usePersist('lv-canvas-cal-events',  canvasCalEvents)
+  usePersist('lv-canvas-ics-events',  canvasIcsEvents)
+  usePersist('lv-clock-24h',          militaryTime)
 
   const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
     const id = String(Date.now())
