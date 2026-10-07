@@ -270,7 +270,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
           {!isCanvas && <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: repeats ? 12 : 0 }}>
               <button type="button" className="toggle" data-on={String(repeats)} onClick={() => setRepeats(v => !v)}>
-                <div className="toggle-thumb" />
+                <span className="toggle-knob" />
               </button>
               <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <RefreshCw size={13} style={{ color: repeats ? 'var(--blue)' : 'var(--text-3)' }} /> Repeats
