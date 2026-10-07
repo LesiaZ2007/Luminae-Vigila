@@ -14,12 +14,7 @@ import MiniToggle from '@/components/MiniToggle'
 import {
   readLocalPrefs, writeLocalPrefs, hydrateGooglePrefs, persistGooglePrefs,
 } from '@/lib/googlePrefs'
-
-const COLOR_PRESETS = [
-  '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
-  '#10b981','#059669','#f59e0b','#ef4444',
-  '#8b5cf6','#ec4899','#64748b','#475569',
-]
+import { COLOR_PRESETS } from '@/lib/palette'
 
 export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }) {
   const [accounts,   setAccounts]   = useState([])    // [{ id, email }]
