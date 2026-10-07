@@ -10,15 +10,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronDown, ChevronRight, Settings2, RefreshCw } from 'lucide-react'
 import { GoogleLogo } from '@/components/GoogleCalendarSettings'
+import MiniToggle from '@/components/MiniToggle'
 import {
   readLocalPrefs, writeLocalPrefs, hydrateGooglePrefs, persistGooglePrefs,
 } from '@/lib/googlePrefs'
-
-const COLOR_PRESETS = [
-  '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
-  '#10b981','#059669','#f59e0b','#ef4444',
-  '#8b5cf6','#ec4899','#64748b','#475569',
-]
+import { COLOR_PRESETS } from '@/lib/palette'
 
 export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }) {
   const [accounts,   setAccounts]   = useState([])    // [{ id, email }]
@@ -367,28 +363,5 @@ function ColorDot({ value, onChange, disabled = false }) {
         </div>
       )}
     </div>
-  )
-}
-
-function MiniToggle({ enabled, onChange, disabled = false }) {
-  return (
-    <button
-      onClick={() => !disabled && onChange(!enabled)}
-      style={{
-        width: 26, height: 14, borderRadius: 999, border: 'none',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        background: (enabled && !disabled) ? 'rgba(99,179,237,.8)' : 'rgba(255,255,255,.12)',
-        position: 'relative', transition: 'background .18s', flexShrink: 0,
-        opacity: disabled ? 0.3 : 1, padding: 0,
-      }}
-    >
-      <span style={{
-        position: 'absolute', top: 2,
-        left: enabled ? 13 : 2,
-        width: 10, height: 10, borderRadius: '50%',
-        background: '#fff', transition: 'left .18s',
-        display: 'block',
-      }} />
-    </button>
   )
 }

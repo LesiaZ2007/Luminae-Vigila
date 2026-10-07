@@ -180,6 +180,19 @@ describe('ClassesPanel — coursework', () => {
     expect(onTodoClick).not.toHaveBeenCalled()
   })
 
+  // A bare <div onClick> is invisible to a keyboard — nothing to Tab to, nothing
+  // to press. role="button" + tabIndex makes it reachable; this checks Enter
+  // opens the editor the same way a click does.
+  it('is reachable by keyboard, and opens the editor on Enter like a click does', () => {
+    const onTodoClick = vi.fn()
+    renderPanel({ todos, onTodoClick })
+    openCard()
+    const row = cards().getByText('Lab report').closest('[role="button"]')
+    expect(row).toHaveAttribute('tabindex', '0')
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
+  })
+
   /* A task with steps says nothing useful from its title alone, and the only way
      to see how far in it was used to be the editor, opened over the whole panel.
      It unfurls in place instead; the editor is still in there, one click down. */
@@ -776,6 +789,22 @@ describe('ClassesPanel — the calendar is the main spread', () => {
     await userEvent.click(panel.getByRole('button', { name: 'Mark done' }))
 
     expect(onToggleTodo).toHaveBeenCalledWith('t1')
+  })
+
+  // Same fix as the class card's task row: the floating day's rows were a bare
+  // <div onClick> too, so Enter had no way to reach them at all.
+  it('opens the task menu from the floating day on Enter, same as a click', async () => {
+    const onTodoClick = vi.fn()
+    renderPanel({ todos, onTodoClick })
+    await userEvent.click(calendar().getByTitle(/2026-03-12: 1 task/))
+
+    const panel = within(screen.getByRole('dialog'))
+    const row = panel.getByText('Lab report').closest('[role="button"]')
+    expect(row).toHaveAttribute('tabindex', '0')
+    fireEvent.keyDown(row, { key: 'Enter' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit task' }))
+    expect(onTodoClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
   })
 
   /* The panel is anchored to a cell in the month that is leaving. */
