@@ -324,6 +324,27 @@ describe('parseIcs', () => {
       const result = parseIcs(minimalVcalendar(vevent))
       expect(result[0]).toMatchObject({ start: '2024-01-15T13:00:00', allDay: false })
     })
+
+    it('unquotes a quoted TZID instead of silently treating the time as floating', () => {
+      const vevent = makeVevent([
+        'UID:tzid-quoted',
+        'DTSTART;TZID="Europe/London":20240115T130000',
+        'SUMMARY:Quoted zone',
+      ])
+      const result = parseIcs(minimalVcalendar(vevent))
+      expect(result[0]).toMatchObject({ start: '2024-01-15T08:00:00', allDay: false })
+    })
+
+    it('does not split on a colon or semicolon inside a quoted parameter value', () => {
+      // RFC 5545 requires the quotes exactly when a parameter value holds : ; or ,
+      const vevent = makeVevent([
+        'UID:quoted-colon',
+        'DTSTART;X-NOTE="a:b;c";TZID=Europe/London:20240115T130000',
+        'SUMMARY:Quoted colon',
+      ])
+      const result = parseIcs(minimalVcalendar(vevent))
+      expect(result[0]).toMatchObject({ start: '2024-01-15T08:00:00', allDay: false })
+    })
   })
 
   describe('text escaping (RFC 5545 §3.3.11)', () => {

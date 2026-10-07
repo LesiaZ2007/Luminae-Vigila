@@ -123,17 +123,32 @@ export function parseIcsDate(value, params = {}) {
  * One unfolded property line, split on parameters: `NAME;PARAM=x;PARAM2=y:value`
  * becomes `{ name: 'NAME', params: { PARAM: 'x', PARAM2: 'y' }, value }`.
  *
- * Split on the *first* colon only — a value (a URL in LOCATION, say) can legally
- * contain further colons, and the name/parameter portion before it never does.
+ * Split on the first colon *outside double quotes* — a value (a URL in LOCATION, say)
+ * can legally contain further colons, and so can a quoted parameter value; RFC 5545
+ * requires the quotes precisely when a parameter value contains `:`, `;` or `,`. The
+ * `;` between parameters is likewise only a separator outside quotes.
  */
 function parseProperty(rawLine) {
-  const colon = rawLine.indexOf(':')
+  let inQuotes = false
+  let colon = -1
+  const cuts = [-1]
+  for (let i = 0; i < rawLine.length; i++) {
+    const ch = rawLine[i]
+    if (ch === '"') inQuotes = !inQuotes
+    else if (!inQuotes && ch === ';') cuts.push(i)
+    else if (!inQuotes && ch === ':') { colon = i; break }
+  }
   if (colon === -1) return null
-  const [name, ...paramParts] = rawLine.slice(0, colon).split(';')
+  cuts.push(colon)
+  const segments = cuts.slice(1).map((end, k) => rawLine.slice(cuts[k] + 1, end))
+  const [name, ...paramParts] = segments
   const params = {}
   for (const part of paramParts) {
     const eq = part.indexOf('=')
-    if (eq !== -1) params[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1)
+    // A parameter value may be quoted (`TZID="America/New_York"`), and must be when it
+    // contains a colon, semicolon or comma. The quotes are not part of the value: kept,
+    // they made Intl reject the zone and the time fell back to floating, silently.
+    if (eq !== -1) params[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1).replace(/^"(.*)"$/, '$1')
   }
   return { name: name.toUpperCase(), params, value: rawLine.slice(colon + 1) }
 }
