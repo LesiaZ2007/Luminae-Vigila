@@ -2306,6 +2306,14 @@ your default. Auto-start is off by default, so the timer pauses between phases a
 for you, and a lightbulb in the header toggles a short dismissible note explaining the
 flow.
 
+**Pause keeps your place.** Pausing at 18:42 and coming back resumes from 18:42; only Reset,
+Skip, picking another phase, or finishing one starts the clock from the top. That used to be
+broken: an effect re-synced the clock to the full phase length whenever the timer was not
+running, and pausing is exactly the moment it stops running, so Pause behaved like Reset.
+The time left is now only stored once a phase has started; before that it is derived from
+the phase length, which is also why a length changed in settings shows up on the idle clock
+straight away while a phase already under way keeps the length it started with.
+
 **Pick what you are focusing on** — a task, a Canvas assignment, or a calendar event.
 Completed sessions accumulate focus time on it. Exams and quizzes lead the list, because
 revising for a specific exam is the longest-running focus target a student has, followed
