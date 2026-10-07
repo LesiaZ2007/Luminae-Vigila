@@ -54,28 +54,36 @@ export async function GET() {
   try {
     await ensurePushSchema()
 
-    subscriptions = await sql`
-      SELECT endpoint
-      FROM push_subscriptions
-      WHERE user_id = ${session.userId}
-    `
-    const userRows = await sql`SELECT digest_enabled FROM users WHERE id = ${session.userId}`
-    digestEnabled  = userRows[0]?.digest_enabled === true
+    // Four independent reads, none depending on another's result — run together
+    // rather than paying for four sequential round trips on an endpoint whose
+    // whole job is answering "what's wrong" as fast as possible.
+    const [subsRows, userRows, pingRows, sendRows] = await Promise.all([
+      sql`
+        SELECT endpoint
+        FROM push_subscriptions
+        WHERE user_id = ${session.userId}
+      `,
+      sql`SELECT digest_enabled FROM users WHERE id = ${session.userId}`,
+      // Cron heartbeats are global rather than per-user — they describe the
+      // deployment's schedulers, not this account — but they carry no user data, and
+      // "is anything even calling the cron" is the single most useful thing to know
+      // when notifications stop.
+      sql`SELECT path, last_success, success_count FROM cron_pings`.catch(() => []),
+      // sent_reminders is created lazily by the reminders cron, so its absence is
+      // itself a signal: it means the cron has never once run.
+      sql`
+        SELECT reminder_key, sent_at
+        FROM sent_reminders
+        WHERE user_id = ${session.userId}
+        ORDER BY sent_at DESC
+        LIMIT 5
+      `.catch(() => []),
+    ])
 
-    // Cron heartbeats are global rather than per-user — they describe the
-    // deployment's schedulers, not this account — but they carry no user data, and
-    // "is anything even calling the cron" is the single most useful thing to know
-    // when notifications stop.
-    pings = await sql`SELECT path, last_success, success_count FROM cron_pings`.catch(() => [])
-    // sent_reminders is created lazily by the reminders cron, so its absence is
-    // itself a signal: it means the cron has never once run.
-    recentSends = await sql`
-      SELECT reminder_key, sent_at
-      FROM sent_reminders
-      WHERE user_id = ${session.userId}
-      ORDER BY sent_at DESC
-      LIMIT 5
-    `.catch(() => [])
+    subscriptions = subsRows
+    digestEnabled = userRows[0]?.digest_enabled === true
+    pings         = pingRows
+    recentSends   = sendRows
   } catch (e) {
     dbError = e.message
   }
