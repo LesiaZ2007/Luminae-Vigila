@@ -6,11 +6,13 @@ import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
 import { readStored, usePersist } from '@/lib/usePersist'
+import { useNow } from '@/lib/useNow'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
 import TaskActionMenu from '@/components/TaskActionMenu'
 import CrowIcon from '@/components/CrowIcon'
+import LiveClock, { NextUpCard } from '@/components/LiveClock'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -393,7 +395,12 @@ export default function Home() {
   const [digestEnabled, setDigestEnabled] = useState(false)
   const [digestSaving,  setDigestSaving]  = useState(false)
 
-  const [clockTime,    setClockTime]    = useState(() => new Date())
+  /* A minute tick, not a second one. The ticking clock and the "next up" countdown
+     own their own one-second timers (components/LiveClock), so a second going by no
+     longer re-renders the whole planner. This tick stays because panels work out
+     "today" and "overdue" while rendering: a re-render a minute keeps those right
+     across midnight, or across a due time, on a tab nobody is touching. */
+  const now = useNow(60_000)
   const [weather,      setWeather]      = useState(null)
   const [militaryTime, setMilitaryTime] = useState(() => readStored('lv-clock-24h', false))
   const [currentUser,  setCurrentUser]  = useState(null)
@@ -875,11 +882,6 @@ export default function Home() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [showAddMenu])
-
-  useEffect(() => {
-    const id = setInterval(() => setClockTime(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return
@@ -2430,32 +2432,21 @@ export default function Home() {
     return markers
   }, [customLists])
 
-  function markImportant(list) {
-    return list.map(e => (eventPrefs[e.id]?.important
-      ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
-      : e))
-  }
+  /* Completed tasks stay on the calendar instead of vanishing. A day you have
+     finished emptying out reads as "nothing was ever due here", which is the
+     opposite of the truth and makes the calendar a poor record of the term. They
+     render struck through and faded, so "done" is still obvious at a glance —
+     see `done` in extendedProps, which WeeklyCalendar styles on. */
+  const todoCalendarItems = useMemo(() => {
+    // Lookups by id, built once, rather than a linear search per task. First match
+    // wins, as `find` did.
+    const colorByCategory = new Map()
+    for (const c of todoCategories) if (!colorByCategory.has(c.id)) colorByCategory.set(c.id, c.color)
+    const eventById = new Map()
+    for (const e of visibleEvents) if (!eventById.has(e.id)) eventById.set(e.id, e)
 
-  /* The important flag is stamped on at the end rather than inside each of the
-     source-specific memos above: it is keyed by event id in eventPrefs, applies
-     to every source alike, and doing it once here means a new source picks it up
-     without remembering to. */
-  const allCalendarEvents = markImportant([
-    ...visibleEvents,
-    ...visibleGoogleEvents,
-    ...hiddenGcalEvents,
-    ...canvasClassEvents,
-    ...visibleCanvasCalEvents,
-    ...visibleCanvasIcsEvents,
-    ...canvasAssignmentTasks,
-    ...customListCalEvents,
-    /* Completed tasks stay on the calendar instead of vanishing. A day you have
-       finished emptying out reads as "nothing was ever due here", which is the
-       opposite of the truth and makes the calendar a poor record of the term. They
-       render struck through and faded, so "done" is still obvious at a glance —
-       see `done` in extendedProps, which WeeklyCalendar styles on. */
-    ...todos.flatMap(t => {
-      const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
+    return todos.flatMap(t => {
+      const todoCatColor = colorByCategory.get(t.category) || '#94a3b8'
       const instances = expandRecurringTodo(t)
       const done = Boolean(t.completed)
       const calItems = instances.map(inst => ({
@@ -2464,7 +2455,7 @@ export default function Home() {
         extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
       }))
       if (t.linkedEventId && !t.recurrence) {
-        const ev = visibleEvents.find(e => e.id === t.linkedEventId)
+        const ev = eventById.get(t.linkedEventId)
         if (ev) calItems.push({
           id: `cal-linked-${t.id}`, title: `↳ ${t.title}`, start: (ev.start || '').slice(0, 10),
           allDay: true, color: todoCatColor,
@@ -2472,7 +2463,33 @@ export default function Home() {
         })
       }
       return calItems
-    }),
+    })
+  }, [todos, todoCategories, visibleEvents])
+
+  /* The important flag is stamped on at the end rather than inside each of the
+     source-specific memos above: it is keyed by event id in eventPrefs, applies
+     to every source alike, and doing it once here means a new source picks it up
+     without remembering to.
+
+     Memoised, and that matters: this is the array FullCalendar is handed, and it
+     used to be rebuilt — every recurring task re-expanded, every event copied — on
+     each render of the planner, which until recently meant once a second. */
+  const allCalendarEvents = useMemo(() => [
+    ...visibleEvents,
+    ...visibleGoogleEvents,
+    ...hiddenGcalEvents,
+    ...canvasClassEvents,
+    ...visibleCanvasCalEvents,
+    ...visibleCanvasIcsEvents,
+    ...canvasAssignmentTasks,
+    ...customListCalEvents,
+    ...todoCalendarItems,
+  ].map(e => (eventPrefs[e.id]?.important
+    ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
+    : e)), [
+    visibleEvents, visibleGoogleEvents, hiddenGcalEvents, canvasClassEvents,
+    visibleCanvasCalEvents, visibleCanvasIcsEvents, canvasAssignmentTasks,
+    customListCalEvents, todoCalendarItems, eventPrefs,
   ])
 
   const searchResults = useMemo(() => {
@@ -2773,39 +2790,12 @@ export default function Home() {
     }
   }, [])
 
-  const nextEventToday = useMemo(() => {
-    if (!mounted) return null
-    // Local, not UTC: event starts are naive local strings, so comparing them
-    // against a UTC date meant the card jumped to tomorrow every evening.
-    const todayStr    = toYMDLocal(clockTime)
-    const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
-    const tomorrowStr = toYMDLocal(tomorrowDt)
-    // Merge local + Google Calendar events + class meetings for the sidebar
-    // preview. Class periods are the most predictable thing on a student's day,
-    // which is exactly why leaving them out made the card feel wrong: it would
-    // announce a 4pm club meeting while saying nothing about the 9am lecture.
-    const allVisible = [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents]
-    // First: soonest remaining event today
-    const todayNext = allVisible
-      .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
-      .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
-    if (todayNext) return todayNext
-    // Fallback: first event tomorrow
-    return allVisible
-      .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
-      .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
-  }, [visibleEvents, visibleGoogleEvents, canvasClassEvents, clockTime, mounted])
-
-  function timeUntil(start) {
-    const diff = new Date(start) - clockTime
-    if (diff <= 0) return null
-    const h = Math.floor(diff / 3600000)
-    const m = Math.floor((diff % 3600000) / 60000)
-    const s = Math.floor((diff % 60000) / 1000)
-    if (h > 0) return `${h}h ${m}m`
-    if (m > 0) return `${m}m ${s}s`
-    return `${s}s`
-  }
+  // Everything with a time the sidebar's "next up" card can announce: own events,
+  // Google events and class meetings. See NextUpCard.
+  const upNextEvents = useMemo(
+    () => [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents],
+    [visibleEvents, visibleGoogleEvents, canvasClassEvents],
+  )
 
   function weatherIcon(code) {
     if (code === 0)         return '☀️'
@@ -2886,21 +2876,7 @@ export default function Home() {
 
         {/* Live info panel */}
         <div style={{ margin: '0 10px 10px', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: '1.05rem', fontWeight: 800, color: '#fff', letterSpacing: '0.01em', lineHeight: 1.2 }}>
-              {militaryTime
-                ? clockTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-                : clockTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
-            </div>
-            <button type="button" onClick={() => setMilitaryTime(v => !v)}
-                    title={militaryTime ? 'Switch to 12h' : 'Switch to 24h'}
-                    style={{ fontSize: '0.56rem', fontWeight: 700, color: 'rgba(147,197,253,.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
-              {militaryTime ? '12h' : '24h'}
-            </button>
-          </div>
-          <div style={{ fontSize: '0.66rem', color: 'rgba(147,197,253,.55)', marginTop: 3, fontWeight: 500 }}>
-            {clockTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-          </div>
+          <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} />
 
           {weather && (
             <div style={{ marginTop: 8 }}>
@@ -2916,38 +2892,15 @@ export default function Home() {
             </div>
           )}
 
-          {nextEventToday && (() => {
-            const todayStr   = toYMDLocal(clockTime)
-            const isTomorrow = !nextEventToday.start?.startsWith(todayStr)
-            const until      = isTomorrow ? null : timeUntil(nextEventToday.start)
-            const label      = isTomorrow ? 'Tomorrow' : until ? `In ${until}` : null
-            // Where to be matters more than what it is called for a class period,
-            // so the room rides along when the item carries one.
-            const where      = nextEventToday.location || nextEventToday.extendedProps?.location || ''
-            return label ? (
-              <div style={{ marginTop: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(96,165,250,.14)', borderLeft: '2.5px solid rgba(96,165,250,.5)' }}>
-                <div style={{ fontSize: '0.6rem', color: 'rgba(147,197,253,.6)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  {label}
-                </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {nextEventToday.title}
-                </div>
-                {where && (
-                  <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.6)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {where}
-                  </div>
-                )}
-              </div>
-            ) : null
-          })()}
+          <NextUpCard events={upNextEvents} />
         </div>
 
         {/* ── Mini month navigator (desktop/tablet only) ── */}
         {!isMobile && (
           <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
             <MiniMonthCalendar
-              currentDate={clockTime}
-              highlightWeekOf={clockTime}
+              currentDate={now}
+              highlightWeekOf={now}
               onDayClick={(dateStr) => {
                 setActiveNav('calendar')
                 setCalendarTargetDate(dateStr)
@@ -3377,20 +3330,7 @@ export default function Home() {
 
             {/* Live info */}
             <div style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: '1.1rem', fontWeight: 800, color: '#fff', letterSpacing: '0.01em', lineHeight: 1.2 }}>
-                  {militaryTime
-                    ? clockTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-                    : clockTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
-                </div>
-                <button type="button" onClick={() => setMilitaryTime(v => !v)}
-                        style={{ fontSize: '0.56rem', fontWeight: 700, color: 'rgba(147,197,253,.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
-                  {militaryTime ? '12h' : '24h'}
-                </button>
-              </div>
-              <div style={{ fontSize: '0.66rem', color: 'rgba(147,197,253,.55)', marginTop: 3, fontWeight: 500 }}>
-                {clockTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-              </div>
+              <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} fontSize="1.1rem" />
               {weather && (
                 <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: '1rem' }}>{weatherIcon(weather.code)}</span>
