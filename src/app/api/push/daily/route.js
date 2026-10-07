@@ -57,35 +57,50 @@ export async function GET(request) {
 
   let sent = 0, skipped = 0, failed = 0
 
+  /* Every account, and every device within it, fails on its own. Before the
+     grouping each subscription was its own Promise.allSettled entry, so one bad row
+     or one transient database error was counted and the run carried on. A bare
+     Promise.all here would let a single account's failure reject the whole run —
+     no response, and nobody's glance that morning. */
   await Promise.all(Array.from(subsByUser.entries()).map(async ([userId, userSubs]) => {
-    const [todoRows, eventRows] = await Promise.all([
-      sql`SELECT data FROM todos  WHERE user_id = ${userId}`,
-      sql`SELECT data FROM events WHERE user_id = ${userId}`,
-    ])
-    const todos  = todoRows.map(r => r.data)
-    const events = eventRows.map(r => r.data)
+    let todos, events
+    try {
+      const [todoRows, eventRows] = await Promise.all([
+        sql`SELECT data FROM todos  WHERE user_id = ${userId}`,
+        sql`SELECT data FROM events WHERE user_id = ${userId}`,
+      ])
+      todos  = todoRows.map(r => r.data)
+      events = eventRows.map(r => r.data)
+    } catch {
+      failed += userSubs.length
+      return
+    }
 
     await Promise.all(userSubs.map(async sub => {
-      // tz_offset is getTimezoneOffset(): minutes to ADD to local to reach UTC,
-      // so subtracting it converts server-UTC "now" into the reader's wall clock.
-      const local   = new Date(Date.now() - (sub.tz_offset ?? 0) * 60 * 1000)
-      const dateStr = toDateStr(local)
+      try {
+        // tz_offset is getTimezoneOffset(): minutes to ADD to local to reach UTC,
+        // so subtracting it converts server-UTC "now" into the reader's wall clock.
+        const local   = new Date(Date.now() - (sub.tz_offset ?? 0) * 60 * 1000)
+        const dateStr = toDateStr(local)
 
-      const glance = buildGlance({ todos, events, dateStr })
+        const glance = buildGlance({ todos, events, dateStr })
 
-      // A push that says "nothing today" every morning trains you to ignore the
-      // app's notifications entirely, which then costs you the reminders that
-      // do matter. Silence is the correct behaviour on an empty day.
-      if (glance.isEmpty) { skipped++; return }
+        // A push that says "nothing today" every morning trains you to ignore the
+        // app's notifications entirely, which then costs you the reminders that
+        // do matter. Silence is the correct behaviour on an empty day.
+        if (glance.isEmpty) { skipped++; return }
 
-      const result = await sendToSubscription(sub, JSON.stringify({
-        title: 'Today at a glance',
-        body:  glanceNotificationBody(glance),
-        tag:   'lv-daily',
-        url:   '/today',
-      }))
-      if (result.ok) sent++
-      else failed++
+        const result = await sendToSubscription(sub, JSON.stringify({
+          title: 'Today at a glance',
+          body:  glanceNotificationBody(glance),
+          tag:   'lv-daily',
+          url:   '/today',
+        }))
+        if (result.ok) sent++
+        else failed++
+      } catch {
+        failed++
+      }
     }))
   }))
 

@@ -4,9 +4,12 @@
  * `send`, `test`, `daily`, `digest`, and `reminders` each deliver a payload to a
  * subscription and, if the push service answers 410 Gone or 404 Not Found, delete
  * that subscription — the endpoint itself is gone, so the next send would just
- * pay for the same failure again. That block was pasted into all five routes,
- * identically enough that a sixth copy was the actual bug (see the commit that
- * added this file for which one drifted). This is the one copy.
+ * pay for the same failure again. That block was pasted into all five routes;
+ * this is the one copy.
+ *
+ * It never throws. Callers send to many subscriptions at once, and one failure —
+ * including the cleanup DELETE failing — must not take the rest of the batch with
+ * it. A row whose DELETE failed is simply tried, and cleaned up, next time.
  *
  * `sendNotification` and `sqlImpl` are injected rather than imported directly, so
  * this is testable with no real push service and no database — see
@@ -36,8 +39,14 @@ export async function sendToSubscription(sub, payload, { sendNotification = webp
   } catch (err) {
     const status = err.statusCode ?? null
     if (status === 410 || status === 404) {
-      await sqlImpl`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-      return { ok: false, deleted: true, status, error: err.body || err.message || null }
+      let deleted = false
+      try {
+        await sqlImpl`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
+        deleted = true
+      } catch {
+        // Left for the next send to find gone again — see "It never throws" above.
+      }
+      return { ok: false, deleted, status, error: err.body || err.message || null }
     }
     // Anything else (403 key mismatch, a network error, a 5xx from the push
     // service) is left alone — it says nothing about whether the subscription

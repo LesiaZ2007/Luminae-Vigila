@@ -65,54 +65,64 @@ export async function GET(request) {
 
   let sent = 0, failed = 0, skipped = 0
 
+  /* Each account fails on its own. Before the grouping every subscription was its own
+     Promise.allSettled entry, so one bad row or one transient database error was
+     counted and the run carried on; a bare Promise.all would let one account reject
+     the whole run, and nobody would get a digest that week. The sends themselves never
+     throw (sendToSubscription reports instead), so anything caught here happened
+     before any of this account's devices were tried. */
   await Promise.all(Array.from(subsByUser.entries()).map(async ([userId, userSubs]) => {
-    // ── Fetch todos for this user ──────────────────────────────────────────
-    const todoRows = await sql`
-      SELECT data FROM todos
-      WHERE user_id = ${userId}
-    `
-    const todos = todoRows
-      .map(r => r.data)
-      .filter(t => !t.completed && t.dueDate && t.dueDate >= nowIso.slice(0,10) && t.dueDate <= endIso.slice(0,10))
+    try {
+      // ── Fetch todos for this user ──────────────────────────────────────────
+      const todoRows = await sql`
+        SELECT data FROM todos
+        WHERE user_id = ${userId}
+      `
+      const todos = todoRows
+        .map(r => r.data)
+        .filter(t => !t.completed && t.dueDate && t.dueDate >= nowIso.slice(0,10) && t.dueDate <= endIso.slice(0,10))
 
-    // ── Fetch events for this user ─────────────────────────────────────────
-    const eventRows = await sql`
-      SELECT data FROM events
-      WHERE user_id = ${userId}
-    `
-    const events = eventRows
-      .map(r => r.data)
-      .filter(e => e.start && e.start >= nowIso && e.start <= endIso)
+      // ── Fetch events for this user ─────────────────────────────────────────
+      const eventRows = await sql`
+        SELECT data FROM events
+        WHERE user_id = ${userId}
+      `
+      const events = eventRows
+        .map(r => r.data)
+        .filter(e => e.start && e.start >= nowIso && e.start <= endIso)
 
-    const totalItems = todos.length + events.length
-    if (totalItems === 0) { skipped += userSubs.length; return }
+      const totalItems = todos.length + events.length
+      if (totalItems === 0) { skipped += userSubs.length; return }
 
-    // ── Find busiest day ───────────────────────────────────────────────────
-    const dayCounts = {}
-    for (const t of todos) {
-      const d = t.dueDate?.slice(0, 10)
-      if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
+      // ── Find busiest day ───────────────────────────────────────────────────
+      const dayCounts = {}
+      for (const t of todos) {
+        const d = t.dueDate?.slice(0, 10)
+        if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
+      }
+      for (const e of events) {
+        const d = e.start?.slice(0, 10)
+        if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
+      }
+      const busiestDate = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
+      const busiestDay  = busiestDate ? DAYS[new Date(busiestDate + 'T12:00:00').getDay()] : null
+
+      const body = [
+        `${todos.length} task${todos.length !== 1 ? 's' : ''}`,
+        `${events.length} event${events.length !== 1 ? 's' : ''}`,
+        busiestDay ? `— busiest day: ${busiestDay}` : '',
+      ].filter(Boolean).join(', ')
+
+      const payload = JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' })
+
+      await Promise.all(userSubs.map(async sub => {
+        const result = await sendToSubscription(sub, payload)
+        if (result.ok) sent++
+        else failed++
+      }))
+    } catch {
+      failed += userSubs.length
     }
-    for (const e of events) {
-      const d = e.start?.slice(0, 10)
-      if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
-    }
-    const busiestDate = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
-    const busiestDay  = busiestDate ? DAYS[new Date(busiestDate + 'T12:00:00').getDay()] : null
-
-    const body = [
-      `${todos.length} task${todos.length !== 1 ? 's' : ''}`,
-      `${events.length} event${events.length !== 1 ? 's' : ''}`,
-      busiestDay ? `— busiest day: ${busiestDay}` : '',
-    ].filter(Boolean).join(', ')
-
-    const payload = JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' })
-
-    await Promise.all(userSubs.map(async sub => {
-      const result = await sendToSubscription(sub, payload)
-      if (result.ok) sent++
-      else failed++
-    }))
   }))
 
   return Response.json({ ok: true, sent, failed, skipped })

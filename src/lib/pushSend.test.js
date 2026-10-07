@@ -73,4 +73,17 @@ describe('sendToSubscription', () => {
     expect(result).toEqual({ ok: false, deleted: false, status: null, error: 'fetch failed' })
     expect(sqlImpl.calls).toHaveLength(0)
   })
+
+  it('does not throw when the cleanup DELETE itself fails', async () => {
+    // The daily and digest crons send to many subscriptions at once and rely on this
+    // never throwing; a database blip during cleanup must not sink the batch.
+    const err = Object.assign(new Error('gone'), { statusCode: 410, body: 'Gone' })
+    const sendNotification = vi.fn().mockRejectedValue(err)
+    const sqlImpl = vi.fn().mockRejectedValue(new Error('connection reset'))
+
+    const result = await sendToSubscription(sub, '{}', { sendNotification, sqlImpl })
+
+    expect(result).toEqual({ ok: false, deleted: false, status: 410, error: 'Gone' })
+    expect(sqlImpl).toHaveBeenCalledTimes(1)
+  })
 })
