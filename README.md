@@ -657,6 +657,30 @@ you had to know about. Committing goes through blur rather than duplicating the 
 there is still exactly one code path that appends a step — otherwise an Escape followed
 by the browser's own blur could add the same step twice.
 
+### Evening times stay on their own day
+
+[`lib/localDate.js`](src/lib/localDate.js) exists because `toISOString().slice(0, 10)`
+converts to UTC first, so from 8pm in New York it already names tomorrow. Twelve places
+were still doing it, and the ones you could see were all about the evening:
+
+- **A custom reminder at 9:30pm reopened on the next day.** The task and event editors
+  read the reminder's date back through UTC, while the time came back local, so the form
+  showed tomorrow at 9:30pm — and saving it, even untouched, moved the reminder a day
+  later. A test now opens and re-saves exactly that case.
+- **Linking a task to an evening event** ("do before") set the task's due date to the day
+  after the event.
+- **Ticking off a Canvas assignment after 8pm** recorded tomorrow as the day it was done,
+  which the weekly recap then counted on the wrong day, or in the wrong week.
+
+The local `YYYY-MM-DD` formatter also existed three times — in `localDate.js`, in
+`calendarView.js`, and privately inside the event editor. There is one implementation
+now; `calendarView`'s `toYMDLocal` delegates to it and keeps its own null-for-invalid
+contract.
+
+The editor's **Repeats** switch had no knob at all — it used a class with no CSS behind
+it, so it showed a track and nothing moving on it. It uses the same knob as the event
+editor's switches now.
+
 ### Custom lists
 
 Lightweight standalone checklists alongside the main task list, for groceries, packing,
@@ -1344,7 +1368,10 @@ its reminder push says "Image" rather than sending an empty body.
   `ssr: false`, so they never land in the initial bundle for the default Calendar tab.
 - **Share into a note (Android)** — the app appears in the system share sheet. Highlight
   text anywhere, share to Luminae Vigila, and it arrives as a new note tagged `shared`. A
-  *New note* home-screen shortcut starts one directly.
+  *New note* home-screen shortcut starts one directly. The share used to vanish whenever
+  you already had notes: it was prepended on mount, and then the stored notes, loaded by a
+  separate effect a moment later, replaced the list. See [Where data lives](#where-data-lives)
+  for how stored data is read now.
 
 ---
 
@@ -1456,7 +1483,16 @@ language.
 call, whether three or more deadlines cluster within the next 72 hours with no study
 blocks covering them. If so, a small dismissible *Busy stretch ahead — want help planning
 it?* chip appears near the Corvus button, with a matching banner inside the panel.
-Dismissing it sets a daily flag so it appears at most once a day.
+Dismissing it sets a daily flag so it appears at most once a day. The flag is the *local*
+date: it used to be the UTC one, which in New York rolls over at 8pm, so a nudge dismissed
+in the evening was filed under tomorrow and stayed hidden through most of the next day.
+
+**Corvus loads on demand.** It is around 33 KB of the bundle that most sessions never
+open, so it is split out with `next/dynamic` like the calendar and the notes editor, and
+fetched in the background once the planner is idle so opening it is still instant. The
+task and event editors are deliberately *not* split the same way: the service worker
+caches no code, so a chunk that was never fetched cannot load once the connection drops,
+and those editors have to open offline. Corvus needs the network to do anything at all.
 
 Chat history persists to `localStorage`, capped at 50 messages and pruned oldest-first,
 and recent history is sent as context on every request so Corvus remembers the session.
@@ -1605,7 +1641,20 @@ assignments with submission status, courses, grades and calendar events.
 
 **Calendar feed, no token** — paste your personal iCal feed URL from Canvas → Calendar →
 Calendar Feed to pull assignment due dates and events without a token. Any public `.ics`
-subscription URL works too. These appear in Canvas orange on the calendar.
+subscription URL works too, as long as it is `https://`. These appear in Canvas orange on
+the calendar.
+
+The feed is fetched by the server, and without an account — that is the point of it — so
+the endpoint used to be something anyone could point at any URL and have the server fetch
+it and hand back the result, including addresses inside the hosting network that nothing
+outside should reach. [`lib/safeFetch.js`](src/lib/safeFetch.js) now stands in front of
+it. It refuses anything that is not `https://`, any URL with a username or password in it,
+and any host that resolves to a private, loopback or link-local address (the cloud
+metadata address among them), on the first request and again on every redirect it
+follows, up to three. It also stops waiting after a timeout and stops reading at 5 MB, so
+a feed can neither hang the request nor flood it. What it cannot fully close is DNS
+rebinding — a name that resolves to a public address when checked and a private one when
+fetched — and the reasoning for accepting that is in the file.
 
 Assignment due dates appear on the calendar as all-day task markers alongside your own
 events. Individual courses can be toggled on or off, applying instantly. Inside the
@@ -1613,6 +1662,20 @@ Classes tab, assignments are grouped by class with due-date badges (overdue, due
 upcoming), submission status chips (Graded, Submitted, Missing), per-class grades and
 projections, one-click links into Canvas, and an *Everything / This week* filter.
 Assignments can be marked done in the app independently of Canvas.
+
+The badges count **calendar days**. They used to round the time left up to whole days,
+so an assignment due at 11:59pm — the usual Canvas deadline — read *Due tomorrow* all day
+on the day it was due, and rounded the time past down, so anything a minute overdue read
+*Due yesterday*. *Due today* could never actually appear. Now tonight's deadline says
+*Due today* from the morning, and it turns red once the moment has passed.
+
+Assignments and grades are fetched for **four courses at a time** rather than one after
+another, so a student with six courses waits for two round trips to Canvas instead of
+six, without leaning on Canvas's rate limiter. The fetch, error-classification and
+pagination logic all five Canvas routes had each written for themselves now lives once,
+in [`lib/canvasFetch.js`](src/lib/canvasFetch.js). One behaviour came out of that
+deliberately: if a later page of a course's assignments fails, the pages already read are
+kept, where before the whole course came back empty.
 
 **Bulk mark-done** — the Select button in the Classes header enters selection mode; tap
 any assignment row or its checkbox to add it, and a sticky bottom bar shows the count
@@ -1735,7 +1798,16 @@ the scheduler. The troubleshooter says so in one line.
 
 Only successes are recorded. Logging rejections would mean a database write on every
 unauthenticated hit to a public URL, and buys nothing: a 401 loop and a dead pinger both
-show up as "last success was ages ago".
+show up as "last success was ages ago". The secret itself is compared in constant time,
+so how quickly a wrong guess is rejected says nothing about how close it was.
+
+**Missing VAPID keys** answer with the same clear "not configured" error from every push
+route. The crons already checked; `/api/push/send`, which the focus timer calls when a
+session ends, did not, and web-push throws on missing keys, so a deployment without them
+got an opaque 500 there. All five routes now share one guard (`requireVapid`), and one
+send-and-clean-up helper ([`lib/pushSend.js`](src/lib/pushSend.js)) that removes a
+subscription the moment the push service reports it gone (404 or 410) — logic that had
+been pasted into each route separately.
 
 Full detail in [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md).
 
@@ -2194,10 +2266,28 @@ collection alone rather than blanking it.
 The ICS serializer lives in [`lib/icsExport.js`](src/lib/icsExport.js). It had been a
 closure inside a render function, which is precisely why three faults could sit in it
 unnoticed — there was no way to test it. It is now pinned by a round trip back through
-`parseIcs`, the same reader the Canvas feed uses, so the app can always read what it
-writes. Lines fold at 75 octets as the spec requires, and an event with an unusable start
+`parseIcs`, the reader the ICS import uses, so the app can always read what it writes. Lines fold at 75 octets as the spec requires, and an event with an unusable start
 is dropped rather than written malformed, because one bad `VEVENT` can make a client reject
 the entire file and take the valid events with it.
+
+**Importing an ICS file gets the dates right.** The reader in
+[`lib/ics.js`](src/lib/ics.js) used to append `Z` to every value it found, and never read
+the parameters before the colon. So an all-day event — a holiday, a reading day, a
+multi-day trip, `DTSTART;VALUE=DATE:20240115` — came in as a *timed* event at midnight
+UTC, which in New York is 7pm the evening before, on the wrong day entirely. A time with a
+zone (`TZID=Europe/London`) or with none at all was read as UTC and shifted by your own
+offset. It now reads the file the way RFC 5545 defines it: a date-only value becomes a real
+all-day event with the same exclusive end the exporter writes; a `Z` time converts to your
+local clock; a `TZID` time converts from that zone, using its real offset on that date
+(unknown zones fall back to local); and a floating time with no zone is taken as local,
+because that is what having no zone means. Text escapes (`\,` `\;` `\\`) are undone too,
+not just `\n`.
+
+The Canvas calendar feed is *not* read by this parser. It has its own in
+[`api/canvas/ics`](src/app/api/canvas/ics/route.js), which deliberately treats a floating
+time as UTC — the assumption it was written with is that Canvas feeds mean UTC when they
+leave the zone off. Sharing one reader would make one of the two wrong; the round-trip
+tests above pin `parseIcs` against the exporter, not against Canvas.
 
 ---
 
@@ -2229,7 +2319,14 @@ that no web API exposes, so full-screen zen mode is the answer there.
 
 **Zen mode** is a full-screen glowing progress ring with a selectable ambient background —
 Snow, Aurora, Rain, or Fireflies — all pure CSS and JS animation with no assets. Escape
-exits.
+exits full-screen, back to the timer; with the settings card open over zen mode, Escape
+closes the card first (see [Keyboard shortcuts](#keyboard-shortcuts) for why that needed
+fixing).
+
+The timer re-renders four times a second while it runs, so nothing expensive belongs in
+its render. The *Focusing on* picker used to filter and sort every event on each of those
+renders to build its options; they are now built once per change of events, tasks or the
+date.
 
 **Every finished session lands on the calendar** as a real, editable time block, which is
 how tasks become time-blocking. This is on by default, and can be turned off in the
@@ -2340,6 +2437,15 @@ The arrow keys use the same slide animation as swipe and trackpad paging, and st
 for modifier combos so browser-back and text selection still work. Every shortcut is
 suppressed while typing in an input, textarea or contenteditable, and while a blocking
 modal is open — except `Esc`, which always works.
+
+`Esc` closes **one layer at a time**, innermost first, because two layers used to answer
+the same keypress. The shortcuts overlay fades out before it closes, but the planner's own
+`Esc` handler unmounted it in the same keypress, so the fade never showed; the planner now
+stops at the overlay and lets it close itself. In the focus timer's zen mode, the timer's
+handler and the planner's both listened on `window`, and the planner's — which closes the
+whole timer — was registered first, so one `Esc` meant to leave full-screen shut the timer
+instead. Zen mode now takes the key first, on `document`, and stops it there: the settings
+card closes, then full-screen, and the timer stays open.
 
 ### Today at a glance
 
@@ -2498,6 +2604,26 @@ the card used to compute it with `toISOString()`, which rolls over mid-evening w
 UTC, so after about 8pm Eastern it compared tonight's events against tomorrow's date,
 found nothing, and jumped to the *Tomorrow* fallback while you still had somewhere to be.
 
+**The clock ticks without the page.** The sidebar clock and the up-next countdown change
+every second, and they used to do it from the planner shell's own state, so the *whole*
+planner — every panel, every derived list, and the event array handed to the calendar —
+re-rendered once a second for as long as the app was open. The calendar's array was not
+memoised either, so each tick re-expanded every recurring task and gave FullCalendar a
+brand-new list. [`components/LiveClock.js`](src/components/LiveClock.js) now owns both
+ticking pieces, each on its own timer, so a second going by re-renders that card and
+nothing else; the countdown sorts the day's events once and, per tick, only looks for the
+first one still ahead. The timers wake on the second boundary (`lib/useNow`), so the
+seconds change when the second does instead of trailing it by up to a second.
+
+The shell still re-renders once a **minute**, on purpose. Panels work out "today" and
+"overdue" while they render, and the per-second re-render had been keeping those right
+across midnight for free; a minute tick keeps that at a sixtieth of the cost.
+
+The 12h/24h toggle beside the clock is remembered now (`lv-clock-24h`) instead of resetting
+on every reload. The mini month navigator works out each day's date locally: it built them
+through UTC, which is right west of Greenwich and a day early everywhere east of it, so
+tapping a day there could open the one before.
+
 ---
 
 ## Keeping Neon usage down
@@ -2577,6 +2703,19 @@ reason to skip. See [`lib/reminderWindow.js`](src/lib/reminderWindow.js).
   `DELETE … WHERE id NOT IN (…)` that keeps the replace-not-merge contract the client
   relies on. The statement count no longer grows with your history, only with the number
   of collections you touched.
+- **The one migration `ddlOnce` missed.** `POST /api/push/subscribe` still issued its two
+  `ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS` statements raw, on every call —
+  it predates `lib/pushSchema.js`, which was written to memoize exactly those columns, and
+  was never moved onto it. It calls `ensurePushSchema()` now.
+- **One user's rows, fetched once per device.** The daily glance and the Sunday digest
+  looped over every push subscription and read that subscriber's tasks and events inside
+  the loop, so an account with notifications on three devices cost three identical reads.
+  Both now group subscriptions by account and read once per account. The daily glance
+  still builds each device's message on its own, because each device reports its own
+  timezone offset and "today" can differ between them.
+- **Four independent reads in a row.** The notification status check awaited its
+  subscriptions, digest setting, cron pings and recent sends one after another; they now
+  run concurrently.
 
 Net effect: a reminder tick that finds nothing due went from **8 round trips to 0**. A warm
 `/api/sync` GET went from 13 to 1, and a warm POST that changes one note went from roughly
@@ -2669,6 +2808,7 @@ accuracy, so there is no longer a reason to trade one for the other.
 | Search history | `localStorage` (`lv-search-history`) |
 | Focus timer settings | `localStorage` (`lv-focus`) |
 | Accent colour | `localStorage` (`lv-accent`) |
+| Clock 12h/24h | `localStorage` (`lv-clock-24h`) |
 | Onboarding completion | `localStorage` (`lv-onboarding-done`) |
 | Canvas seen-ids (notification diff) | `localStorage` (`lv-canvas-seen-ids`) |
 | GPA credit hours and grade overrides | `localStorage` (`lv-gpa`) |
@@ -2685,6 +2825,27 @@ accuracy, so there is no longer a reason to trade one for the other.
 Google Calendar and Canvas data is never stored server-side long-term. Tokens are used to
 fetch on demand, and results are held in React state and cached to `localStorage` for fast
 reloads.
+
+**How the planner reads its own storage.** Each stored collection is read in its
+`useState` initialiser, through `readStored` in [`lib/usePersist.js`](src/lib/usePersist.js),
+and written back by a `usePersist` effect. It used to start every collection as an empty
+array, fill all twelve from one mount effect, and save each from its own effect, and three
+bugs came out of that shape:
+
+- Every save effect also ran on mount with the empty starting value, so for a moment each
+  key really was `[]`. The `/today` glance listens for storage events, and showed an empty
+  planner whenever the app was opened in another tab.
+- All twelve keys were read inside one `try`. One corrupt value skipped every key after
+  it, and the save effects then wrote `[]` over data that had been perfectly readable.
+  Each key now fails on its own, back to its default.
+- Anything else a mount effect did to the same state raced the load — which is how a
+  note shared in from Android was lost (see [Notes](#notes)).
+
+The read and the write are two halves rather than one `usePersistentState` hook because
+the hooks lint rule only treats a setter as stable when it comes straight from `useState`;
+wrapped in a custom hook, every one of the planner's ~40 callbacks that use a setter is
+flagged for a missing dependency. A write that fails — a full quota, blocked storage — is
+caught rather than thrown out of an effect, so it cannot take the planner down with it.
 
 ---
 
@@ -2744,10 +2905,19 @@ The areas carrying the most test weight, because they are where a silent bug cos
   derivation, whole-day arithmetic across DST and leap days, and the two opposite
   end-date conventions for all-day and timed events.
 - **Import and export** — `backup`, `icsExport`, `ics`. Including a round trip: what
-  `icsExport` writes is read back by `parseIcs`, the same reader the Canvas feed uses.
+  `icsExport` writes is read back by `parseIcs`, the reader the ICS import uses, along with
+  date-only, `Z`, floating and `TZID` values (one `TZID` case sits in the weeks when the US
+  and UK disagree about daylight saving, to prove the zone's real offset is used).
+- **Untrusted input** — `safeFetch` (private, loopback and link-local addresses in IPv4
+  and IPv6, redirects to them, oversized bodies, timeouts, credentials in the URL) and
+  `cronAuth` (the bearer-token check).
+- **Storage and timing** — `usePersist` (a corrupt key sparing the others, no `[]` written
+  over stored data on mount, an update queued during mount surviving) and `useNow` (ticks
+  land on the boundary).
 - **Domain logic** — `recurrence`, `classInstances`, `classCalendar`, `classLinks`,
   `classReminders`, `classCategories`, `grades`, `priority`, `glance`, `maps`,
-  `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`.
+  `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`,
+  `canvasFetch`, `pushSend`, `ddlOnce`, `accent`.
 
 New logic in `src/lib/` should come with a test beside it, matching the style of the
 existing ones.
@@ -2833,7 +3003,6 @@ accepts — and on the closed field `↑`/`↓` nudge by five minutes without op
 
 ```
 schema.sql                  # Source of truth for the database
-proxy.js                    # Next.js 16 route-level middleware
 vercel.json                 # Cron schedules
 scripts/gen-icons.mjs       # Regenerates the PWA icons
 docs/
@@ -2875,7 +3044,10 @@ src/
     ├── syncRows.js         # Set-based upsert shaping for POST /api/sync
     ├── backup.js           # One list of what a backup contains
     ├── icsExport.js        # ICS serializer, pinned by a round trip through parseIcs
-    ├── ics.js              # ICS parsing for the Canvas feed and imports
+    ├── ics.js              # ICS parsing for imports (the Canvas feed has its own)
+    ├── safeFetch.js        # Server-side fetch of a user-supplied URL, refusing private hosts
+    ├── canvasFetch.js      # Canvas request, error ladder, pagination, bounded concurrency
+    ├── pushSend.js         # Send one push; drop the subscription if it is gone
     ├── eventSpan.js        # Which days an event covers
     ├── recurrence.js       # Event and task recurrence expansion
     ├── classInstances.js   # Class meetings, with exceptions folded in
@@ -2885,6 +3057,8 @@ src/
     ├── grades.js           # Points-based grade arithmetic
     ├── glance.js           # The today summary shared by /today, push and the badge
     ├── localDate.js        # Local-date helpers; the answer to every toISOString bug
+    ├── usePersist.js       # Read state from localStorage up front, write it back
+    ├── useNow.js           # A clock that ticks on the boundary, for the component that needs it
     ├── reminderWindow.js   # The watermark that keeps the cron off the database
     ├── googleMirror.js     # Writing out to the luminaeVigila Google calendar
     ├── maps.js             # Classifying a location string
