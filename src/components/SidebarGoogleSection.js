@@ -54,6 +54,7 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
     } catch { /* silent */ }
   }, [])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loadAccounts is async; every update in it lands after the request
   useEffect(() => { loadAccounts() }, [loadAccounts])
 
   // Re-fetch when settings modal closes (parent calls loadAccounts indirectly via onSync)
@@ -68,6 +69,7 @@ export default function SidebarGoogleSection({ onOpenSettings, onSync, syncing }
   useEffect(() => {
     for (const acc of accounts) {
       if (calendars[acc.id] !== undefined) continue
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- null marks the fetch in flight, and is what stops a second one
       setCalendars(prev => ({ ...prev, [acc.id]: null })) // null = loading
 
       fetch(`/api/google/calendars?accountId=${acc.id}`)

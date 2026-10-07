@@ -91,6 +91,7 @@ export default function SidebarCanvasSection({
   }, [loadCourses])
 
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loadStatus is async; every update in it lands after the request
   useEffect(() => { loadStatus() }, [loadStatus])
 
   useEffect(() => {

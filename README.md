@@ -2306,6 +2306,14 @@ your default. Auto-start is off by default, so the timer pauses between phases a
 for you, and a lightbulb in the header toggles a short dismissible note explaining the
 flow.
 
+**Pause keeps your place.** Pausing at 18:42 and coming back resumes from 18:42; only Reset,
+Skip, picking another phase, or finishing one starts the clock from the top. That used to be
+broken: an effect re-synced the clock to the full phase length whenever the timer was not
+running, and pausing is exactly the moment it stops running, so Pause behaved like Reset.
+The time left is now only stored once a phase has started; before that it is derived from
+the phase length, which is also why a length changed in settings shows up on the idle clock
+straight away while a phase already under way keeps the length it started with.
+
 **Pick what you are focusing on** — a task, a Canvas assignment, or a calendar event.
 Completed sessions accumulate focus time on it. Exams and quizzes lead the list, because
 revising for a specific exam is the longest-running focus target a student has, followed
@@ -2934,33 +2942,43 @@ existing ones.
 npm run lint
 ```
 
-The React Compiler lint rules were adopted after most of this code was written, so there
-is a standing backlog. It went from 79 errors to 29 by fixing what were genuine defects,
-and from 29 errors and 12 warnings to 26 and 7 in a later cleanup pass. No file got worse
-in that pass; `page.js` went from 10 errors and 5 warnings to 9 and none.
+`npm run lint` is clean — no errors and no warnings — and is meant to stay that way, so a
+new problem shows up as the only line in the output instead of one more in a long list.
 
-The remaining ones are not believed to be bugs, and are left unsilenced rather than
-blanket-disabled, since a disable comment would make the count read clean without making
-the code better. Most are `react-hooks/set-state-in-effect`, and nearly all of those are
-"read `localStorage`, `navigator` or the DOM on mount, then `setState`". A lazy `useState`
-initializer would be the usual fix, but these are Client Components that Next.js still
-server-renders, so touching `localStorage` during the initializer throws on the server and
-mismatches on hydration. The effect is the correct pattern here; the rule is being
-conservative.
+The React Compiler lint rules were adopted after most of this code was written, and the
+backlog went from 79 errors to 29 by fixing genuine defects before the rest were cleared.
+Most of the rest were `react-hooks/set-state-in-effect`, and nearly all of those were
+"read `localStorage`, `navigator` or the DOM on mount, then `setState`" — one wasted render
+at best, and at worst a real bug: the focus timer's version of it made Pause act as Reset.
+They were cleared by fixing the pattern, not by silencing the rule:
 
-The exception is anything that renders nothing until it has mounted. The planner shell
-returns `null` until its `mounted` flag is set, so the server render and the first client
-render agree whatever its state holds, and it reads its stored collections in the
-initialiser (guarded, so the server's missing `localStorage` just means the default) —
-see [Where data lives](#where-data-lives). The settings menu, which only ever mounts
-inside that shell, does the same for the accent colour. The rest are TDZ and purity flags on deferred calls — functions referenced
-above their own declaration, safe as written but worth reordering if those files are
-refactored.
+- **Derive it.** State that is a function of other state is computed during render. The
+  deadline nudge, the weekly recap's numbers and the study-time list were all effects
+  copying a calculation into state.
+- **Read it in the initializer.** A lazy `useState` initializer can't touch `localStorage`
+  in a component that Next.js server-renders, because it throws on the server and
+  mismatches on hydration. But the planner renders nothing until it has mounted — `mounted`
+  is a `useSyncExternalStore` that is false on the server and during hydration — so every
+  component inside it only ever renders in a browser. The focus timer, GPA panel, offline
+  banner, recap and settings menu (for the accent colour) all read their saved state on
+  their first render. The planner's own initializers read its stored collections through
+  `readStored`, which is guarded so the server's missing `localStorage` just means the
+  default — see [Where data lives](#where-data-lives).
+- **Subscribe to it.** The window width is `useSyncExternalStore` over `resize`.
+- **Handle it in the event.** "Edit all in series" fills the form in its own click, rather
+  than in an effect watching the scope it sets.
+- **Effect events.** Listeners that need the latest props — Escape to close, the clock's
+  keyboard and outside-click handling, the timer's tick — use `useEffectEvent`, which
+  replaces both the stale-closure `exhaustive-deps` disables and refs assigned during render.
 
-The derived-state cases in that group have been converted individually. `TimePicker` in
-particular kept `hour`, `minute` and `period` in state and copied the `value` prop back
-into them through an effect, so the state was never the source of truth, only a lagging
-cache that disagreed with the prop for one render on every change.
+Eight suppressions remain, each on an effect that genuinely talks to something outside
+React, and each says why on the line above it: network loads whose only synchronous update
+is a loading flag or an in-flight marker, async loaders whose updates all land after an
+`await` (the rule cannot see through an async function), and taking the one-shot Web Share
+handoff out of `localStorage`. One `exhaustive-deps` disable keeps the recap re-reading
+`localStorage` when a focus session finishes — the version number it depends on is a signal,
+not an input. A suppression is a claim about one specific line, so each carries its reason;
+a blanket disable would make the count read clean without making the code better.
 
 ### Date and time pickers
 

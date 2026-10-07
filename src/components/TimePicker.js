@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useEffectEvent } from 'react'
 import { createPortal } from 'react-dom'
 import useAnchoredPosition from '@/lib/useAnchoredPosition'
 
@@ -140,23 +140,6 @@ export default function TimePicker({ value, onChange }) {
   const inputRef  = useRef(null)
   const revertRef = useRef(null)   // value to restore if digit entry is escaped
 
-  // The clock is portaled to <body> (see below), so it is no longer a DOM
-  // descendant of the trigger — an outside-click test against wrapRef alone would
-  // treat every tap on the clock face as "outside" and close it mid-drag.
-  useEffect(() => {
-    if (!open && !inlineEdit) return
-    function onDown(e) {
-      const inTrigger = wrapRef.current?.contains(e.target)
-      const inPopup   = popupRef.current?.contains(e.target)
-      if (!inTrigger && !inPopup) {
-        setOpen(false)
-        commitInline()
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open, inlineEdit, inlineVal])
-
   // Centred under the trigger, flipped above it when there is no room below, and
   // clamped inside the viewport either way. See lib/useAnchoredPosition.
   const popupPos = useAnchoredPosition(open, wrapRef, popupRef, {
@@ -207,6 +190,26 @@ export default function TimePicker({ value, onChange }) {
     setInlineVal('')
     return true
   }
+
+  // The clock is portaled to <body> (see below), so it is no longer a DOM
+  // descendant of the trigger — an outside-click test against wrapRef alone would
+  // treat every tap on the clock face as "outside" and close it mid-drag.
+  // Declared after commitInline, which it calls through an effect event so the
+  // listener always commits the text as typed, not as it was when it attached.
+  const onOutsideClick = useEffectEvent(() => {
+    setOpen(false)
+    commitInline()
+  })
+  useEffect(() => {
+    if (!open && !inlineEdit) return
+    function onDown(e) {
+      const inTrigger = wrapRef.current?.contains(e.target)
+      const inPopup   = popupRef.current?.contains(e.target)
+      if (!inTrigger && !inPopup) onOutsideClick()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open, inlineEdit])
 
   // ── Digit entry on the clock face ───────────────────────────────────────────
 
@@ -270,10 +273,9 @@ export default function TimePicker({ value, onChange }) {
   }
 
   // ── Keyboard on the open popup ──────────────────────────────────────────────
-  // Held in a ref so the listener always sees current values without
+  // An effect event, so the listener always sees current values without
   // re-subscribing on every keystroke.
-  const keyHandlerRef = useRef(null)
-  keyHandlerRef.current = (e) => {
+  const onPopupKey = useEffectEvent((e) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       if (typing) cancelTyping(true)
@@ -301,11 +303,11 @@ export default function TimePicker({ value, onChange }) {
         onChange(`${pad(safeH24)}:${pad(m)}`)
       }
     }
-  }
+  })
 
   useEffect(() => {
     if (!open) return
-    const onKey = e => keyHandlerRef.current?.(e)
+    const onKey = e => onPopupKey(e)
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [open])
