@@ -2036,6 +2036,45 @@ Everything else that needs the database fails quietly at the same time — cross
 sync, and the push crons, whose jobs all query it. If notifications stop and fresh sign-ins
 fail together, suspect the allowance before the cron configuration.
 
+### When your sign-in runs out
+
+A sign-in lasts 30 days. When a device's runs out, the app stops and says so: a dialog
+explains that sync has stopped in both directions, that everything done on the device is
+still saved there, and offers **Sign in again**, which goes straight to Google and back.
+Once you're back, the usual first-load merge uploads whatever the device was holding,
+exactly as it would after a stretch offline.
+
+It used to fail in silence, and the silence was the whole bug. A laptop's session lapsed
+on 1 October and for a week nothing it did reached the cloud, while the laptop looked
+perfectly healthy and the phone simply never saw any of it. Two things hid it:
+
+- **The pull lied.** `GET /api/sync` answered "not signed in" with empty arrays and a
+  `200`, meant as graceful degradation. Merging an empty cloud keeps every local row, so
+  nothing on screen changed, and the pull counted as a success — *Synced 2 min ago* kept
+  ticking in Settings.
+- **Nobody read the push's answer.** `POST` did return `401`, but the push only checks
+  whether it worked in order to decide what to retry. A refused push was retried with the
+  next edit, refused again, and never shown.
+
+Now the GET returns `401` too, and every sync path — first merge, push, background pull,
+the refresh button — hands a `401` to one handler that drops the device to signed-out
+(which stops it sending requests that can only be refused) and opens the dialog.
+
+A reload is the other way to find out, and it needed the same treatment. After the cookie
+is gone, the server's answer to "who is signed in" is "nobody" — identical to what it tells
+a device that has never signed in, which must be left alone. So the device remembers
+(`lv-signed-in` in `localStorage`) that it was signed in, and only an explicit **Sign out**
+clears that. No session plus that record means the session expired, and the dialog opens
+on load rather than leaving a quiet *Sign in to sync* in the sidebar.
+
+The dialog is deliberately harder to wave away than the app's other modals: no Escape, no
+click outside. **Not now** dismisses it, because the app is local-first and never requires
+an account, but it comes back on the next load until you sign in or sign out. See
+[`lib/sessionExpiry.js`](src/lib/sessionExpiry.js).
+
+Only `401` counts. A `500`, a cold database or a dropped connection says nothing about the
+session, and prompting a sign-in for those would send you to fix the one thing that works.
+
 ### Which build is this, and when did it last sync
 
 At the bottom of Settings, under the account block: `Synced 2 min ago · build a1b2c3d`.

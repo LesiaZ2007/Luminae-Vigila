@@ -44,6 +44,7 @@ import {
 } from '@/lib/todoMerge'
 import { setEventPref, mergeEventPrefs, mergeEventPrefsCloudWins, stampAllPrefs } from '@/lib/eventPrefs'
 import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
+import { rememberSignedIn, forgetSignedIn, wasSignedIn, isSessionExpired } from '@/lib/sessionExpiry'
 import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
 import { mergeCategories, classCategories } from '@/lib/classCategories'
 import { clearLinksTo }        from '@/lib/classLinks'
@@ -73,6 +74,7 @@ import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
 import FocusTimer             from '@/components/FocusTimer'
 import SettingsMenu           from '@/components/SettingsMenu'
 import OfflineIndicator       from '@/components/OfflineIndicator'
+import SessionExpiredDialog   from '@/components/SessionExpiredDialog'
 import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
 import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 import { updateStreak } from '@/components/WeeklyRecap'
@@ -384,6 +386,8 @@ export default function Home() {
   const [weather,      setWeather]      = useState(null)
   const [militaryTime, setMilitaryTime] = useState(false)
   const [currentUser,  setCurrentUser]  = useState(null)
+  // This device was signed in and the session has run out — see lib/sessionExpiry.
+  const [sessionExpired, setSessionExpired] = useState(false)
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
   const isTablet  = windowWidth >= 640 && windowWidth < 1100
@@ -431,8 +435,18 @@ export default function Home() {
   // Fetch current user for display / logout
   useEffect(() => {
     fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.user) setCurrentUser(d.user) })
+      .then(r => {
+        /* No session on a device that had one means it expired — a reload after the
+           cookie lapsed used to just show "Sign in to sync" in the sidebar, which is
+           easy to miss and says nothing about the edits stuck on this device. */
+        if (isSessionExpired(r) && wasSignedIn()) setSessionExpired(true)
+        return r.ok ? r.json() : null
+      })
+      .then(d => {
+        if (!d?.user) return
+        setCurrentUser(d.user)
+        rememberSignedIn()
+      })
       .catch(() => {})
   }, [])
 
@@ -459,6 +473,21 @@ export default function Home() {
   // ref declared further down would be a use-before-declaration.
   const runInitialMergeRef = useRef(null)
 
+  /* The session ran out under an open tab. Every sync path routes a 401 here.
+
+     Dropping `currentUser` is what stops the bleeding: the push effect, the poll and
+     the merge all key off it, so the device stops sending requests that can only be
+     refused, and the sidebar falls back to "Sign in to sync". Local state is left
+     exactly as it is — it is still the working copy, and the next signed-in load
+     merges and uploads it like any other unsynced edit. */
+  const handleSessionExpired = useCallback(() => {
+    hasMergedCloud.current = false
+    mergeStarted.current   = false
+    clearTimeout(mergeRetryTimer.current)
+    setCurrentUser(null)
+    setSessionExpired(true)
+  }, [])
+
   const runInitialMerge = useCallback(async () => {
     if (!currentUser) return
     if (hasMergedCloud.current) return
@@ -479,6 +508,8 @@ export default function Home() {
     let cloud = null
     try {
       const res = await fetch('/api/sync')
+      // Not worth retrying — no amount of backoff brings a session back.
+      if (isSessionExpired(res)) { handleSessionExpired(); return }
       cloud = res.ok ? await res.json() : null
     } catch {
       cloud = null
@@ -590,6 +621,7 @@ export default function Home() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(mergedPayload),
         }).then((res) => {
+          if (isSessionExpired(res)) { handleSessionExpired(); return }
           if (res.ok) lastPushedRef.current = mergedFingerprint
           if (newEvents + newTodos > 0) {
             pushToast(
@@ -689,9 +721,12 @@ export default function Home() {
       // optimistically would make a failed push permanent: the collection would look
       // unchanged from then on and never be retried.
       if (res.ok) lastPushedRef.current = sent
+      // The push nobody was looking at. This is where an expired session used to
+      // vanish: refused, unrecorded, and refused again on every edit after it.
+      else if (isSessionExpired(res)) handleSessionExpired()
       return res.ok
     })
-  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes])
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes, handleSessionExpired])
 
   // ── Ongoing debounced cloud sync ────────────────────────────────────────────
   // Pushes whatever changed 2 seconds after any change.
@@ -744,6 +779,7 @@ export default function Home() {
     autoSyncInFlight.current = true
     try {
       const res = await fetch('/api/sync')
+      if (isSessionExpired(res)) { handleSessionExpired(); return false }
       if (!res.ok) return false
       const text  = await res.text()
       const cloud = text ? JSON.parse(text) : null
@@ -781,7 +817,7 @@ export default function Home() {
     } finally {
       autoSyncInFlight.current = false
     }
-  }, [currentUser])
+  }, [currentUser, handleSessionExpired])
 
   useEffect(() => {
     if (!currentUser) return
@@ -1075,6 +1111,7 @@ export default function Home() {
     setSyncingCloud(true)
     try {
       const res = await fetch('/api/sync')
+      if (isSessionExpired(res)) { handleSessionExpired(); return }
       if (!res.ok) return
       const cloud = await res.json()
       if (!cloud) return
@@ -1118,7 +1155,7 @@ export default function Home() {
     } finally {
       setSyncingCloud(false)
     }
-  }, [currentUser, syncingCloud, pushToast])
+  }, [currentUser, syncingCloud, pushToast, handleSessionExpired])
 
   /* ── Reminder checker ── */
   useEffect(() => {
@@ -3021,7 +3058,7 @@ export default function Home() {
                       onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
                 <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
               </button>
-              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
+              <form action="/api/auth/logout" method="POST" onSubmit={() => forgetSignedIn()} style={{ flexShrink: 0 }}>
                 <button type="submit" title="Sign out"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
                         onMouseEnter={e => e.currentTarget.style.color = '#fca5a5'}
@@ -3438,7 +3475,9 @@ export default function Home() {
                           style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
                   </button>
-                  <form action="/api/auth/logout" method="POST">
+                  {/* Forgetting first is what keeps a deliberate sign out from being
+                      greeted with the "you've been signed out" dialog next time. */}
+                  <form action="/api/auth/logout" method="POST" onSubmit={() => forgetSignedIn()}>
                     <button type="submit" title="Sign out"
                             style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
                       <LogOut size={12} /> Sign out
@@ -3868,6 +3907,9 @@ export default function Home() {
         syncStalled={syncStalled}
         onRetrySync={() => { mergeAttempts.current = 0; runInitialMergeRef.current?.() }}
       />
+
+      {/* ── Session expired — sync has stopped until this device signs in again ── */}
+      {sessionExpired && <SessionExpiredDialog onDismiss={() => setSessionExpired(false)} />}
 
       {/* ── Onboarding wizard (first-run only) ── */}
       {showOnboarding && (

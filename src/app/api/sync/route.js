@@ -7,7 +7,7 @@
  *         custom lists, and notes.
  * NOT synced: Google Calendar events (live), Canvas assignments (live).
  *
- * Returns empty defaults when not signed in so the app degrades gracefully.
+ * Both answer 401 when not signed in — see GET for why that is not an empty payload.
  *
  * The study_sessions table is created lazily on first write (CREATE TABLE IF
  * NOT EXISTS) so existing deployed DBs that haven't run the new schema.sql
@@ -166,9 +166,16 @@ function ensureSyncTables() {
 }
 
 export async function GET() {
+  /* 401, not an empty payload. This used to answer "not signed in" with empty arrays
+     and a 200, on the theory that the app should degrade gracefully — but the app
+     only ever calls this while it believes it is signed in, so the one case that
+     reached it was a session that had expired under an open tab. An empty success
+     merged as "the cloud has nothing new", kept the device's "last synced" ticking,
+     and hid the expiry completely while every push was being refused. The client
+     treats 401 as "signed out" and says so; see lib/sessionExpiry. */
   const session = await getSession()
   if (!session) {
-    return Response.json({ events: [], todos: [], todoCategories: [], classSchedule: [], eventPrefs: {}, studySessions: [], customLists: [], notes: [], eventCategories: [] })
+    return Response.json({ error: 'Not signed in' }, { status: 401 })
   }
 
   const { userId } = session
