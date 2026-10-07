@@ -638,6 +638,18 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
       onMouseEnter={() => !isMobile && setHovered(true)}
       onMouseLeave={() => !isMobile && setHovered(false)}
       onClick={() => onEdit?.(todo)}
+      /* A row that opens on click has to open on Enter and Space too, or the editor is
+         out of reach without a mouse. Same pattern as the class cards' task rows. */
+      role={onEdit ? 'button' : undefined}
+      tabIndex={onEdit ? 0 : undefined}
+      aria-label={onEdit ? todo.title : undefined}
+      className={onEdit ? 'lv-focusable' : undefined}
+      onKeyDown={onEdit ? e => {
+        // The checkbox, the steps chip, the grip and the actions are controls of their
+        // own; this keeps their Enter and Space from also opening the editor.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(todo) }
+      } : undefined}
       style={{
         position: 'relative',
         overflow: 'hidden',
