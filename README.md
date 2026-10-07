@@ -888,6 +888,12 @@ Below the month, under a **Your classes** heading. All start collapsed: when the
 they now sit under a grid that already fills the screen and an open card would just
 push the other five out of reach.
 
+A task row in a card, and a day row in the coursework month, open with `Enter` or
+`Space` as well as a click. Both were plain clickable `<div>`s, which a keyboard cannot
+reach at all; they are buttons to assistive technology now, named after the task or day
+rather than running on into the labels of the controls nested inside them, and a key
+pressed on one of those nested controls stays with that control.
+
 One expandable card per class, holding:
 
 - **When and where it meets** — the day pattern, the hours, the term dates and the
@@ -2929,7 +2935,9 @@ npm run lint
 ```
 
 The React Compiler lint rules were adopted after most of this code was written, so there
-is a standing backlog. It went from 79 errors to 29 by fixing what were genuine defects.
+is a standing backlog. It went from 79 errors to 29 by fixing what were genuine defects,
+and from 29 errors and 12 warnings to 26 and 7 in a later cleanup pass. No file got worse
+in that pass; `page.js` went from 10 errors and 5 warnings to 9 and none.
 
 The remaining ones are not believed to be bugs, and are left unsilenced rather than
 blanket-disabled, since a disable comment would make the count read clean without making
@@ -2938,7 +2946,14 @@ the code better. Most are `react-hooks/set-state-in-effect`, and nearly all of t
 initializer would be the usual fix, but these are Client Components that Next.js still
 server-renders, so touching `localStorage` during the initializer throws on the server and
 mismatches on hydration. The effect is the correct pattern here; the rule is being
-conservative. The rest are TDZ and purity flags on deferred calls — functions referenced
+conservative.
+
+The exception is anything that renders nothing until it has mounted. The planner shell
+returns `null` until its `mounted` flag is set, so the server render and the first client
+render agree whatever its state holds, and it reads its stored collections in the
+initialiser (guarded, so the server's missing `localStorage` just means the default) —
+see [Where data lives](#where-data-lives). The settings menu, which only ever mounts
+inside that shell, does the same for the accent colour. The rest are TDZ and purity flags on deferred calls — functions referenced
 above their own declaration, safe as written but worth reordering if those files are
 refactored.
 
@@ -3062,6 +3077,8 @@ src/
     ├── reminderWindow.js   # The watermark that keeps the cron off the database
     ├── googleMirror.js     # Writing out to the luminaeVigila Google calendar
     ├── maps.js             # Classifying a location string
+    ├── palette.js          # The hand-picked colour presets shared by the pickers
+    ├── accent.js           # The app accent colour: apply, read, save
     └── dbErrors.js         # Naming a Neon 402 as spent allowance
 ```
 
