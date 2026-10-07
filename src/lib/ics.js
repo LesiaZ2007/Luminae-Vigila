@@ -38,32 +38,11 @@
  * now parsed into `{ name, params, value }` so a parameter can actually be read.
  */
 
-/**
- * Minutes `zone` is ahead of UTC at `utcMs`, or `null` if `zone` is not a timezone name
- * `Intl` recognises.
- *
- * Computed by formatting the instant *as if it were* that zone's wall clock, then
- * reading the same six fields back as a second UTC instant and diffing against the
- * first. The difference is the zone's offset at that moment, DST included — there is no
- * other standards-track way to get a IANA zone's offset at an arbitrary instant without
- * shipping a timezone database of our own.
- */
-function offsetMinutesAt(zone, utcMs) {
-  let parts
-  try {
-    parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hourCycle: 'h23', // avoids a `hour12: false` quirk that formats midnight as "24"
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    }).formatToParts(new Date(utcMs))
-  } catch {
-    return null // not a zone name Intl recognises
-  }
-  const get = type => Number(parts.find(p => p.type === type)?.value)
-  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'))
-  return Math.round((asUtc - utcMs) / 60_000)
-}
+// The zone arithmetic (a TZID's offset at an instant, and which instant a wall-clock
+// time in that zone is) lives in lib/zonedTime, shared with the server-side readers of
+// the app's floating times — the push crons and Corvus — which need exactly the same
+// answer for exactly the same reason.
+import { zonedWallToMs } from './zonedTime'
 
 /** `YYYY-MM-DDTHH:mm:ss` in the viewer's own local time — the app's naive-local shape. */
 function localDateTimeString(date) {
@@ -108,10 +87,10 @@ export function parseIcsDate(value, params = {}) {
   if (zulu) return { value: localDateTimeString(new Date(wallAsUtcMs)), allDay: false }
 
   if (params.TZID) {
-    const offset = offsetMinutesAt(params.TZID, wallAsUtcMs)
-    if (offset !== null) {
-      return { value: localDateTimeString(new Date(wallAsUtcMs - offset * 60_000)), allDay: false }
-    }
+    // DST-aware in both directions: a time in the zone's spring-forward gap or
+    // fall-back overlap resolves the way `new Date()` resolves it — see zonedWallToMs.
+    const ms = zonedWallToMs(wallAsUtcMs, params.TZID)
+    if (ms !== null) return { value: localDateTimeString(new Date(ms)), allDay: false }
     // Unrecognised zone name — fall through to floating rather than guessing wrong.
   }
 
