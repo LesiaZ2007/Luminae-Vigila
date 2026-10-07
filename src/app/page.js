@@ -102,9 +102,8 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
 })
 
 // Seed values only. Event categories are user-editable and synced — read
-// `eventCategories` state instead. Still exported because other modules import
-// it for a default palette.
-export const DEFAULT_EVENT_CATEGORIES = [
+// `eventCategories` state instead.
+const DEFAULT_EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
   { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
   { id: 'personal', label: 'Personal',    color: '#10b981' },
@@ -137,6 +136,9 @@ const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus trigg
    minutes covers the one they can't — two devices in front of you, one of them
    untouched — at roughly 15 idle polls an hour instead of 6. */
 const AUTO_SYNC_IDLE_MAX_MS  = 4 * 60 * 1000
+
+/* Minimum gap between mirrors out to Google Calendar — see maybeMirrorToGoogle. */
+const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
 
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
@@ -668,7 +670,6 @@ export default function Home() {
      Kept in a ref rather than state: this must not re-render anything, and the
      value only ever gates a fetch. */
   const lastMirrorAt = useRef(0)
-  const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
 
   const maybeMirrorToGoogle = useCallback(async () => {
     if (!currentUser) return
@@ -1042,7 +1043,6 @@ export default function Home() {
       setNudgeCluster(hasStudy ? null : { items })
     } catch (_) {}
   // Run once on mount after data is available; re-run if todos/assignments change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todos, canvasAssignments, events])
 
   // ── Manual cloud refresh ─────────────────────────────────────────────────────
@@ -1710,7 +1710,7 @@ export default function Home() {
     ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.courseName ?? 'Class' })),
     ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
-  ].filter(o => o.id && o.label), [canvasClasses, events, todos])
+  ].filter(o => o.id && o.label), [canvasAssignments, canvasClasses, events, todos])
 
   // Accepts an array of todos already stamped with sortOrder by DraggableList.
   // Stamped like any other edit — order is synced state, so an unstamped reorder
@@ -2334,10 +2334,13 @@ export default function Home() {
   const hiddenGcalEvents = useMemo(
     () => {
       if (!showHiddenGcal) return []
+      // A recolour survives being hidden, for local events as for Google ones, so
+      // "show hidden" brings an event back in the colour you gave it.
       const hiddenLocal = events
         .filter(e => eventPrefs[e.id]?.hidden)
         .map(e => ({
           ...e,
+          color: eventPrefs[e.id]?.color || e.color,
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       const hiddenGcal = googleEvents
@@ -2737,7 +2740,7 @@ export default function Home() {
       result.listItems = listItemResults(query).slice(0, 15)
     }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes, customLists])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventCategories, eventPrefs, notes, customLists])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -2776,7 +2779,7 @@ export default function Home() {
       setActiveNoteId(result.item.id)
       return
     }
-  }, [closeSearchPopup, setToasts])
+  }, [closeSearchPopup])
 
   const navigateToItem = useCallback((item, type) => {
     if (type === 'event') {
