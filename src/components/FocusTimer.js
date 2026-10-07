@@ -192,13 +192,23 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running])
 
-  /* ── Exit full-screen on Escape ── */
+  /* ── Escape in full-screen: one layer at a time ──
+     The settings card closes first, then full-screen. Listening on `document` and
+     stopping the event there matters: the planner's own Escape handler is on
+     `window`, and it closes the whole timer. When this lived on `window` too, the
+     planner's handler — registered first — ran as well, so one Escape in zen mode
+     shut the timer instead of just leaving full-screen. */
   useEffect(() => {
     if (!fullscreen) return
-    const onKey = (e) => { if (e.key === 'Escape') setFullscreen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreen])
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      if (showSettings) setShowSettings(false)
+      else setFullscreen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [fullscreen, showSettings])
 
   /* ── Track theme so the ring glow can be stronger in light mode ── */
   useEffect(() => {

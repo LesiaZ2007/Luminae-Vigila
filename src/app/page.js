@@ -421,7 +421,11 @@ export default function Home() {
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
       onEscape:      () => {
-        if (showHelpOverlay)   { setShowHelpOverlay(false); return }
+        // The shortcuts overlay handles its own Escape, and fades out before it
+        // calls onClose. Closing it here too unmounted it mid-fade, so Escape
+        // always hard-cut. Stopping here still keeps the key from also closing
+        // whatever is open underneath.
+        if (showHelpOverlay)   return
         if (focusOpen)         { setFocusOpen(false);       return }
         if (showSearchPopup)   { closeSearchPopup();        return }
         if (corvusFloat)       { setCorvusFloat(false);     return }
