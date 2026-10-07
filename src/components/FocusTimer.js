@@ -432,6 +432,46 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     return opts
   }, [canvasAssignments])
 
+  /* What the "Focusing on" picker offers. Built here rather than inside TaskPicker,
+     which runs on every render — four times a second while the timer ticks — and
+     used to filter and sort every event each time. `today` is a dependency so the
+     list still rolls over at midnight. Above the `if (!open)` return, like every
+     hook in this component. */
+  const today = todayStr()
+  const focusOptions = useMemo(() => {
+    // Only what's still ahead: focusing on an exam you already sat is never the
+    // intent, and past events would swamp the list within a term. Compared on
+    // the date string so an exam earlier *today* still counts as today's.
+    const upcoming = events
+      .filter(e => e && !e.deletedAt && !e.extendedProps?.focusBlock && (e.start ?? '').slice(0, 10) >= today)
+      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+
+    const exams  = upcoming.filter(e => e.extendedProps?.category === 'exam')
+    const others = upcoming.filter(e => e.extendedProps?.category !== 'exam').slice(0, 20)
+
+    const eventLabel = e => {
+      const when = (e.start ?? '').slice(5, 10).replace('-', '/')   // MM/DD
+      return when ? `${e.title} · ${when}` : e.title
+    }
+
+    return [
+      { value: '', label: 'No specific task' },
+      // Exams lead: revising for one is the longest-running focus target a
+      // student has, and it's the reason to pick an event at all.
+      ...(exams.length ? [{ header: true, value: '__h_exams', label: 'Exams & quizzes' }] : []),
+      ...exams.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
+      ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
+      ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
+      ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
+      ...canvasAssignments.filter(a => !a.done).map(a => ({
+        value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
+      })),
+      // Capped: a term's worth of classes would bury everything above it.
+      ...(others.length ? [{ header: true, value: '__h_events', label: 'Upcoming events' }] : []),
+      ...others.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
+    ]
+  }, [events, todos, canvasAssignments, today])
+
   /* ── Pop-out (always-on-top) window ──────────────────────────────────────
      Every hook in this component must stay above the `if (!open)` return below;
      adding one after it changes the hook count between open and closed and
@@ -581,38 +621,6 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
   }
 
   function TaskPicker({ light }) {
-    // Only what's still ahead: focusing on an exam you already sat is never the
-    // intent, and past events would swamp the list within a term. Compared on
-    // the date string so an exam earlier *today* still counts as today's.
-    const today    = todayStr()
-    const upcoming = events
-      .filter(e => e && !e.deletedAt && !e.extendedProps?.focusBlock && (e.start ?? '').slice(0, 10) >= today)
-      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
-
-    const exams  = upcoming.filter(e => e.extendedProps?.category === 'exam')
-    const others = upcoming.filter(e => e.extendedProps?.category !== 'exam').slice(0, 20)
-
-    const eventLabel = e => {
-      const when = (e.start ?? '').slice(5, 10).replace('-', '/')   // MM/DD
-      return when ? `${e.title} · ${when}` : e.title
-    }
-
-    const focusOptions = [
-      { value: '', label: 'No specific task' },
-      // Exams lead: revising for one is the longest-running focus target a
-      // student has, and it's the reason to pick an event at all.
-      ...(exams.length ? [{ header: true, value: '__h_exams', label: 'Exams & quizzes' }] : []),
-      ...exams.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
-      ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
-      ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
-      ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
-      ...canvasAssignments.filter(a => !a.done).map(a => ({
-        value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
-      })),
-      // Capped: a term's worth of classes would bury everything above it.
-      ...(others.length ? [{ header: true, value: '__h_events', label: 'Upcoming events' }] : []),
-      ...others.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
-    ]
     return (
       <div>
         <label style={{ fontSize: '0.62rem', fontWeight: 700, color: light ? 'rgba(255,255,255,0.5)' : 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
