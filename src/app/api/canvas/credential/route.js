@@ -1,5 +1,6 @@
 import { getCredential, setCredential, clearCredential } from '@/lib/canvasTokenStore'
 import { getSession }                                     from '@/lib/session'
+import { canvasGet }                                       from '@/lib/canvasFetch'
 
 /** GET — returns connection status (never returns the token itself) */
 export async function GET() {
@@ -33,27 +34,18 @@ export async function POST(request) {
   token   = token.trim()
 
   // Validate by calling the Canvas "self" endpoint
-  let res
-  try {
-    res = await fetch(`${baseUrl}/api/v1/users/self`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-  } catch (err) {
-    return Response.json({ error: `Could not reach Canvas: ${err.message}` }, { status: 502 })
+  const result = await canvasGet(`${baseUrl}/api/v1/users/self`, token)
+
+  if (!result.ok) {
+    if (result.kind === 'network') return Response.json({ error: `Could not reach Canvas: ${result.error.message}` }, { status: 502 })
+    if (result.kind === 'unauthorized') {
+      return Response.json({ error: 'Invalid token — please generate a new one in Canvas → Account → Settings.' }, { status: 401 })
+    }
+    if (result.kind === 'badJson') return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
+    return Response.json({ error: `Canvas returned status ${result.status}. Check your base URL.` }, { status: 502 })
   }
 
-  if (res.status === 401) {
-    return Response.json({ error: 'Invalid token — please generate a new one in Canvas → Account → Settings.' }, { status: 401 })
-  }
-  if (!res.ok) {
-    return Response.json({ error: `Canvas returned status ${res.status}. Check your base URL.` }, { status: 502 })
-  }
-
-  let user
-  try { user = await res.json() } catch {
-    return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
-  }
-
+  const user = result.data
   await setCredential(session.userId, { token, baseUrl })
 
   return Response.json({

@@ -1,5 +1,6 @@
 import { getCredential } from '@/lib/canvasTokenStore'
 import { getSession }    from '@/lib/session'
+import { canvasGet }     from '@/lib/canvasFetch'
 
 /** GET — fetch active student course enrollments */
 export async function GET() {
@@ -11,29 +12,19 @@ export async function GET() {
 
   const { token, baseUrl } = cred
 
-  let res
-  try {
-    res = await fetch(
-      `${baseUrl}/api/v1/courses?enrollment_state=active&enrollment_type[]=student&per_page=50`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-  } catch (err) {
-    return Response.json({ error: `Could not reach Canvas: ${err.message}` }, { status: 502 })
+  const result = await canvasGet(
+    `${baseUrl}/api/v1/courses?enrollment_state=active&enrollment_type[]=student&per_page=50`,
+    token,
+  )
+
+  if (!result.ok) {
+    if (result.kind === 'network')      return Response.json({ error: `Could not reach Canvas: ${result.error.message}` }, { status: 502 })
+    if (result.kind === 'unauthorized') return Response.json({ error: 'Canvas token expired or invalid.' }, { status: 401 })
+    if (result.kind === 'badJson')      return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
+    return Response.json({ error: `Canvas returned status ${result.status}` }, { status: 502 })
   }
 
-  if (res.status === 401) {
-    return Response.json({ error: 'Canvas token expired or invalid.' }, { status: 401 })
-  }
-  if (!res.ok) {
-    return Response.json({ error: `Canvas returned status ${res.status}` }, { status: 502 })
-  }
-
-  let data
-  try { data = await res.json() } catch {
-    return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
-  }
-
-  const courses = (Array.isArray(data) ? data : []).map(c => ({
+  const courses = (Array.isArray(result.data) ? result.data : []).map(c => ({
     id:         c.id,
     name:       c.name,
     courseCode: c.course_code ?? '',
