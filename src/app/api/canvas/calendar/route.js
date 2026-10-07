@@ -1,5 +1,6 @@
 import { getCredential } from '@/lib/canvasTokenStore'
 import { getSession }    from '@/lib/session'
+import { canvasGet, canvasFetchAll, nextLinkFrom } from '@/lib/canvasFetch'
 
 /**
  * POST — fetch manually-posted calendar events for given courses.
@@ -30,39 +31,22 @@ export async function POST(request) {
     + (endDate   ? `&end_date=${endDate}`     : '')
     + `&per_page=100`
 
-  let res
-  try {
-    res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  } catch (err) {
-    return Response.json({ error: `Could not reach Canvas: ${err.message}` }, { status: 502 })
+  const first = await canvasGet(url, token)
+
+  if (!first.ok) {
+    if (first.kind === 'network')      return Response.json({ error: `Could not reach Canvas: ${first.error.message}` }, { status: 502 })
+    if (first.kind === 'unauthorized') return Response.json({ error: 'Canvas token expired or invalid.' }, { status: 401 })
+    if (first.kind === 'badJson')      return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
+    return Response.json({ error: `Canvas returned status ${first.status}` }, { status: 502 })
   }
 
-  if (res.status === 401) {
-    return Response.json({ error: 'Canvas token expired or invalid.' }, { status: 401 })
-  }
-  if (!res.ok) {
-    return Response.json({ error: `Canvas returned status ${res.status}` }, { status: 502 })
-  }
-
-  let data
-  try { data = await res.json() } catch {
-    return Response.json({ error: 'Unexpected response from Canvas.' }, { status: 502 })
-  }
-
-  // Follow pagination
-  let allItems = Array.isArray(data) ? [...data] : []
-  let linkHeader = res.headers.get('Link') ?? ''
-  while (true) {
-    const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/)
-    if (!match) break
-    try {
-      const nextRes = await fetch(match[1], { headers: { Authorization: `Bearer ${token}` } })
-      if (!nextRes.ok) break
-      const nextPage = await nextRes.json()
-      if (Array.isArray(nextPage)) allItems.push(...nextPage)
-      linkHeader = nextRes.headers.get('Link') ?? ''
-    } catch { break }
-  }
+  // Pagination beyond the first page is best-effort, same as assignments' walk: a page
+  // that fails simply ends the list rather than failing the whole request, since the
+  // first (already-validated) page's events are worth returning either way.
+  const firstItems = Array.isArray(first.data) ? first.data : []
+  const nextUrl     = nextLinkFrom(first.res.headers.get('Link'))
+  const restItems   = nextUrl ? await canvasFetchAll(nextUrl, token) : []
+  const allItems    = [...firstItems, ...restItems]
 
   const events = allItems.map(e => {
     const startAt = e.start_at ?? null

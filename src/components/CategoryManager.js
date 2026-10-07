@@ -17,12 +17,7 @@
 
 import { useState } from 'react'
 import { X, Plus, Trash2, Pencil, Check } from 'lucide-react'
-
-const PRESETS = [
-  '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
-  '#10b981','#059669','#f59e0b','#ef4444',
-  '#8b5cf6','#ec4899','#64748b','#475569',
-]
+import { COLOR_PRESETS as PRESETS } from '@/lib/palette'
 
 export default function CategoryManager({
   categories,

@@ -126,7 +126,20 @@ function DayRow({ item, overdue, onClick, onToggle }) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      // Keeps the row's name its own, rather than running on into the done
+      // toggle's "Mark done" / "Mark not done" title underneath it.
+      aria-label={item.title}
+      className="lv-focusable"
       onClick={e => onClick?.(item, e.currentTarget)}
+      onKeyDown={e => {
+        // The done toggle below is its own focusable control with its own
+        // stopPropagation — this guard is what keeps its Enter/Space from also
+        // opening the row underneath it.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item, e.currentTarget) }
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{

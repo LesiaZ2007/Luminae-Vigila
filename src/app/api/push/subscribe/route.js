@@ -2,8 +2,9 @@
  * POST /api/push/subscribe  — upsert a push subscription for the signed-in user
  * DELETE /api/push/subscribe — remove a subscription by endpoint
  */
-import { getSession } from '@/lib/session'
-import sql            from '@/lib/db'
+import { getSession }       from '@/lib/session'
+import { ensurePushSchema } from '@/lib/pushSchema'
+import sql                  from '@/lib/db'
 
 export async function POST(request) {
   const session = await getSession()
@@ -16,9 +17,9 @@ export async function POST(request) {
   }
 
   // Self-healing migrations — the daily glance needs both of these, and this is
-  // the one route guaranteed to run before it.
-  await sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS daily_enabled BOOLEAN NOT NULL DEFAULT true`
-  await sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tz_offset INTEGER NOT NULL DEFAULT 0`
+  // the one route guaranteed to run before it. Memoized per process — see
+  // lib/ddlOnce — so this is no longer two round trips on every subscribe call.
+  await ensurePushSchema()
 
   // getTimezoneOffset() from the device. The server runs in UTC and has no other
   // way to know which calendar day "today" means for this reader. Clamped to the

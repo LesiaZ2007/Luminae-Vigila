@@ -4,12 +4,31 @@
  * Body: { url: string }
  * Returns: { events: [...] } or { error } with 400 status.
  *
- * Parses VEVENTs from a text/calendar (.ics) URL.
- * Replicates the parseIcs logic from ImportExportButton.js, extended with:
+ * No session check, by design: a fully local-only user with no account at all can still
+ * paste a Canvas Calendar Feed URL and get it synced, the same as anyone signed in (see
+ * the "Calendar feed, no token" path in README's Canvas LMS section). That also makes
+ * this the one route in the app anyone on the internet can point at an arbitrary URL and
+ * have the *server* fetch it — an open SSRF relay unless the target is restricted, since
+ * nothing here depends on who is asking. `safeFetch` (lib/safeFetch.js) is that
+ * restriction: it refuses loopback/private/link-local targets (including the
+ * 169.254.169.254 cloud-metadata address), credentials embedded in the URL, and it caps
+ * redirects, response size and time — see that file for what it does and does not close.
+ *
+ * Parses VEVENTs from a text/calendar (.ics) URL with its own small parser, extended
+ * with:
  *  - VALUE=DATE (all-day) support
  *  - TZID-qualified DTSTART/DTEND
  *  - URL/ATTACH-type html link extraction
+ *
+ * This is a deliberate duplicate of lib/ics.js's parseIcs, not a shared one: this parser
+ * treats a floating (no `Z`, no `TZID`) datetime as UTC — "safe for Canvas feeds", per
+ * the comment this logic was written with — while lib/ics.js treats a floating value as
+ * local wall-clock time, which is what the RFC actually says a floating value means for
+ * a general-purpose .ics import. Those are opposite interpretations of the same bytes,
+ * so one parser cannot correctly serve both callers; sharing it would silently make one
+ * of the two wrong instead.
  */
+import { safeFetch, SafeFetchError } from '@/lib/safeFetch'
 
 /**
  * Parse a raw ICS datetime string into an ISO 8601 string.
@@ -132,26 +151,27 @@ export async function POST(request) {
     return Response.json({ error: 'A URL is required.' }, { status: 400 })
   }
 
-  // Basic sanity: only allow http/https
-  if (!/^https?:\/\//i.test(url.trim())) {
-    return Response.json({ error: 'URL must start with http:// or https://' }, { status: 400 })
-  }
-
-  let res
+  // safeFetch owns every check on the URL itself now — scheme, embedded credentials,
+  // and where it actually resolves — so there is no separate scheme pre-check here
+  // the way there used to be; a single place for "is this URL even allowed" is the
+  // point.
+  let text
   try {
-    res = await fetch(url.trim(), {
-      headers: { Accept: 'text/calendar, text/plain, */*' },
-      // Server-side fetch has no CORS restriction — forward as-is
-    })
+    text = await safeFetch(url.trim(), { maxBytes: 5 * 1024 * 1024, timeoutMs: 10_000 })
   } catch (err) {
+    if (err instanceof SafeFetchError) {
+      // A non-ok upstream status is the one case with pre-existing wording worth
+      // keeping: the original message named the exact status and suggested checking
+      // the URL, which safeFetch's generic "Upstream returned HTTP 404." does not.
+      if (typeof err.status === 'number') {
+        return Response.json({
+          error: `The URL returned HTTP ${err.status}. Check that it is correct and publicly accessible.`,
+        }, { status: 400 })
+      }
+      return Response.json({ error: err.message }, { status: 400 })
+    }
     return Response.json({ error: `Could not fetch the URL: ${err.message}` }, { status: 400 })
   }
-
-  if (!res.ok) {
-    return Response.json({ error: `The URL returned HTTP ${res.status}. Check that it is correct and publicly accessible.` }, { status: 400 })
-  }
-
-  const text = await res.text()
 
   // Validate it looks like a calendar
   if (!text.includes('BEGIN:VCALENDAR') && !text.includes('BEGIN:VEVENT')) {

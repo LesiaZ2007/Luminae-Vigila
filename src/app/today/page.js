@@ -18,16 +18,10 @@ import Link from 'next/link'
 import { CalendarDays, CheckCircle2, AlertTriangle, Clock, ArrowRight, RefreshCw } from 'lucide-react'
 import { buildGlance, glanceSummaryLine, displayTime } from '@/lib/glance'
 import { todayStr } from '@/lib/localDate'
+import { readStored } from '@/lib/usePersist'
 
-function readLocal(key) {
-  try {
-    const raw = localStorage.getItem(key)
-    const val = raw ? JSON.parse(raw) : []
-    return Array.isArray(val) ? val : []
-  } catch {
-    return []
-  }
-}
+const asList  = v => (Array.isArray(v) ? v : [])
+const readLocal = key => readStored(key, [], asList)
 
 const LONG_DATE = { weekday: 'long', month: 'long', day: 'numeric' }
 

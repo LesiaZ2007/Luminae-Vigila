@@ -38,6 +38,7 @@ import WeeklyRecap from './WeeklyRecap'
 import { todayStr } from '@/lib/localDate'
 import { pipSupported, openPipWindow } from '@/lib/documentPip'
 import { makeRandom } from '@/lib/seededRandom'
+import CrowIcon from '@/components/CrowIcon'
 
 const DEFAULTS = {
   focusMin: 25,
@@ -191,13 +192,23 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running])
 
-  /* ── Exit full-screen on Escape ── */
+  /* ── Escape in full-screen: one layer at a time ──
+     The settings card closes first, then full-screen. Listening on `document` and
+     stopping the event there matters: the planner's own Escape handler is on
+     `window`, and it closes the whole timer. When this lived on `window` too, the
+     planner's handler — registered first — ran as well, so one Escape in zen mode
+     shut the timer instead of just leaving full-screen. */
   useEffect(() => {
     if (!fullscreen) return
-    const onKey = (e) => { if (e.key === 'Escape') setFullscreen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreen])
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      if (showSettings) setShowSettings(false)
+      else setFullscreen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [fullscreen, showSettings])
 
   /* ── Track theme so the ring glow can be stronger in light mode ── */
   useEffect(() => {
@@ -421,6 +432,46 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     return opts
   }, [canvasAssignments])
 
+  /* What the "Focusing on" picker offers. Built here rather than inside TaskPicker,
+     which runs on every render — four times a second while the timer ticks — and
+     used to filter and sort every event each time. `today` is a dependency so the
+     list still rolls over at midnight. Above the `if (!open)` return, like every
+     hook in this component. */
+  const today = todayStr()
+  const focusOptions = useMemo(() => {
+    // Only what's still ahead: focusing on an exam you already sat is never the
+    // intent, and past events would swamp the list within a term. Compared on
+    // the date string so an exam earlier *today* still counts as today's.
+    const upcoming = events
+      .filter(e => e && !e.deletedAt && !e.extendedProps?.focusBlock && (e.start ?? '').slice(0, 10) >= today)
+      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
+
+    const exams  = upcoming.filter(e => e.extendedProps?.category === 'exam')
+    const others = upcoming.filter(e => e.extendedProps?.category !== 'exam').slice(0, 20)
+
+    const eventLabel = e => {
+      const when = (e.start ?? '').slice(5, 10).replace('-', '/')   // MM/DD
+      return when ? `${e.title} · ${when}` : e.title
+    }
+
+    return [
+      { value: '', label: 'No specific task' },
+      // Exams lead: revising for one is the longest-running focus target a
+      // student has, and it's the reason to pick an event at all.
+      ...(exams.length ? [{ header: true, value: '__h_exams', label: 'Exams & quizzes' }] : []),
+      ...exams.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
+      ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
+      ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
+      ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
+      ...canvasAssignments.filter(a => !a.done).map(a => ({
+        value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
+      })),
+      // Capped: a term's worth of classes would bury everything above it.
+      ...(others.length ? [{ header: true, value: '__h_events', label: 'Upcoming events' }] : []),
+      ...others.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
+    ]
+  }, [events, todos, canvasAssignments, today])
+
   /* ── Pop-out (always-on-top) window ──────────────────────────────────────
      Every hook in this component must stay above the `if (!open)` return below;
      adding one after it changes the hook count between open and closed and
@@ -570,38 +621,6 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
   }
 
   function TaskPicker({ light }) {
-    // Only what's still ahead: focusing on an exam you already sat is never the
-    // intent, and past events would swamp the list within a term. Compared on
-    // the date string so an exam earlier *today* still counts as today's.
-    const today    = todayStr()
-    const upcoming = events
-      .filter(e => e && !e.deletedAt && !e.extendedProps?.focusBlock && (e.start ?? '').slice(0, 10) >= today)
-      .sort((a, b) => String(a.start).localeCompare(String(b.start)))
-
-    const exams  = upcoming.filter(e => e.extendedProps?.category === 'exam')
-    const others = upcoming.filter(e => e.extendedProps?.category !== 'exam').slice(0, 20)
-
-    const eventLabel = e => {
-      const when = (e.start ?? '').slice(5, 10).replace('-', '/')   // MM/DD
-      return when ? `${e.title} · ${when}` : e.title
-    }
-
-    const focusOptions = [
-      { value: '', label: 'No specific task' },
-      // Exams lead: revising for one is the longest-running focus target a
-      // student has, and it's the reason to pick an event at all.
-      ...(exams.length ? [{ header: true, value: '__h_exams', label: 'Exams & quizzes' }] : []),
-      ...exams.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
-      ...(todos.some(t => !t.completed) ? [{ header: true, value: '__h_tasks', label: 'Tasks' }] : []),
-      ...todos.filter(t => !t.completed).map(t => ({ value: t.id, label: t.title })),
-      ...(canvasAssignments.some(a => !a.done) ? [{ header: true, value: '__h_canvas', label: 'Canvas assignments' }] : []),
-      ...canvasAssignments.filter(a => !a.done).map(a => ({
-        value: `canvas:${a.id}`, label: a.courseName ? `${a.title} · ${a.courseName}` : a.title,
-      })),
-      // Capped: a term's worth of classes would bury everything above it.
-      ...(others.length ? [{ header: true, value: '__h_events', label: 'Upcoming events' }] : []),
-      ...others.map(e => ({ value: `event:${e.id}`, label: eventLabel(e) })),
-    ]
     return (
       <div>
         <label style={{ fontSize: '0.62rem', fontWeight: 700, color: light ? 'rgba(255,255,255,0.5)' : 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -724,7 +743,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
           {/* Top bar */}
           <div style={{ position: 'absolute', top: 18, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'rgba(255,255,255,0.85)' }}>
-              <CrowGlyph size={18} color="#93c5fd" />
+              <CrowIcon size={18} color="#93c5fd" />
               <span style={{ fontSize: '0.82rem', fontWeight: 800, letterSpacing: '0.04em' }}>Focus</span>
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
@@ -841,7 +860,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px 8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <CrowGlyph size={18} color={accent} />
+            <CrowIcon size={18} color={accent} />
             <div style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>Focus</div>
           </div>
           <div style={{ display: 'flex', gap: 2 }}>
@@ -1151,13 +1170,5 @@ function ToggleRow({ label, on, onClick, icon }) {
         </span>
       </span>
     </button>
-  )
-}
-
-function CrowGlyph({ size = 20, color = 'currentColor' }) {
-  return (
-    <svg width={size} height={size} viewBox="0 -64 640 640" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-      <path fill={color} d="M544 32h-16.36C513.04 12.68 490.09 0 464 0c-44.18 0-80 35.82-80 80v20.98L12.09 393.57A30.216 30.216 0 0 0 0 417.74c0 22.46 23.64 37.07 43.73 27.03L165.27 384h96.49l44.41 120.1c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38L312.94 384H352c1.91 0 3.76-.23 5.66-.29l44.51 120.38c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38l-41.24-111.53C485.74 352.8 544 279.26 544 192v-80l96-16c0-35.35-42.98-64-96-64zm-80 72c-13.25 0-24-10.75-24-24 0-13.26 10.75-24 24-24s24 10.74 24 24c0 13.25-10.75 24-24 24z"/>
-    </svg>
   )
 }

@@ -1,25 +1,10 @@
 import { getCredential } from '@/lib/canvasTokenStore'
 import { getSession }    from '@/lib/session'
+import { canvasFetchAll, mapLimit } from '@/lib/canvasFetch'
 
-/**
- * Follow Canvas pagination via Link response headers.
- */
-async function canvasFetchAll(url, token) {
-  const items = []
-  let next = url
-  while (next) {
-    const res = await fetch(next, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) break
-    const page = await res.json()
-    if (Array.isArray(page)) items.push(...page)
-    const link  = res.headers.get('Link') ?? ''
-    const match = link.match(/<([^>]+)>;\s*rel="next"/)
-    next = match ? match[1] : null
-  }
-  return items
-}
+// Canvas rate-limits per token, so this is a cap on how many courses are ever in flight
+// at once, not a cap on total courses.
+const CONCURRENCY = 4
 
 /**
  * POST — fetch assignments for a list of courses.
@@ -41,14 +26,19 @@ export async function POST(request) {
   if (!courses.length) return Response.json({ assignments: [] })
 
   const { token, baseUrl } = cred
-  const allAssignments = []
 
-  for (const course of courses) {
+  /* One request per course used to run sequentially, so a student with 6 courses waited
+     for 6 round trips back to back. mapLimit keeps a few in flight at once and still
+     hands back results in course order, so the shape of the response is unchanged. */
+  const perCourse = await mapLimit(courses, CONCURRENCY, async (course) => {
+    const results = []
     try {
       const url = `${baseUrl}/api/v1/courses/${course.id}/assignments`
         + `?include[]=submission&order_by=due_at&per_page=100`
 
-      const raw = await canvasFetchAll(url, token)
+      const raw = await canvasFetchAll(url, token, {
+        onPageError: err => console.error(`Canvas assignments error for course ${course.id}:`, err.message),
+      })
 
       for (const a of raw) {
         if (Array.isArray(a.submission_types) && a.submission_types.length === 1 && a.submission_types[0] === 'not_graded') continue
@@ -56,7 +46,7 @@ export async function POST(request) {
 
         const sub = a.submission ?? null
 
-        allAssignments.push({
+        results.push({
           id:               `canvas_${a.id}`,
           canvasId:         a.id,
           courseId:         course.id,
@@ -77,7 +67,8 @@ export async function POST(request) {
     } catch (err) {
       console.error(`Canvas assignments error for course ${course.id}:`, err.message)
     }
-  }
+    return results
+  })
 
-  return Response.json({ assignments: allAssignments })
+  return Response.json({ assignments: perCourse.flat() })
 }

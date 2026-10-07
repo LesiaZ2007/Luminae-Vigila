@@ -9,24 +9,22 @@
  *   - Notification delivery check
  *   - Show tour (re-run onboarding)
  *
- * Reuses AccentPicker's ACCENT_OPTIONS / applyAccent / getSavedAccent so the
- * accent logic stays in one place.
+ * The accent logic itself is lib/accent.
  */
 
 import { useState, useEffect, useRef } from 'react'
 import { Settings, Check, Compass, Sun, Moon, Monitor } from 'lucide-react'
-import { ACCENT_OPTIONS, applyAccent, getSavedAccent } from './AccentPicker'
+import { ACCENT_OPTIONS, getSavedAccent, saveAccent } from '@/lib/accent'
 import NotificationCheck from './NotificationCheck'
 
-const ACCENT_STORAGE_KEY = 'lv-accent'
 
 export default function SettingsMenu({ theme, onSetTheme, onShowTour, signedIn = false, /** 'sidebar' (dark bg) | 'light' */ variant = 'sidebar' }) {
   const [open,   setOpen]   = useState(false)
-  const [accent, setAccent] = useState('blue')
+  // Read straight away: this menu only mounts on the client, after the planner's
+  // `mounted` gate, so there is no server render for the value to disagree with.
+  const [accent, setAccent] = useState(getSavedAccent)
   const ref = useRef(null)
   const isDark = variant === 'sidebar'
-
-  useEffect(() => { setAccent(getSavedAccent()) }, [])
 
   useEffect(() => {
     if (!open) return
@@ -36,8 +34,7 @@ export default function SettingsMenu({ theme, onSetTheme, onShowTour, signedIn =
   }, [open])
 
   function pickAccent(id) {
-    applyAccent(id)
-    try { localStorage.setItem(ACCENT_STORAGE_KEY, id) } catch {}
+    saveAccent(id)
     setAccent(id)
   }
 

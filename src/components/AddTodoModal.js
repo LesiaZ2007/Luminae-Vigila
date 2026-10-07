@@ -10,6 +10,7 @@ import { isClassCategoryId, classIdFromCategoryId } from '@/lib/classCategories'
 import { visibleSubtasks } from '@/lib/todoMerge'
 import { classLinksFor, canonicalCategoryId } from '@/lib/classLinks'
 import { PRIORITIES } from '@/lib/priority'
+import { toDateStr, dateStrOf } from '@/lib/localDate'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',  ms: 0 },
@@ -49,7 +50,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const _existingCustomAt = editTodo?.reminder?.at ? new Date(editTodo.reminder.at) : null
   const [reminderMs,    setReminderMs]    = useState(editTodo?.reminder?.at ? -1 : (editTodo?.reminder?.ms || 0))
   const [customReminderDate, setCustomReminderDate] = useState(
-    _existingCustomAt ? _existingCustomAt.toISOString().slice(0, 10) : ''
+    _existingCustomAt ? toDateStr(_existingCustomAt) : ''
   )
   const [customReminderTime, setCustomReminderTime] = useState(
     _existingCustomAt ? `${String(_existingCustomAt.getHours()).padStart(2,'0')}:${String(_existingCustomAt.getMinutes()).padStart(2,'0')}` : '09:00'
@@ -269,7 +270,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
           {!isCanvas && <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: repeats ? 12 : 0 }}>
               <button type="button" className="toggle" data-on={String(repeats)} onClick={() => setRepeats(v => !v)}>
-                <div className="toggle-thumb" />
+                <span className="toggle-knob" />
               </button>
               <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <RefreshCw size={13} style={{ color: repeats ? 'var(--blue)' : 'var(--text-3)' }} /> Repeats
@@ -351,7 +352,7 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                         setLinkedEventId(id)
                         if (id) {
                           const ev = upcomingEvents.find(x => x.id === id)
-                          if (ev) setDueDate(new Date(ev.start).toISOString().slice(0, 10))
+                          if (ev) setDueDate(dateStrOf(ev.start))
                         }
                       }}
                       options={upcomingEvents.map(ev => ({

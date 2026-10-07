@@ -1,6 +1,3 @@
-/** @type {import('next').NextConfig} */
-// Note: Sentry is wired up via instrumentation.js / src/instrumentation-client.js.
-// @sentry/nextjs is NOT imported here so the dev server works without the package.
 import { execSync } from 'node:child_process'
 
 /**
@@ -29,6 +26,7 @@ function commitSha() {
   }
 }
 
+/** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
     APP_COMMIT_SHA: commitSha(),

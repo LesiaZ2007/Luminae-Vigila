@@ -1,5 +1,10 @@
 import { getCredential } from '@/lib/canvasTokenStore'
 import { getSession }    from '@/lib/session'
+import { canvasGet, mapLimit } from '@/lib/canvasFetch'
+
+// Canvas rate-limits per token, so this is a cap on how many courses are ever in flight
+// at once, not a cap on total courses.
+const CONCURRENCY = 4
 
 /**
  * GET /api/canvas/grades
@@ -30,39 +35,42 @@ export async function GET(request) {
   if (!courseIds.length) return Response.json({ grades: [] })
 
   const { token, baseUrl } = cred
-  const grades = []
 
-  for (const courseId of courseIds) {
+  /* One request per course used to run sequentially. mapLimit keeps a few in flight at
+     once and still hands results back in the order courseIds was given, same as before. */
+  const grades = await mapLimit(courseIds, CONCURRENCY, async (courseId) => {
+    const blank = { courseId, currentScore: null, finalScore: null, currentGrade: null, finalGrade: null }
     try {
       // Canvas: GET /api/v1/courses/:id/enrollments?user_id=self&type[]=StudentEnrollment
       const url = `${baseUrl}/api/v1/courses/${courseId}/enrollments`
         + `?user_id=self&type[]=StudentEnrollment&per_page=1`
 
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-
-      if (!res.ok) {
-        grades.push({ courseId, currentScore: null, finalScore: null, currentGrade: null, finalGrade: null })
-        continue
+      const result = await canvasGet(url, token)
+      if (!result.ok) {
+        // A non-ok status is quiet — one course's grades just come back blank. A
+        // network failure or an unparseable body is logged, same as the catch below.
+        if (result.kind === 'network' || result.kind === 'badJson') {
+          console.error(`Canvas grades error for course ${courseId}:`, result.error.message)
+        }
+        return blank
       }
 
-      const enrollments = await res.json()
+      const enrollments = result.data
       const enrollment  = Array.isArray(enrollments) ? enrollments[0] : null
       const g           = enrollment?.grades ?? {}
 
-      grades.push({
+      return {
         courseId,
         currentScore: g.current_score ?? null,   // number, e.g. 87.4
         finalScore:   g.final_score   ?? null,
         currentGrade: g.current_grade ?? null,   // letter, e.g. "B+"
         finalGrade:   g.final_grade   ?? null,
-      })
+      }
     } catch (err) {
       console.error(`Canvas grades error for course ${courseId}:`, err.message)
-      grades.push({ courseId, currentScore: null, finalScore: null, currentGrade: null, finalGrade: null })
+      return blank
     }
-  }
+  })
 
   return Response.json({ grades })
 }

@@ -25,10 +25,9 @@
  * (through Tiptap's own parser, which drops unknown nodes) and the read-only
  * preview below, which strips to plain text. See `notePlainText`.
  *
- * localStorage key: 'lv-notes'
+ * localStorage key: 'lv-notes' (read and written by the planner shell — see
+ * lib/usePersist).
  */
-
-const LS_KEY = 'lv-notes'
 
 /* How the notes list is *viewed* — which tag groups are furled shut, and whether
    grouping is on at all. Deliberately device-local rather than synced: furling a
@@ -40,22 +39,6 @@ const GROUP_KEY = 'lv-notes-grouped'
 
 /** Notes older than this in the trash are purged on load. */
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
-
-export function loadNotes() {
-  try {
-    const raw = localStorage.getItem(LS_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? purgeExpiredTrash(parsed) : []
-  } catch {
-    return []
-  }
-}
-
-export function saveNotes(notes) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(notes))
-  } catch {}
-}
 
 /** Drop trashed notes past the retention window. Pure — returns a new array. */
 export function purgeExpiredTrash(notes, now = Date.now()) {

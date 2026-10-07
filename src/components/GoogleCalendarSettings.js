@@ -7,12 +7,7 @@ import {
   readLocalPrefs, writeLocalPrefs, hydrateGooglePrefs, persistGooglePrefs,
 } from '@/lib/googlePrefs'
 import { connectGoogleAccount } from '@/lib/googleConnect'
-
-const COLOR_PRESETS = [
-  '#3b82f6','#2563eb','#0ea5e9','#06b6d4',
-  '#10b981','#059669','#f59e0b','#ef4444',
-  '#8b5cf6','#ec4899','#64748b','#475569',
-]
+import { COLOR_PRESETS } from '@/lib/palette'
 
 /* ──────────────────────────────────────────────────────────
    Main modal
@@ -537,7 +532,7 @@ function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onTog
                   </span>
                 )}
               </span>
-              <ColorSwatches
+              <PresetSwatches
                 value={calendarColor(cal)}
                 disabled={!accountEnabled}
                 onChange={color => onCalendarColor(cal.id, color)}
@@ -558,7 +553,11 @@ function AccountRow({ acc, cals, expanded, onToggleExpand, accountEnabled, onTog
 /* ──────────────────────────────────────────────────────────
    Toggle switch
 ────────────────────────────────────────────────────────── */
-function ColorSwatches({ value, onChange, disabled = false }) {
+/* Local to this modal — distinct from the shared ColorSwatches component (event
+   colours): this one renders the generic COLOR_PRESETS grid as small round dots
+   rather than the big tappable cells an event's colour picker uses. Renamed so
+   the two can't be confused by name alone. */
+function PresetSwatches({ value, onChange, disabled = false }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 4, width: 92, flexShrink: 0, opacity: disabled ? 0.38 : 1 }}>
       {COLOR_PRESETS.slice(0, 10).map(color => (

@@ -18,6 +18,7 @@ import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid }           from '@/lib/cronAuth'
 import { ensurePushSchema }                    from '@/lib/pushSchema'
+import { sendToSubscription }                  from '@/lib/pushSend'
 import { buildGlance, glanceNotificationBody } from '@/lib/glance'
 import { toDateStr } from '@/lib/localDate'
 
@@ -44,49 +45,64 @@ export async function GET(request) {
     WHERE daily_enabled = true
   `
 
-  let sent = 0, skipped = 0
+  // Grouped by user so a reader with several devices gets one pair of todos/events
+  // queries rather than one pair per device — the rows don't vary by device, only
+  // `tz_offset` below does, and that only picks which calendar day to summarise.
+  const subsByUser = new Map()
+  for (const sub of subs) {
+    const list = subsByUser.get(sub.user_id)
+    if (list) list.push(sub)
+    else subsByUser.set(sub.user_id, [sub])
+  }
 
-  const results = await Promise.allSettled(subs.map(async sub => {
-    // tz_offset is getTimezoneOffset(): minutes to ADD to local to reach UTC,
-    // so subtracting it converts server-UTC "now" into the reader's wall clock.
-    const local   = new Date(Date.now() - (sub.tz_offset ?? 0) * 60 * 1000)
-    const dateStr = toDateStr(local)
+  let sent = 0, skipped = 0, failed = 0
 
-    const [todoRows, eventRows] = await Promise.all([
-      sql`SELECT data FROM todos  WHERE user_id = ${sub.user_id}`,
-      sql`SELECT data FROM events WHERE user_id = ${sub.user_id}`,
-    ])
-
-    const glance = buildGlance({
-      todos:  todoRows.map(r => r.data),
-      events: eventRows.map(r => r.data),
-      dateStr,
-    })
-
-    // A push that says "nothing today" every morning trains you to ignore the
-    // app's notifications entirely, which then costs you the reminders that
-    // do matter. Silence is the correct behaviour on an empty day.
-    if (glance.isEmpty) { skipped++; return }
-
+  /* Every account, and every device within it, fails on its own. Before the
+     grouping each subscription was its own Promise.allSettled entry, so one bad row
+     or one transient database error was counted and the run carried on. A bare
+     Promise.all here would let a single account's failure reject the whole run —
+     no response, and nobody's glance that morning. */
+  await Promise.all(Array.from(subsByUser.entries()).map(async ([userId, userSubs]) => {
+    let todos, events
     try {
-      await webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({
+      const [todoRows, eventRows] = await Promise.all([
+        sql`SELECT data FROM todos  WHERE user_id = ${userId}`,
+        sql`SELECT data FROM events WHERE user_id = ${userId}`,
+      ])
+      todos  = todoRows.map(r => r.data)
+      events = eventRows.map(r => r.data)
+    } catch {
+      failed += userSubs.length
+      return
+    }
+
+    await Promise.all(userSubs.map(async sub => {
+      try {
+        // tz_offset is getTimezoneOffset(): minutes to ADD to local to reach UTC,
+        // so subtracting it converts server-UTC "now" into the reader's wall clock.
+        const local   = new Date(Date.now() - (sub.tz_offset ?? 0) * 60 * 1000)
+        const dateStr = toDateStr(local)
+
+        const glance = buildGlance({ todos, events, dateStr })
+
+        // A push that says "nothing today" every morning trains you to ignore the
+        // app's notifications entirely, which then costs you the reminders that
+        // do matter. Silence is the correct behaviour on an empty day.
+        if (glance.isEmpty) { skipped++; return }
+
+        const result = await sendToSubscription(sub, JSON.stringify({
           title: 'Today at a glance',
           body:  glanceNotificationBody(glance),
           tag:   'lv-daily',
           url:   '/today',
-        }),
-      )
-      sent++
-    } catch (err) {
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
+        }))
+        if (result.ok) sent++
+        else failed++
+      } catch {
+        failed++
       }
-      throw err
-    }
+    }))
   }))
 
-  const failed = results.filter(r => r.status === 'rejected').length
   return Response.json({ ok: true, sent, failed, skipped })
 }

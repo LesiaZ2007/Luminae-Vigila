@@ -10,6 +10,10 @@ import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
 import ColorSwatches, { sameColor } from '@/components/ColorSwatches'
 import { lastDayOf } from '@/lib/eventSpan'
+// Local calendar date (YYYY-MM-DD) for a timed value. Using toISOString() would
+// convert to UTC first, which shifts the day for evening events and moves them forward
+// a day when the modal re-saves them. Always read the day in the user's own timezone.
+import { toYMDLocal } from '@/lib/calendarView'
 
 const REMINDER_OPTIONS = [
   { label: 'No reminder',   ms: 0 },
@@ -25,13 +29,6 @@ const DAYS = ['S','M','T','W','T','F','S']
 
 function toHHMM(date) {
   return `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`
-}
-
-// Local calendar date (YYYY-MM-DD) for a timed value. Using toISOString() here would
-// convert to UTC first, which shifts the day for evening events and moves them forward
-// a day when the modal re-saves them. Always read the day in the user's own timezone.
-function toYMDLocal(date) {
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
 }
 
 /**
@@ -226,7 +223,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
   // If editing an event with a custom-time reminder, pre-populate the pickers
   const _existingCustomAt = event?.reminder?.at ? new Date(event.reminder.at) : null
   const [customReminderDate, setCustomReminderDate] = useState(
-    _existingCustomAt ? _existingCustomAt.toISOString().slice(0, 10) : ''
+    _existingCustomAt ? toYMDLocal(_existingCustomAt) : ''
   )
   const [customReminderTime, setCustomReminderTime] = useState(
     _existingCustomAt ? toHHMM(_existingCustomAt) : '09:00'
@@ -309,7 +306,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
     const startISO = allDay ? date : `${date}T${startTime}:00`
     // allDay end is exclusive in FullCalendar → add 1 day to the inclusive endDate
     const endISO = allDay
-      ? (() => { const d = new Date((endDate || date) + 'T12:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10) })()
+      ? (() => { const d = new Date((endDate || date) + 'T12:00:00'); d.setDate(d.getDate() + 1); return toYMDLocal(d) })()
       : `${date}T${endTime}:00`
     const reminderOpt = REMINDER_OPTIONS.find(r => r.ms === reminderMs)
     let reminderObj = null

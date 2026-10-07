@@ -5,10 +5,14 @@ import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { readStored, usePersist } from '@/lib/usePersist'
+import { useNow } from '@/lib/useNow'
 import { withThemeTransition } from '@/lib/themeTransition'
 import ShortcutsHelp from '@/components/ShortcutsHelp'
 import AgendaView from '@/components/AgendaView'
 import TaskActionMenu from '@/components/TaskActionMenu'
+import CrowIcon from '@/components/CrowIcon'
+import LiveClock, { NextUpCard } from '@/components/LiveClock'
 
 function useWindowWidth() {
   const [w, setW] = useState(1280)
@@ -57,7 +61,6 @@ import StudyPlanModal    from '@/components/StudyPlanModal'
 import ExamBlockModal    from '@/components/ExamBlockModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import Toast from '@/components/Toast'
-import Corvus from '@/components/Corvus'
 import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
 import BuildInfo from '@/components/BuildInfo'
 import SidebarGoogleSection from '@/components/SidebarGoogleSection'
@@ -78,7 +81,7 @@ import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 import { buildGlance }    from '@/lib/glance'
-import { todayStr }       from '@/lib/localDate'
+import { todayStr, toDateStr } from '@/lib/localDate'
 import { connectGoogleAccount } from '@/lib/googleConnect'
 import { hydrateGooglePrefs }   from '@/lib/googlePrefs'
 import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
@@ -96,11 +99,20 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   ssr: false,
   loading: () => <NotesPanelSkeleton />,
 })
+/* Corvus is 1,100 lines that most sessions never open, and it needs the network to do
+   anything, so unlike the task and event editors it never has to open offline. That
+   makes it safe to split out: the service worker caches no code, so a chunk that has
+   not been fetched yet cannot load once the connection drops. The editors stay in the
+   main bundle for exactly that reason. Corvus is also fetched in the background once
+   the planner is idle (see the effect in Home), so opening it is still instant. */
+const Corvus = dynamic(() => import('@/components/Corvus'), {
+  ssr: false,
+  loading: () => <ListSkeleton rows={4} label="Loading Corvus" padding="20px" />,
+})
 
 // Seed values only. Event categories are user-editable and synced — read
-// `eventCategories` state instead. Still exported because other modules import
-// it for a default palette.
-export const DEFAULT_EVENT_CATEGORIES = [
+// `eventCategories` state instead.
+const DEFAULT_EVENT_CATEGORIES = [
   { id: 'class',    label: 'Class',       color: '#3a6fa8' },
   { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
   { id: 'personal', label: 'Personal',    color: '#10b981' },
@@ -134,12 +146,23 @@ const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus trigg
    untouched — at roughly 15 idle polls an hour instead of 6. */
 const AUTO_SYNC_IDLE_MAX_MS  = 4 * 60 * 1000
 
+/* Minimum gap between mirrors out to Google Calendar — see maybeMirrorToGoogle. */
+const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
+
 const DEFAULT_TODO_CATS = [
   { id: 'academic', label: 'Academic', color: '#3a6fa8' },
   { id: 'personal', label: 'Personal', color: '#10b981' },
   { id: 'work',     label: 'Work',     color: '#f59e0b' },
   { id: 'health',   label: 'Health',   color: '#ef4444' },
 ]
+
+/* How a stored collection is read back (see lib/usePersist). Expired
+   tombstones are dropped on load, and so are blank notes a previous session left
+   behind (discardEmptyNote below is the live version of the same rule). An empty
+   event-category list falls through to the defaults: it would leave the user with
+   no categories at all and no obvious way back. */
+const reviveNotes           = list => dropEmptyNotes(purgeExpiredTrash(list))
+const reviveEventCategories = list => (Array.isArray(list) && list.length > 0 ? list : DEFAULT_EVENT_CATEGORIES)
 
 /** "14:05" from whatever shape an occurrence's start/end arrived in. */
 function hhmmLocal(value) {
@@ -176,13 +199,16 @@ export default function Home() {
   // Everything in the UI reads the derived `events` / `todos` / `customLists`,
   // which have tombstones filtered out, so no read site had to change. Only the
   // sync and persistence paths touch the raw arrays.
-  const [eventsRaw,      setEvents]         = useState([])
-  const [todosRaw,       setTodos]          = useState([])
+  //
+  // Each of these is read from localStorage on the first render and written back by
+  // usePersist further down — see lib/usePersist.
+  const [eventsRaw,      setEvents]         = useState(() => readStored('lv-events', [], purgeTombstones))
+  const [todosRaw,       setTodos]          = useState(() => readStored('lv-todos',  [], purgeTodos))
   const events = useMemo(() => visible(eventsRaw), [eventsRaw])
   const todos  = useMemo(() => visible(todosRaw),  [todosRaw])
-  const [todoCategories, setTodoCategories] = useState(DEFAULT_TODO_CATS)
-  const [eventCategories, setEventCategories] = useState(DEFAULT_EVENT_CATEGORIES)
-  const [studySessions,  setStudySessions]  = useState([])
+  const [todoCategories, setTodoCategories] = useState(() => readStored('lv-todo-cats', DEFAULT_TODO_CATS))
+  const [eventCategories, setEventCategories] = useState(() => readStored('lv-event-cats', DEFAULT_EVENT_CATEGORIES, reviveEventCategories))
+  const [studySessions,  setStudySessions]  = useState(() => readStored('lv-study-sessions', []))
   const [toasts,         setToasts]         = useState([])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
@@ -225,17 +251,17 @@ export default function Home() {
      marker: "is this device up to date" is otherwise unanswerable from the UI, which
      is exactly the question you have when two devices disagree. */
   const [lastSyncedAt,       setLastSyncedAt]       = useState(null)
-  const [eventPrefs,         setEventPrefs]         = useState({})
+  const [eventPrefs,         setEventPrefs]         = useState(() => readStored('lv-event-prefs', {}))
 
   // ── Custom Lists ──
-  const [customListsRaw,   setCustomLists]      = useState([])
+  const [customListsRaw,   setCustomLists]      = useState(() => readStored('lv-custom-lists', [], purgeTombstones))
   const customLists = useMemo(() => visible(customListsRaw), [customListsRaw])
   const [activeListId,     setActiveListId]     = useState('my-tasks')
   const [showNewListModal, setShowNewListModal] = useState(false)
   const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
 
   // ── Notes ──
-  const [notes,        setNotes]        = useState([])
+  const [notes,        setNotes]        = useState(() => readStored('lv-notes', [], reviveNotes))
   const [activeNoteId, setActiveNoteId] = useState(null)
   // Draft carried from a note into the task/event editor, plus which note to
   // link back to once the item is actually saved.
@@ -325,13 +351,13 @@ export default function Home() {
   }, [openSearchPopup])
 
   // ── Canvas state ──
-  const [canvasAssignments,  setCanvasAssignments]  = useState([])
+  const [canvasAssignments,  setCanvasAssignments]  = useState(() => readStored('lv-canvas-assignments', []))
   /* Raw vs visible, the same split events and todos use. The raw array keeps
      tombstones so a delete can reach other devices; everything on screen reads the
      visible one. Without this a deleted class was simply absent locally, which the
      merge cannot tell apart from a class created on another device — so it came
      back on the next sync. See lib/tombstones.js. */
-  const [canvasClassesRaw,   setCanvasClasses]      = useState([])
+  const [canvasClassesRaw,   setCanvasClasses]      = useState(() => readStored('lv-canvas-classes', [], purgeTombstones))
   const canvasClasses = useMemo(() => visible(canvasClassesRaw), [canvasClassesRaw])
 
   /* Task categories as the pickers see them: the user's own, plus one per class on the
@@ -342,8 +368,8 @@ export default function Home() {
     () => mergeCategories(todoCategories, classCategories(canvasClasses)),
     [todoCategories, canvasClasses],
   )
-  const [canvasCalEvents,    setCanvasCalEvents]    = useState([])
-  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState([])
+  const [canvasCalEvents,    setCanvasCalEvents]    = useState(() => readStored('lv-canvas-cal-events', []))
+  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState(() => readStored('lv-canvas-ics-events', []))
   const [showCanvasSettings, setShowCanvasSettings] = useState(false)
   const [showClassModal,     setShowClassModal]     = useState(false)
   const [editingClass,       setEditingClass]       = useState(null)
@@ -380,9 +406,14 @@ export default function Home() {
   const [digestEnabled, setDigestEnabled] = useState(false)
   const [digestSaving,  setDigestSaving]  = useState(false)
 
-  const [clockTime,    setClockTime]    = useState(() => new Date())
+  /* A minute tick, not a second one. The ticking clock and the "next up" countdown
+     own their own one-second timers (components/LiveClock), so a second going by no
+     longer re-renders the whole planner. This tick stays because panels work out
+     "today" and "overdue" while rendering: a re-render a minute keeps those right
+     across midnight, or across a due time, on a tab nobody is touching. */
+  const now = useNow(60_000)
   const [weather,      setWeather]      = useState(null)
-  const [militaryTime, setMilitaryTime] = useState(false)
+  const [militaryTime, setMilitaryTime] = useState(() => readStored('lv-clock-24h', false))
   const [currentUser,  setCurrentUser]  = useState(null)
   const windowWidth = useWindowWidth()
   const isMobile  = windowWidth < 640
@@ -399,7 +430,11 @@ export default function Home() {
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
       onEscape:      () => {
-        if (showHelpOverlay)   { setShowHelpOverlay(false); return }
+        // The shortcuts overlay handles its own Escape, and fades out before it
+        // calls onClose. Closing it here too unmounted it mid-fade, so Escape
+        // always hard-cut. Stopping here still keeps the key from also closing
+        // whatever is open underneath.
+        if (showHelpOverlay)   return
         if (focusOpen)         { setFocusOpen(false);       return }
         if (showSearchPopup)   { closeSearchPopup();        return }
         if (corvusFloat)       { setCorvusFloat(false);     return }
@@ -413,6 +448,14 @@ export default function Home() {
     () => [...events, ...googleEvents].filter(e => eventPrefs[e.id]?.hidden).length,
     [events, googleEvents, eventPrefs],
   )
+
+  // Warm Corvus's chunk once the first render has settled — see the dynamic() above.
+  useEffect(() => {
+    const whenIdle   = window.requestIdleCallback ?? (cb => setTimeout(cb, 2000))
+    const cancelIdle = window.cancelIdleCallback  ?? clearTimeout
+    const id = whenIdle(() => { import('@/components/Corvus').catch(() => {}) })
+    return () => cancelIdle(id)
+  }, [])
 
   useEffect(() => {
     setMounted(true)
@@ -495,16 +538,15 @@ export default function Home() {
         // truth at load time. Computing the merge synchronously lets us set state
         // AND POST the exact same object, eliminating the old 500ms "wait for
         // React to flush" race that could upload a stale snapshot.
-        const readLocal = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ?? fb) } catch { return JSON.parse(fb) } }
-        const localEvents   = readLocal('lv-events',         '[]')
-        const localTodos    = readLocal('lv-todos',          '[]')
-        const localCats     = readLocal('lv-todo-cats',      '[]')
-        const localEvCats   = readLocal('lv-event-cats',     '[]')
-        const localClasses  = readLocal('lv-canvas-classes', '[]')
-        const localPrefs    = readLocal('lv-event-prefs',    '{}')
-        const localSessions = readLocal('lv-study-sessions', '[]')
-        const localLists    = readLocal('lv-custom-lists',   '[]')
-        const localNotes    = readLocal('lv-notes',          '[]')
+        const localEvents   = readStored('lv-events',         [])
+        const localTodos    = readStored('lv-todos',          [])
+        const localCats     = readStored('lv-todo-cats',      [])
+        const localEvCats   = readStored('lv-event-cats',     [])
+        const localClasses  = readStored('lv-canvas-classes', [])
+        const localPrefs    = readStored('lv-event-prefs',    {})
+        const localSessions = readStored('lv-study-sessions', [])
+        const localLists    = readStored('lv-custom-lists',   [])
+        const localNotes    = readStored('lv-notes',          [])
 
         /* The hand-rolled mergeById that used to live here is gone. It was the
            pre-tombstone merge, and it survived here long after the collections it
@@ -649,7 +691,6 @@ export default function Home() {
      Kept in a ref rather than state: this must not re-render anything, and the
      value only ever gates a fetch. */
   const lastMirrorAt = useRef(0)
-  const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
 
   const maybeMirrorToGoogle = useCallback(async () => {
     if (!currentUser) return
@@ -865,11 +906,6 @@ export default function Home() {
   }, [showAddMenu])
 
   useEffect(() => {
-    const id = setInterval(() => setClockTime(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return
     navigator.geolocation.getCurrentPosition(({ coords: { latitude: lat, longitude: lon } }) => {
       fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode&hourly=precipitation_probability,weathercode&forecast_days=1&timezone=auto`)
@@ -908,8 +944,9 @@ export default function Home() {
 
   /* ── Incoming Web Share ──────────────────────────────────────────────────
      /share stashes the payload and redirects here (see src/app/share/page.js).
-     Runs after the localStorage load below has had a chance to populate notes,
-     so the shared note is prepended to real data rather than an empty array. */
+     `notes` is already read from localStorage by the time this runs, so the
+     shared note is prepended to the real list. It used to run *before* a separate
+     load effect, which then replaced the list and dropped the share. */
   useEffect(() => {
     let raw
     try {
@@ -965,59 +1002,20 @@ export default function Home() {
     window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
   }, [])
 
-  /* ── Load from localStorage ── */
-  useEffect(() => {
-    try {
-      const e  = localStorage.getItem('lv-events')
-      const t  = localStorage.getItem('lv-todos')
-      const tc = localStorage.getItem('lv-todo-cats')
-      const ep = localStorage.getItem('lv-event-prefs')
-      const ss = localStorage.getItem('lv-study-sessions')
-      if (e)  setEvents(purgeTombstones(JSON.parse(e)))
-      if (t)  setTodos(purgeTodos(JSON.parse(t)))
-      if (tc) setTodoCategories(JSON.parse(tc))
-      const ec = localStorage.getItem('lv-event-cats')
-      if (ec) {
-        const parsed = JSON.parse(ec)
-        // An empty array would leave the user with no categories at all and no
-        // obvious way back, so fall through to the defaults.
-        if (Array.isArray(parsed) && parsed.length > 0) setEventCategories(parsed)
-      }
-      if (ep) setEventPrefs(JSON.parse(ep))
-      if (ss) setStudySessions(JSON.parse(ss))
-      // Custom Lists
-      const cl = localStorage.getItem('lv-custom-lists')
-      if (cl) setCustomLists(purgeTombstones(JSON.parse(cl)))
-      // Notes — purgeExpiredTrash drops anything trashed more than 30 days ago,
-      // dropEmptyNotes clears out blanks left behind by a previous session
-      // (see discardEmptyNote below for the live version of the same rule).
-      const nt = localStorage.getItem('lv-notes')
-      if (nt) setNotes(dropEmptyNotes(purgeExpiredTrash(JSON.parse(nt))))
-      // Canvas
-      const ca  = localStorage.getItem('lv-canvas-assignments')
-      const cc  = localStorage.getItem('lv-canvas-classes')
-      const cce = localStorage.getItem('lv-canvas-cal-events')
-      const cie = localStorage.getItem('lv-canvas-ics-events')
-      if (ca)  setCanvasAssignments(JSON.parse(ca))
-      if (cc)  setCanvasClasses(purgeTombstones(JSON.parse(cc)))
-      if (cce) setCanvasCalEvents(JSON.parse(cce))
-      if (cie) setCanvasIcsEvents(JSON.parse(cie))
-    } catch (_) {}
-  }, [])
-
-  useEffect(() => { localStorage.setItem('lv-events',         JSON.stringify(eventsRaw))      }, [eventsRaw])
-  useEffect(() => { localStorage.setItem('lv-todos',          JSON.stringify(todosRaw))       }, [todosRaw])
-  useEffect(() => { localStorage.setItem('lv-todo-cats',      JSON.stringify(todoCategories)) }, [todoCategories])
-  useEffect(() => { localStorage.setItem('lv-event-cats',     JSON.stringify(eventCategories)) }, [eventCategories])
-  useEffect(() => { localStorage.setItem('lv-event-prefs',    JSON.stringify(eventPrefs))     }, [eventPrefs])
-  useEffect(() => { localStorage.setItem('lv-study-sessions', JSON.stringify(studySessions))  }, [studySessions])
-  useEffect(() => { localStorage.setItem('lv-custom-lists',   JSON.stringify(customListsRaw)) }, [customListsRaw])
-  useEffect(() => { localStorage.setItem('lv-notes',          JSON.stringify(notes))          }, [notes])
-  // Canvas
-  useEffect(() => { localStorage.setItem('lv-canvas-assignments', JSON.stringify(canvasAssignments)) }, [canvasAssignments])
-  useEffect(() => { localStorage.setItem('lv-canvas-classes',     JSON.stringify(canvasClassesRaw))  }, [canvasClassesRaw])
-  useEffect(() => { localStorage.setItem('lv-canvas-cal-events',  JSON.stringify(canvasCalEvents))   }, [canvasCalEvents])
-  useEffect(() => { localStorage.setItem('lv-canvas-ics-events',  JSON.stringify(canvasIcsEvents))   }, [canvasIcsEvents])
+  /* ── Save to localStorage ── read back in each useState initialiser above. */
+  usePersist('lv-events',             eventsRaw)
+  usePersist('lv-todos',              todosRaw)
+  usePersist('lv-todo-cats',          todoCategories)
+  usePersist('lv-event-cats',         eventCategories)
+  usePersist('lv-event-prefs',        eventPrefs)
+  usePersist('lv-study-sessions',     studySessions)
+  usePersist('lv-custom-lists',       customListsRaw)
+  usePersist('lv-notes',              notes)
+  usePersist('lv-canvas-assignments', canvasAssignments)
+  usePersist('lv-canvas-classes',     canvasClassesRaw)
+  usePersist('lv-canvas-cal-events',  canvasCalEvents)
+  usePersist('lv-canvas-ics-events',  canvasIcsEvents)
+  usePersist('lv-clock-24h',          militaryTime)
 
   const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
     const id = String(Date.now())
@@ -1029,7 +1027,9 @@ export default function Home() {
   // ── Proactive nudge: detect deadline cluster on load (client-side, no AI cost) ──
   useEffect(() => {
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      // Local, not UTC: a UTC date rolls over at 8pm in New York, so a nudge
+      // dismissed in the evening came back the next afternoon, or not at all.
+      const today = todayStr()
       const dismissed = localStorage.getItem('corvus-nudge-dismissed')
       if (dismissed === today) return   // already dismissed today
 
@@ -1064,7 +1064,6 @@ export default function Home() {
       setNudgeCluster(hasStudy ? null : { items })
     } catch (_) {}
   // Run once on mount after data is available; re-run if todos/assignments change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todos, canvasAssignments, events])
 
   // ── Manual cloud refresh ─────────────────────────────────────────────────────
@@ -1732,7 +1731,7 @@ export default function Home() {
     ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.courseName ?? 'Class' })),
     ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
     ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
-  ].filter(o => o.id && o.label), [canvasClasses, events, todos])
+  ].filter(o => o.id && o.label), [canvasAssignments, canvasClasses, events, todos])
 
   // Accepts an array of todos already stamped with sortOrder by DraggableList.
   // Stamped like any other edit — order is synced state, so an unstamped reorder
@@ -2003,8 +2002,8 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         courseIds: enabledIds,
-        startDate: startDate.toISOString().slice(0, 10),
-        endDate:   endDate.toISOString().slice(0, 10),
+        startDate: toDateStr(startDate),
+        endDate:   toDateStr(endDate),
       }),
     })
     if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
@@ -2116,7 +2115,7 @@ export default function Home() {
       if (a.id !== id) return a
       const nowDone = !a.done
       if (nowDone) updateStreak()
-      return { ...a, done: nowDone, doneDate: nowDone ? new Date().toISOString().slice(0, 10) : null }
+      return { ...a, done: nowDone, doneDate: nowDone ? todayStr() : null }
     }))
   }, [])
 
@@ -2356,10 +2355,13 @@ export default function Home() {
   const hiddenGcalEvents = useMemo(
     () => {
       if (!showHiddenGcal) return []
+      // A recolour survives being hidden, for local events as for Google ones, so
+      // "show hidden" brings an event back in the colour you gave it.
       const hiddenLocal = events
         .filter(e => eventPrefs[e.id]?.hidden)
         .map(e => ({
           ...e,
+          color: eventPrefs[e.id]?.color || e.color,
           extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
         }))
       const hiddenGcal = googleEvents
@@ -2456,32 +2458,21 @@ export default function Home() {
     return markers
   }, [customLists])
 
-  function markImportant(list) {
-    return list.map(e => (eventPrefs[e.id]?.important
-      ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
-      : e))
-  }
+  /* Completed tasks stay on the calendar instead of vanishing. A day you have
+     finished emptying out reads as "nothing was ever due here", which is the
+     opposite of the truth and makes the calendar a poor record of the term. They
+     render struck through and faded, so "done" is still obvious at a glance —
+     see `done` in extendedProps, which WeeklyCalendar styles on. */
+  const todoCalendarItems = useMemo(() => {
+    // Lookups by id, built once, rather than a linear search per task. First match
+    // wins, as `find` did.
+    const colorByCategory = new Map()
+    for (const c of todoCategories) if (!colorByCategory.has(c.id)) colorByCategory.set(c.id, c.color)
+    const eventById = new Map()
+    for (const e of visibleEvents) if (!eventById.has(e.id)) eventById.set(e.id, e)
 
-  /* The important flag is stamped on at the end rather than inside each of the
-     source-specific memos above: it is keyed by event id in eventPrefs, applies
-     to every source alike, and doing it once here means a new source picks it up
-     without remembering to. */
-  const allCalendarEvents = markImportant([
-    ...visibleEvents,
-    ...visibleGoogleEvents,
-    ...hiddenGcalEvents,
-    ...canvasClassEvents,
-    ...visibleCanvasCalEvents,
-    ...visibleCanvasIcsEvents,
-    ...canvasAssignmentTasks,
-    ...customListCalEvents,
-    /* Completed tasks stay on the calendar instead of vanishing. A day you have
-       finished emptying out reads as "nothing was ever due here", which is the
-       opposite of the truth and makes the calendar a poor record of the term. They
-       render struck through and faded, so "done" is still obvious at a glance —
-       see `done` in extendedProps, which WeeklyCalendar styles on. */
-    ...todos.flatMap(t => {
-      const todoCatColor = todoCategories.find(c => c.id === t.category)?.color || '#94a3b8'
+    return todos.flatMap(t => {
+      const todoCatColor = colorByCategory.get(t.category) || '#94a3b8'
       const instances = expandRecurringTodo(t)
       const done = Boolean(t.completed)
       const calItems = instances.map(inst => ({
@@ -2490,7 +2481,7 @@ export default function Home() {
         extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
       }))
       if (t.linkedEventId && !t.recurrence) {
-        const ev = visibleEvents.find(e => e.id === t.linkedEventId)
+        const ev = eventById.get(t.linkedEventId)
         if (ev) calItems.push({
           id: `cal-linked-${t.id}`, title: `↳ ${t.title}`, start: (ev.start || '').slice(0, 10),
           allDay: true, color: todoCatColor,
@@ -2498,7 +2489,33 @@ export default function Home() {
         })
       }
       return calItems
-    }),
+    })
+  }, [todos, todoCategories, visibleEvents])
+
+  /* The important flag is stamped on at the end rather than inside each of the
+     source-specific memos above: it is keyed by event id in eventPrefs, applies
+     to every source alike, and doing it once here means a new source picks it up
+     without remembering to.
+
+     Memoised, and that matters: this is the array FullCalendar is handed, and it
+     used to be rebuilt — every recurring task re-expanded, every event copied — on
+     each render of the planner, which until recently meant once a second. */
+  const allCalendarEvents = useMemo(() => [
+    ...visibleEvents,
+    ...visibleGoogleEvents,
+    ...hiddenGcalEvents,
+    ...canvasClassEvents,
+    ...visibleCanvasCalEvents,
+    ...visibleCanvasIcsEvents,
+    ...canvasAssignmentTasks,
+    ...customListCalEvents,
+    ...todoCalendarItems,
+  ].map(e => (eventPrefs[e.id]?.important
+    ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
+    : e)), [
+    visibleEvents, visibleGoogleEvents, hiddenGcalEvents, canvasClassEvents,
+    visibleCanvasCalEvents, visibleCanvasIcsEvents, canvasAssignmentTasks,
+    customListCalEvents, todoCalendarItems, eventPrefs,
   ])
 
   const searchResults = useMemo(() => {
@@ -2744,7 +2761,7 @@ export default function Home() {
       result.listItems = listItemResults(query).slice(0, 15)
     }
     return result
-  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventPrefs, notes, customLists])
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventCategories, eventPrefs, notes, customLists])
 
   const openSearchResult = useCallback((result) => {
     closeSearchPopup()
@@ -2783,7 +2800,7 @@ export default function Home() {
       setActiveNoteId(result.item.id)
       return
     }
-  }, [closeSearchPopup, setToasts])
+  }, [closeSearchPopup])
 
   const navigateToItem = useCallback((item, type) => {
     if (type === 'event') {
@@ -2799,39 +2816,12 @@ export default function Home() {
     }
   }, [])
 
-  const nextEventToday = useMemo(() => {
-    if (!mounted) return null
-    // Local, not UTC: event starts are naive local strings, so comparing them
-    // against a UTC date meant the card jumped to tomorrow every evening.
-    const todayStr    = toYMDLocal(clockTime)
-    const tomorrowDt  = new Date(clockTime); tomorrowDt.setDate(tomorrowDt.getDate() + 1)
-    const tomorrowStr = toYMDLocal(tomorrowDt)
-    // Merge local + Google Calendar events + class meetings for the sidebar
-    // preview. Class periods are the most predictable thing on a student's day,
-    // which is exactly why leaving them out made the card feel wrong: it would
-    // announce a 4pm club meeting while saying nothing about the 9am lecture.
-    const allVisible = [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents]
-    // First: soonest remaining event today
-    const todayNext = allVisible
-      .filter(e => !e.allDay && e.start?.startsWith(todayStr) && new Date(e.start) > clockTime)
-      .sort((a, b) => new Date(a.start) - new Date(b.start))[0]
-    if (todayNext) return todayNext
-    // Fallback: first event tomorrow
-    return allVisible
-      .filter(e => !e.allDay && e.start?.startsWith(tomorrowStr))
-      .sort((a, b) => new Date(a.start) - new Date(b.start))[0] || null
-  }, [visibleEvents, visibleGoogleEvents, canvasClassEvents, clockTime, mounted])
-
-  function timeUntil(start) {
-    const diff = new Date(start) - clockTime
-    if (diff <= 0) return null
-    const h = Math.floor(diff / 3600000)
-    const m = Math.floor((diff % 3600000) / 60000)
-    const s = Math.floor((diff % 60000) / 1000)
-    if (h > 0) return `${h}h ${m}m`
-    if (m > 0) return `${m}m ${s}s`
-    return `${s}s`
-  }
+  // Everything with a time the sidebar's "next up" card can announce: own events,
+  // Google events and class meetings. See NextUpCard.
+  const upNextEvents = useMemo(
+    () => [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents],
+    [visibleEvents, visibleGoogleEvents, canvasClassEvents],
+  )
 
   function weatherIcon(code) {
     if (code === 0)         return '☀️'
@@ -2912,21 +2902,7 @@ export default function Home() {
 
         {/* Live info panel */}
         <div style={{ margin: '0 10px 10px', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: '1.05rem', fontWeight: 800, color: '#fff', letterSpacing: '0.01em', lineHeight: 1.2 }}>
-              {militaryTime
-                ? clockTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-                : clockTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
-            </div>
-            <button type="button" onClick={() => setMilitaryTime(v => !v)}
-                    title={militaryTime ? 'Switch to 12h' : 'Switch to 24h'}
-                    style={{ fontSize: '0.56rem', fontWeight: 700, color: 'rgba(147,197,253,.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
-              {militaryTime ? '12h' : '24h'}
-            </button>
-          </div>
-          <div style={{ fontSize: '0.66rem', color: 'rgba(147,197,253,.55)', marginTop: 3, fontWeight: 500 }}>
-            {clockTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-          </div>
+          <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} />
 
           {weather && (
             <div style={{ marginTop: 8 }}>
@@ -2942,38 +2918,15 @@ export default function Home() {
             </div>
           )}
 
-          {nextEventToday && (() => {
-            const todayStr   = toYMDLocal(clockTime)
-            const isTomorrow = !nextEventToday.start?.startsWith(todayStr)
-            const until      = isTomorrow ? null : timeUntil(nextEventToday.start)
-            const label      = isTomorrow ? 'Tomorrow' : until ? `In ${until}` : null
-            // Where to be matters more than what it is called for a class period,
-            // so the room rides along when the item carries one.
-            const where      = nextEventToday.location || nextEventToday.extendedProps?.location || ''
-            return label ? (
-              <div style={{ marginTop: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(96,165,250,.14)', borderLeft: '2.5px solid rgba(96,165,250,.5)' }}>
-                <div style={{ fontSize: '0.6rem', color: 'rgba(147,197,253,.6)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  {label}
-                </div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#fff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {nextEventToday.title}
-                </div>
-                {where && (
-                  <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.6)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {where}
-                  </div>
-                )}
-              </div>
-            ) : null
-          })()}
+          <NextUpCard events={upNextEvents} />
         </div>
 
         {/* ── Mini month navigator (desktop/tablet only) ── */}
         {!isMobile && (
           <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
             <MiniMonthCalendar
-              currentDate={clockTime}
-              highlightWeekOf={clockTime}
+              currentDate={now}
+              highlightWeekOf={now}
               onDayClick={(dateStr) => {
                 setActiveNav('calendar')
                 setCalendarTargetDate(dateStr)
@@ -3403,20 +3356,7 @@ export default function Home() {
 
             {/* Live info */}
             <div style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: '1.1rem', fontWeight: 800, color: '#fff', letterSpacing: '0.01em', lineHeight: 1.2 }}>
-                  {militaryTime
-                    ? clockTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-                    : clockTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })}
-                </div>
-                <button type="button" onClick={() => setMilitaryTime(v => !v)}
-                        style={{ fontSize: '0.56rem', fontWeight: 700, color: 'rgba(147,197,253,.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
-                  {militaryTime ? '12h' : '24h'}
-                </button>
-              </div>
-              <div style={{ fontSize: '0.66rem', color: 'rgba(147,197,253,.55)', marginTop: 3, fontWeight: 500 }}>
-                {clockTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-              </div>
+              <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} fontSize="1.1rem" />
               {weather && (
                 <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: '1rem' }}>{weatherIcon(weather.code)}</span>
@@ -3928,7 +3868,7 @@ export default function Home() {
                 </button>
                 <button
                   onClick={() => {
-                    const today = new Date().toISOString().slice(0, 10)
+                    const today = todayStr()
                     try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
                     setNudgeCluster(null)
                   }}
@@ -3967,13 +3907,5 @@ export default function Home() {
         )
       )}
     </div>
-  )
-}
-
-function CrowIcon({ size = 24, color = 'white' }) {
-  return (
-    <svg width={size} height={size} viewBox="0 -64 640 640" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-      <path fill={color} d="M544 32h-16.36C513.04 12.68 490.09 0 464 0c-44.18 0-80 35.82-80 80v20.98L12.09 393.57A30.216 30.216 0 0 0 0 417.74c0 22.46 23.64 37.07 43.73 27.03L165.27 384h96.49l44.41 120.1c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38L312.94 384H352c1.91 0 3.76-.23 5.66-.29l44.51 120.38c2.27 6.23 9.15 9.44 15.38 7.17l22.55-8.21c6.23-2.27 9.44-9.15 7.17-15.38l-41.24-111.53C485.74 352.8 544 279.26 544 192v-80l96-16c0-35.35-42.98-64-96-64zm-80 72c-13.25 0-24-10.75-24-24 0-13.26 10.75-24 24-24s24 10.74 24 24c0 13.25-10.75 24-24 24z"/>
-    </svg>
   )
 }
