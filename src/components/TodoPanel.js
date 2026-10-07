@@ -403,6 +403,7 @@ export default function TodoPanel({
                       <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                                 todoCategories={allCategories} todayStr={todayStr}
                                 onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
+                                onToggleSubtask={onToggleSubtask}
                                 isMobile={isMobile} />
                     ))}
                   </ul>
