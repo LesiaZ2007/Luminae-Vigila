@@ -697,3 +697,48 @@ describe('notificationclick', () => {
     expect(sw.scope.clients.openWindow).toHaveBeenCalledWith('/')
   })
 })
+
+describe('cache-urls (build files the page loaded before the worker took over)', () => {
+  it('saves same-origin build files, reusing an older generation’s copy', async () => {
+    const sw = loadWorker()
+    sw.fetch.route('/_next/static/chunks/calendar.js', asset('calendar'))
+    await sw.caches.seed(`lv-static-${V2}`, '/_next/static/chunks/main.js', 'main from v2')
+    await sw.dispatch('message', { data: { type: 'cache-urls', urls: [
+      abs('/_next/static/chunks/calendar.js'),
+      abs('/_next/static/chunks/main.js'),
+      abs('/api/sync'),
+      'https://cdn.example/_next/static/chunks/evil.js',
+      'not a url at all ::',
+    ] } }).settled()
+    expect(sw.caches.paths(`lv-static-${V3}`).sort()).toEqual([
+      '/_next/static/chunks/calendar.js',
+      '/_next/static/chunks/main.js',
+    ])
+    expect(await sw.caches.text(`lv-static-${V3}`, '/_next/static/chunks/main.js')).toBe('main from v2')
+    expect(sw.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips what the current generation already has', async () => {
+    const sw = loadWorker()
+    await sw.caches.seed(`lv-static-${V3}`, '/_next/static/chunks/main.js', 'main')
+    await sw.dispatch('message', { data: { type: 'cache-urls', urls: [abs('/_next/static/chunks/main.js')] } }).settled()
+    expect(sw.fetch).not.toHaveBeenCalled()
+  })
+
+  it('survives a failing fetch and ignores a malformed message', async () => {
+    const sw = loadWorker()
+    await expect(sw.dispatch('message', { data: { type: 'cache-urls', urls: [abs('/_next/static/gone.js')] } }).settled())
+      .resolves.toBeDefined()
+    await expect(sw.dispatch('message', { data: { type: 'cache-urls', urls: 'nope' } }).settled())
+      .resolves.toBeDefined()
+    expect(sw.caches.paths(`lv-static-${V3}`)).toEqual([])
+  })
+
+  it('does nothing under next dev', async () => {
+    const sw = loadWorker({ version: 'dev' })
+    sw.fetch.route('/_next/static/chunks/a.js', asset('a'))
+    await sw.dispatch('message', { data: { type: 'cache-urls', urls: [abs('/_next/static/chunks/a.js')] } }).settled()
+    expect(sw.fetch).not.toHaveBeenCalled()
+    expect(await sw.caches.keys()).toEqual([])
+  })
+})

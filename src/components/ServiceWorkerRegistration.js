@@ -48,6 +48,52 @@ export function startServiceWorker({ isSignedIn, location = window.location }) {
       .finally(() => location.replace(withoutOfflineReset(location.href)))
   }
   registerServiceWorker().catch(e => console.warn('[luminaeVigila] Service worker registration failed:', e))
+  handOverLoadedAssets()
   if (isSignedIn) registerAndSyncPush()
   return Promise.resolve()
+}
+
+let handingOver = false
+
+/**
+ * Tell the worker about build files this page loaded without going through it.
+ *
+ * On a first visit the page is not controlled until the worker has installed, and
+ * everything it loads before then — the initial chunks, and usually the idle prefetch
+ * of the calendar, notes and Corvus — goes straight to the network. The precache
+ * covers what the HTML names, but not the split chunks, so without this the calendar
+ * would open offline only while the browser's HTTP cache happened to still hold it.
+ *
+ * A resource the worker handled has a non-zero `workerStart`; anything else under
+ * `/_next/static/` is queued and posted once there is a controller. The observer
+ * stays on for the page's lifetime, because a request that started just before the
+ * worker took over finishes — and reports — after it.
+ */
+export function handOverLoadedAssets({
+  serviceWorker = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined,
+  Observer      = typeof PerformanceObserver !== 'undefined' ? PerformanceObserver : undefined,
+  origin        = typeof location !== 'undefined' ? location.origin : '',
+} = {}) {
+  if (!serviceWorker || !Observer || handingOver) return
+  handingOver = true
+  let pending = []
+  const flush = () => {
+    const controller = serviceWorker.controller
+    if (!controller || !pending.length) return
+    controller.postMessage({ type: 'cache-urls', urls: pending })
+    pending = []
+  }
+  try {
+    new Observer(list => {
+      for (const entry of list.getEntries()) {
+        if (entry.workerStart > 0) continue
+        if (entry.name.startsWith(`${origin}/_next/static/`)) pending.push(entry.name)
+      }
+      flush()
+    }).observe({ type: 'resource', buffered: true })
+  } catch {
+    handingOver = false
+    return
+  }
+  serviceWorker.addEventListener('controllerchange', flush)
 }

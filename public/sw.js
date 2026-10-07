@@ -8,7 +8,8 @@
 //
 //   • page loads go to the network first and fall back to the last copy saved here;
 //   • `/_next/static/*` files are content-hashed and never change, so they are served
-//     straight from the cache once saved;
+//     straight from the cache once saved — including the ones a first visit loaded
+//     before this worker took over, which the page hands over in a message;
 //   • icons, the manifest and the favicon are served from the cache and refreshed in
 //     the background.
 //
@@ -72,10 +73,18 @@ self.addEventListener('activate', event => {
 })
 
 self.addEventListener('message', event => {
+  const data = event.data || {}
   // Sent by the sign-out buttons: a saved page has the signed-in state rendered into
   // it, and it should not outlive the session it was rendered for.
-  if (event.data && event.data.type === 'clear-shell') {
+  if (data.type === 'clear-shell') {
     event.waitUntil(clearShell().catch(() => {}))
+  }
+  // Sent by the page with the build files it loaded before this worker controlled it.
+  // On a first visit that is the whole initial load and usually the idle prefetch too —
+  // none of which went through the fetch handler, so none of it would be saved, and the
+  // calendar would open offline only for as long as the HTTP cache happened to keep it.
+  if (data.type === 'cache-urls' && Array.isArray(data.urls)) {
+    event.waitUntil(saveLoadedAssets(data.urls).catch(() => {}))
   }
 })
 
@@ -208,6 +217,20 @@ async function precache() {
     for (const href of mine) claimed.add(href)
     await Promise.all(mine.map(href => precacheAsset(store, href)))
   }))
+}
+
+async function saveLoadedAssets(urls) {
+  if (!CACHING) return
+  const wanted = new Set()
+  for (const raw of urls.slice(0, 500)) {
+    try {
+      const url = new URL(raw, self.location.origin)
+      if (url.origin === self.location.origin && url.pathname.startsWith('/_next/static/')) wanted.add(url.href)
+    } catch {}
+  }
+  // These were just loaded, so the fetch is normally answered by the HTTP cache.
+  const store = await caches.open(STATIC_CACHE)
+  await Promise.all([...wanted].map(href => precacheAsset(store, href)))
 }
 
 async function precacheAsset(store, href) {
