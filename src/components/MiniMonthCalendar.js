@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { toDateStr } from '@/lib/localDate'
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
@@ -96,7 +97,7 @@ export default function MiniMonthCalendar({ currentDate, highlightWeekOf, onDayC
           const isCurrentMonth = date.getMonth() === viewMonth && date.getFullYear() === viewYear
           const isToday        = date.getTime() === today.getTime()
           const isWeekHighlight = highlightWeekOf && isSameWeek(date, highlightWeekOf)
-          const dateStr = date.toISOString().slice(0, 10)
+          const dateStr = toDateStr(date)
 
           return (
             <button

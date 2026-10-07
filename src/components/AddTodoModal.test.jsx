@@ -76,3 +76,23 @@ describe('AddTodoModal — Escape in the step field', () => {
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 })
+
+/* A custom reminder's date was read back through toISOString(), which converts to UTC
+   first. Anything after 8pm in New York is already tomorrow in UTC, so reopening a task
+   with a 9:30pm reminder showed the next day — and saving the form, even untouched,
+   moved the reminder a day later. */
+describe('AddTodoModal — an evening custom reminder', () => {
+  it('keeps its date when the task is saved untouched', async () => {
+    const user  = userEvent.setup()
+    const onEdit = vi.fn()
+    const editTodo = {
+      id: 't1', title: 'Lab report', category: 'academic', dueDate: '2026-10-08',
+      priority: 'medium', subtasks: [],
+      reminder: { at: '2026-10-07T21:30:00', label: 'Custom', ms: 0 },
+    }
+    renderModal({ editTodo, onEdit })
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    expect(onEdit.mock.calls[0][0].reminder.at).toBe('2026-10-07T21:30:00')
+  })
+})

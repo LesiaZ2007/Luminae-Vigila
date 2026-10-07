@@ -82,7 +82,7 @@ import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
 import { updateStreak } from '@/components/WeeklyRecap'
 import { updateAppBadge } from '@/lib/appBadge'
 import { buildGlance }    from '@/lib/glance'
-import { todayStr }       from '@/lib/localDate'
+import { todayStr, toDateStr } from '@/lib/localDate'
 import { connectGoogleAccount } from '@/lib/googleConnect'
 import { hydrateGooglePrefs }   from '@/lib/googlePrefs'
 import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
@@ -1005,7 +1005,9 @@ export default function Home() {
   // ── Proactive nudge: detect deadline cluster on load (client-side, no AI cost) ──
   useEffect(() => {
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      // Local, not UTC: a UTC date rolls over at 8pm in New York, so a nudge
+      // dismissed in the evening came back the next afternoon, or not at all.
+      const today = todayStr()
       const dismissed = localStorage.getItem('corvus-nudge-dismissed')
       if (dismissed === today) return   // already dismissed today
 
@@ -1979,8 +1981,8 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
         courseIds: enabledIds,
-        startDate: startDate.toISOString().slice(0, 10),
-        endDate:   endDate.toISOString().slice(0, 10),
+        startDate: toDateStr(startDate),
+        endDate:   toDateStr(endDate),
       }),
     })
     if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
@@ -2092,7 +2094,7 @@ export default function Home() {
       if (a.id !== id) return a
       const nowDone = !a.done
       if (nowDone) updateStreak()
-      return { ...a, done: nowDone, doneDate: nowDone ? new Date().toISOString().slice(0, 10) : null }
+      return { ...a, done: nowDone, doneDate: nowDone ? todayStr() : null }
     }))
   }, [])
 
@@ -3842,7 +3844,7 @@ export default function Home() {
                 </button>
                 <button
                   onClick={() => {
-                    const today = new Date().toISOString().slice(0, 10)
+                    const today = todayStr()
                     try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
                     setNudgeCluster(null)
                   }}

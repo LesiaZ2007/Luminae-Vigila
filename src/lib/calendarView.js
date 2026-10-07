@@ -6,6 +6,7 @@
  * coming back dropped you on today in the default view, even if you had spent the last
  * minute lining up next week. These preferences survive that, and a page reload.
  */
+import { toDateStr } from './localDate'
 
 const KEY = 'lv-cal-view'
 
@@ -80,9 +81,12 @@ export function saveCalendarPrefs({ view, date, focused }, storage = globalThis.
   }
 }
 
-/** Local YYYY-MM-DD. `toISOString()` would shift the day for anyone west of UTC. */
+/**
+ * Local YYYY-MM-DD, or null for an invalid date. `toISOString()` would shift the day
+ * for anyone west of UTC. The formatting itself is localDate's `toDateStr` — one
+ * implementation — and only the null-for-invalid contract callers here rely on is
+ * this module's own.
+ */
 export function toYMDLocal(date) {
-  const d = date instanceof Date ? date : new Date(date)
-  if (Number.isNaN(d.getTime())) return null
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return toDateStr(date) || null
 }

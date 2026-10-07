@@ -6,6 +6,7 @@ import EventModal   from '@/components/EventModal'
 import AddTodoModal from '@/components/AddTodoModal'
 import { buildReminder, describeReminder } from '@/lib/reminders'
 import CrowIcon from '@/components/CrowIcon'
+import { todayStr, toDateStr } from '@/lib/localDate'
 
 /**
  * Turn a `preview_*` / `edit_*` tool call's reminder arguments into the app's
@@ -514,7 +515,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
   const [nudgeDismissed, setNudgeDismissed] = useState(() => {
     try {
       const d = localStorage.getItem(NUDGE_DISMISS_KEY)
-      return d === new Date().toISOString().slice(0, 10)
+      return d === todayStr()
     } catch (_) { return false }
   })
   const countdownRef = useRef(null)
@@ -560,7 +561,8 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
 
   // ── Dismiss nudge (set daily flag + notify parent) ──
   function dismissNudge() {
-    const today = new Date().toISOString().slice(0, 10)
+    // Local, not UTC — the planner checks this flag against the local date too.
+    const today = todayStr()
     try { localStorage.setItem(NUDGE_DISMISS_KEY, today) } catch (_) {}
     setNudgeDismissed(true)
     onNudgeDismiss?.()
@@ -726,7 +728,7 @@ export default function Corvus({ events, canvasClassEvents = [], todos, canvasAs
       const isAllDay = data.allDay || !data.start?.includes('T')
       let end = data.end
       if (isAllDay && end?.length === 10) {
-        const d = new Date(end + 'T12:00:00'); d.setDate(d.getDate() + 1); end = d.toISOString().slice(0, 10)
+        const d = new Date(end + 'T12:00:00'); d.setDate(d.getDate() + 1); end = toDateStr(d)
       }
       const recurrence = data.repeatType ? {
         type: data.repeatType,
