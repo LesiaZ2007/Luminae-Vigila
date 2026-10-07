@@ -259,19 +259,15 @@ function CourseGpaRow({ course, color, credits, onCreditsChange, canvasLive, ove
 
 export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) {
   const [open,     setOpen]    = useState(false)
-  const [credits,  setCredits] = useState({})   // { [courseId]: number }
+  // Saved credits and overrides are read on the first render — this panel only ever
+  // renders inside the planner, which renders nothing until it is in a browser.
+  const [saved]                = useState(loadGpaPrefs)
+  const [credits,  setCredits] = useState(saved.credits ?? {})   // { [courseId]: number }
   // Canvas live grades: null = not loaded yet, {} = loaded (map courseId → grade obj)
   const [canvasGrades,  setCanvasGrades]  = useState(null)
   const [gradesLoading, setGradesLoading] = useState(false)
   // Manual overrides: { [courseId]: { score: number } }
-  const [overrides, setOverrides] = useState({})
-
-  // Load persisted credits + overrides on mount
-  useEffect(() => {
-    const prefs = loadGpaPrefs()
-    if (prefs.credits)   setCredits(prefs.credits)
-    if (prefs.overrides) setOverrides(prefs.overrides)
-  }, [])
+  const [overrides, setOverrides] = useState(saved.overrides ?? {})
 
   function handleCreditsChange(courseId, val) {
     setCredits(prev => {
@@ -333,6 +329,7 @@ export default function GpaPanel({ canvasAssignments = [], courseColors = {} }) 
   // Fetch Canvas grades whenever the set of course IDs changes (same cadence as sync)
   useEffect(() => {
     if (!courseIds.length) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the fetch's only synchronous update is its spinner flag
     fetchCanvasGrades(courseIds)
   }, [courseIds.join(','), fetchCanvasGrades]) // eslint-disable-line react-hooks/exhaustive-deps
 
