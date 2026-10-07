@@ -27,7 +27,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import {
-  Plus, GripVertical, MoreHorizontal, Trash2, X, Pencil, Check,
+  Plus, MoreHorizontal, Trash2, X, Pencil, Check,
   ShoppingCart, Package, ListChecks, NotebookPen, Backpack, Gift,
   Wrench, Lightbulb, Plane, Heart, Star, BookOpen, Dumbbell, Utensils,
   Calendar, StickyNote,
@@ -39,6 +39,10 @@ import {
   addListSubtask, patchSubtask, deleteListSubtask,
 } from '@/lib/customLists'
 import DatePicker from '@/components/DatePicker'
+import useDragReorder from '@/lib/useDragReorder'
+import { nextSortOrder } from '@/lib/reorder'
+import { TaskCheckbox, ReorderHandle, rowActionStyle } from '@/components/TaskRowParts'
+import { useSwipeActions, SwipeBackgrounds } from '@/components/SwipeActions'
 
 // ── Icon registry ──────────────────────────────────────────────────────────
 // Keys are stored in list.icon. Unknown values (legacy emojis) fall back gracefully.
@@ -60,22 +64,6 @@ export const LIST_ICONS = {
 }
 
 const ICON_KEYS = Object.keys(LIST_ICONS)
-
-/**
- * Shared style for the per-row action buttons (+ / ⋯ / trash).
- *
- * Touch devices get full opacity because there is no hover state to reveal
- * them; on desktop they sit at 0.45 and come up to 1 on row hover, so a long
- * list doesn't read as a wall of icons.
- */
-function rowActionStyle(hovered, isMobile) {
-  return {
-    padding: 4, borderRadius: 6, border: 'none', background: 'none',
-    cursor: 'pointer', color: 'var(--text-3)', display: 'flex', flexShrink: 0,
-    opacity: isMobile ? 0.75 : hovered ? 1 : 0.45,
-    transition: 'opacity .13s, color .13s',
-  }
-}
 
 /**
  * Render a list icon: if key is a known Lucide key, render the component;
@@ -320,23 +308,15 @@ function SubtaskRow({ subtask, listColor, onToggle, onDelete, onUpdateText }) {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0 3px 8px', marginLeft: 28 }}>
-      {/* Subtask checkbox */}
-      <button
+      <TaskCheckbox
+        checked={subtask.checked}
+        label={subtask.checked ? 'Mark subtask not done' : 'Mark subtask done'}
+        checkedColor={accent}
+        size={14}
+        strokeWidth={2}
+        transition="all .18s"
         onClick={() => onToggle(subtask.id)}
-        style={{
-          flexShrink: 0, width: 14, height: 14, borderRadius: '50%',
-          border: `2px solid ${subtask.checked ? accent : 'var(--border)'}`,
-          background: subtask.checked ? accent : 'transparent',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          cursor: 'pointer', transition: 'all .18s',
-        }}
-      >
-        {subtask.checked && (
-          <svg width="7" height="7" viewBox="0 0 10 10" fill="none">
-            <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        )}
-      </button>
+      />
 
       {editing ? (
         <input
@@ -383,7 +363,7 @@ function SubtaskRow({ subtask, listColor, onToggle, onDelete, onUpdateText }) {
 function ListItem({
   item, listColor, isMobile, onToggle, onDelete, onUpdateText, onUpdateNote, onUpdateDue,
   onAddSubtask, onToggleSubtask, onDeleteSubtask, onUpdateSubtaskText,
-  onDragStart, onDragOver, onDrop, isDragging,
+  dragRow, dragHandle, isDragging,
 }) {
   const [hovered,     setHovered]     = useState(false)
   const [menuOpen,    setMenuOpen]    = useState(false)
@@ -395,12 +375,13 @@ function ListItem({
   const [dueVal,      setDueVal]      = useState(item.dueDate || '')
   const menuBtnRef = useRef(null)
 
-  // Touch swipe
-  const swipeRef    = useRef({ startX: 0, startY: 0, dx: 0, locked: null, active: false })
-  const [swipeDx,   setSwipeDx]   = useState(0)
-  const [swipeDone, setSwipeDone] = useState(false)
-  const SWIPE_THRESHOLD = 72
-  const SWIPE_MAX       = 100
+  // Touch: right ticks, left deletes. A right swipe on a ticked item just snaps back.
+  const swipe = useSwipeActions({
+    enabled:       isMobile,
+    canSwipeRight: !item.checked,
+    onSwipeRight:  () => onToggle(item.id),
+    onSwipeLeft:   () => onDelete(item.id),
+  })
 
   const accent = listColor || '#3a6fa8'
 
@@ -443,44 +424,6 @@ function ListItem({
     setMenuOpen(v => !v)
   }
 
-  function onTouchStart(e) {
-    const t = e.touches[0]
-    swipeRef.current = { startX: t.clientX, startY: t.clientY, dx: 0, locked: null, active: true }
-  }
-
-  function onTouchMove(e) {
-    const s = swipeRef.current
-    if (!s.active) return
-    const t = e.touches[0]
-    const dx = t.clientX - s.startX
-    const dy = t.clientY - s.startY
-    if (s.locked === null) {
-      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return
-      s.locked = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y'
-    }
-    if (s.locked === 'y') return
-    e.preventDefault()
-    s.dx = dx
-    const clamped = Math.max(-SWIPE_MAX, Math.min(SWIPE_MAX, dx))
-    setSwipeDx(clamped)
-  }
-
-  function onTouchEnd() {
-    const s = swipeRef.current
-    s.active = false
-    const dx = s.dx
-    if (s.locked !== 'x') { setSwipeDx(0); return }
-    if (dx >= SWIPE_THRESHOLD && !item.checked) {
-      setSwipeDone(true)
-      setTimeout(() => { setSwipeDx(0); setSwipeDone(false); onToggle(item.id) }, 260)
-    } else if (dx <= -SWIPE_THRESHOLD) {
-      setSwipeDone(true)
-      setTimeout(() => { setSwipeDx(0); setSwipeDone(false); onDelete(item.id) }, 260)
-    } else {
-      setSwipeDx(0)
-    }
-  }
-
   function commitText() {
     const trimmed = textVal.trim()
     if (trimmed && trimmed !== item.text) onUpdateText(item.id, trimmed)
@@ -492,9 +435,8 @@ function ListItem({
     onUpdateNote(item.id, noteVal.trim() || null)
   }
 
-  const swipeLeft  = swipeDx < -8
-  const swipeRight = swipeDx > 8
   const subtasks   = item.subtasks ?? []
+  const actionStyle = rowActionStyle(hovered, isMobile, 'list')
 
   // The dropdown is rendered into a fixed portal div at the root to escape overflow:hidden
   const menuDropdown = menuOpen ? (
@@ -576,72 +518,43 @@ function ListItem({
         return null
       })()}
       <li
+        /* Not draggable while the text or the note is being edited: a drag started
+           inside the field would pick up the whole row instead of selecting text. */
+        {...(editingText || showNote ? undefined : dragRow)}
+        {...swipe.handlers}
         onMouseEnter={() => !isMobile && setHovered(true)}
         onMouseLeave={() => !isMobile && setHovered(false)}
-        draggable={!isMobile}
-        onDragStart={() => onDragStart?.(item.id)}
-        onDragOver={e => { e.preventDefault(); onDragOver?.(item.id) }}
-        onDrop={e => { e.preventDefault(); onDrop?.() }}
-        onTouchStart={isMobile ? onTouchStart : undefined}
-        onTouchMove={isMobile ? onTouchMove : undefined}
-        onTouchEnd={isMobile ? onTouchEnd : undefined}
         style={{
           position: 'relative',
           borderRadius: 10,
           opacity: isDragging ? 0.4 : 1,
-          transition: swipeDone ? 'opacity 0.22s, transform 0.22s' : undefined,
+          transition: swipe.committing ? 'opacity 0.22s, transform 0.22s' : undefined,
         }}
       >
         {/* Swipe backgrounds (mobile) — inside their own overflow:hidden wrapper */}
-        {isMobile && (
-          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, overflow: 'hidden', pointerEvents: 'none' }}>
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#10b981', display: 'flex', alignItems: 'center', paddingLeft: 14, opacity: swipeRight ? Math.min(1, swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 14, opacity: swipeLeft ? Math.min(1, -swipeDx / SWIPE_THRESHOLD) : 0, transition: 'opacity .1s' }}>
-              <Trash2 size={16} color="white" />
-            </div>
-          </div>
-        )}
+        {isMobile && <SwipeBackgrounds dx={swipe.dx} look="list" />}
 
         {/* Main row */}
         <div style={{
           display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 6px',
           borderRadius: 10,
           background: hovered ? 'var(--surface2)' : 'transparent',
-          transition: swipeDone ? 'transform 0.22s' : 'background .15s',
-          transform: isMobile
-            ? (swipeDone ? `translateX(${swipeDx >= 0 ? '100%' : '-100%'})` : `translateX(${swipeDx}px)`)
-            : undefined,
+          transition: swipe.committing ? 'transform 0.22s' : 'background .15s',
+          transform: swipe.transform,
         }}>
-          {/* Drag handle (desktop) */}
-          {!isMobile && (
-            <div
-              onPointerDown={e => { e.stopPropagation(); onDragStart?.(item.id) }}
-              style={{ marginTop: 3, color: 'var(--text-3)', cursor: 'grab', flexShrink: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity .13s', touchAction: 'none' }}
-              title="Drag to reorder"
-            >
-              <GripVertical size={12} />
-            </div>
+          {/* Drag handle (desktop — touch swipes instead) */}
+          {dragHandle && (
+            <ReorderHandle handle={dragHandle} label={item.text} hovered={hovered} look="list" />
           )}
 
-          {/* Checkbox */}
-          <button
+          <TaskCheckbox
+            checked={item.checked}
+            label={item.checked ? 'Mark not done' : 'Mark done'}
+            checkedColor={accent}
+            marginTop={3}
+            transition="all .18s"
             onClick={e => { e.stopPropagation(); onToggle(item.id) }}
-            style={{
-              marginTop: 3, flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-              border: `2px solid ${item.checked ? accent : 'var(--border)'}`,
-              background: item.checked ? accent : 'transparent',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', transition: 'all .18s',
-            }}
-          >
-            {item.checked && (
-              <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-                <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            )}
-          </button>
+          />
 
           {/* Text + meta */}
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -722,7 +635,7 @@ function ListItem({
               onClick={e => { e.stopPropagation(); onAddSubtask(item.id) }}
               title="Add subtask"
               aria-label="Add subtask"
-              style={rowActionStyle(hovered, isMobile)}
+              style={actionStyle}
               onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
               onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
             >
@@ -734,7 +647,7 @@ function ListItem({
               onClick={openMenu}
               title="More"
               aria-label="More options"
-              style={{ ...rowActionStyle(hovered, isMobile), opacity: menuOpen ? 1 : rowActionStyle(hovered, isMobile).opacity }}
+              style={{ ...actionStyle, opacity: menuOpen ? 1 : actionStyle.opacity }}
             >
               <MoreHorizontal size={14} />
             </button>
@@ -743,7 +656,7 @@ function ListItem({
               onClick={e => { e.stopPropagation(); onDelete(item.id) }}
               title="Delete item"
               aria-label="Delete item"
-              style={rowActionStyle(hovered, isMobile)}
+              style={actionStyle}
               onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
               onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
             >
@@ -787,25 +700,24 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   // Ref on the list name element for confetti positioning
   const headerNameRef = useRef(null)
 
-  // Drag state
-  // Mirrored in state as well as a ref: the handlers need the value
-  // synchronously mid-drag, but the row needs a re-render to actually show its
-  // dragging style. Reading dragIdRef.current during render never triggered one.
-  const dragIdRef     = useRef(null)
-  const [draggingId, setDraggingId] = useState(null)
-  const dragOverIdRef = useRef(null)
-  const [localOrder, setLocalOrder] = useState(null)
-
   /* visibleItems, not list.items: a deleted item is now a tombstone that stays in
      the array so the delete can sync, and it must not be rendered or counted. */
   const live = visibleItems(list)
 
-  const items = localOrder || live.slice().sort((a, b) => {
+  const sorted = live.slice().sort((a, b) => {
     if (a.sortOrder != null && b.sortOrder != null) return a.sortOrder - b.sortOrder
     if (a.sortOrder != null) return -1
     if (b.sortOrder != null) return 1
     return 0
   })
+
+  // Touch reorders nothing — a horizontal drag there is a swipe.
+  const drag = useDragReorder({
+    items: sorted,
+    enabled: !isMobile,
+    onCommit: ordered => onUpdateList(reorderListItems(list, ordered)),
+  })
+  const items = drag.orderedItems
 
   const totalCount   = live.length
   const checkedCount = live.filter(i => i.checked).length
@@ -840,7 +752,10 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
   function addItem() {
     const text = newText.trim()
     if (!text) return
-    onUpdateList(addListItem(list, { ...makeItem(text), sortOrder: items.length }))
+    /* One past the highest, not the count: after a reorder and a few deletions the
+       count can be a value a live item still holds, and the new item landed in the
+       middle of the list instead of at the bottom. */
+    onUpdateList(addListItem(list, { ...makeItem(text), sortOrder: nextSortOrder(live) }))
     setNewText('')
   }
 
@@ -889,35 +804,6 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
 
   function updateSubtaskText(itemId, subtaskId, text) {
     onUpdateList(patchSubtask(list, itemId, subtaskId, { text }))
-  }
-
-  // Drag handlers
-  function handleDragStart(id) { dragIdRef.current = id; setDraggingId(id) }
-
-  function handleDragOver(id) {
-    if (!dragIdRef.current || id === dragIdRef.current) return
-    if (dragOverIdRef.current === id) return
-    dragOverIdRef.current = id
-    const fromIdx = items.findIndex(i => i.id === dragIdRef.current)
-    const toIdx   = items.findIndex(i => i.id === id)
-    if (fromIdx === -1 || toIdx === -1) return
-    const next = [...items]
-    const [item] = next.splice(fromIdx, 1)
-    next.splice(toIdx, 0, item)
-    setLocalOrder(next)
-  }
-
-  function handleDrop() {
-    if (!dragIdRef.current || !localOrder) { resetDrag(); return }
-    onUpdateList(reorderListItems(list, localOrder))
-    setLocalOrder(null)
-    resetDrag()
-  }
-
-  function resetDrag() {
-    dragIdRef.current     = null
-    setDraggingId(null)
-    dragOverIdRef.current = null
   }
 
   return (
@@ -1044,7 +930,8 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
             <p style={{ fontSize: '0.85rem', color: 'var(--text-3)', fontWeight: 500 }}>No items yet — add one above</p>
           </div>
         ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          // The whole list takes the drop, so letting go in a gap still lands the item.
+          <ul {...drag.listProps} style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
             {items.map(item => (
               <ListItem
                 key={item.id}
@@ -1060,10 +947,9 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
                 onToggleSubtask={toggleSubtask}
                 onDeleteSubtask={deleteSubtask}
                 onUpdateSubtaskText={updateSubtaskText}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                isDragging={draggingId === item.id}
+                dragRow={drag.rowProps(item.id)}
+                dragHandle={drag.enabled ? drag.handleProps(item.id) : undefined}
+                isDragging={drag.draggingId === item.id}
               />
             ))}
           </ul>
