@@ -6,11 +6,18 @@
  */
 import webpush        from 'web-push'
 import { getSession } from '@/lib/session'
+import { requireVapid } from '@/lib/cronAuth'
+import { sendToSubscription } from '@/lib/pushSend'
 import sql            from '@/lib/db'
 
 export async function POST(request) {
   const session = await getSession()
   if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // web-push throws on a missing/malformed key pair, which would otherwise
+  // surface as an opaque 500 rather than a clear "this deployment isn't configured".
+  const unconfigured = requireVapid()
+  if (unconfigured) return unconfigured
 
   // Use the signed-in user's email as the VAPID contact (required by the spec)
   const userRows = await sql`SELECT email FROM users WHERE id = ${session.userId} LIMIT 1`
@@ -28,25 +35,10 @@ export async function POST(request) {
     WHERE user_id = ${session.userId}
   `
 
-  const results = await Promise.allSettled(
-    subs.map(async sub => {
-      const pushSub = {
-        endpoint: sub.endpoint,
-        keys: { p256dh: sub.p256dh, auth: sub.auth },
-      }
-      try {
-        await webpush.sendNotification(pushSub, JSON.stringify({ title, body }))
-      } catch (err) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          // Subscription expired — remove it
-          await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-        }
-        throw err
-      }
-    })
-  )
+  const payload = JSON.stringify({ title, body })
+  const results = await Promise.all(subs.map(sub => sendToSubscription(sub, payload)))
 
-  const sent   = results.filter(r => r.status === 'fulfilled').length
-  const failed = results.filter(r => r.status === 'rejected').length
+  const sent   = results.filter(r => r.ok).length
+  const failed = results.length - sent
   return Response.json({ ok: true, sent, failed })
 }
