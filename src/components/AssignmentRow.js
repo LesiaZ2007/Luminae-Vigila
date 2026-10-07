@@ -11,25 +11,32 @@
 import { useState } from 'react'
 import { AlertCircle, Clock } from 'lucide-react'
 import { CANVAS_COLOR } from '@/lib/courseColors'
+import { todayStr } from '@/lib/localDate'
+import { daysBetween } from '@/lib/dateShift'
 
-/** How a due date reads relative to now. */
-export function formatDue(dueAt) {
+/**
+ * How a due date reads relative to now.
+ *
+ * "Today" and "tomorrow" are calendar days, not 24-hour spans. This used to round the
+ * raw time left up to whole days, so an assignment due at 11:59pm read "Due tomorrow"
+ * all day on the day it was due; and rounding the time *past* down meant anything a
+ * minute overdue read "Due yesterday". Neither "Due today" branch could fire. `past`
+ * is still about the instant: due at 9am, it is overdue — and red — by 10am.
+ */
+export function formatDue(dueAt, now = new Date()) {
   if (!dueAt) return null
-  const d    = new Date(dueAt)
-  const now  = new Date()
-  const diff = d - now
-  const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
+  const d = new Date(dueAt)
+  if (Number.isNaN(d.getTime())) return null
+  const days = daysBetween(todayStr(now), dueAt)
+  const past = d < now
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
-  if (diff < 0) {
-    const daysPast = Math.abs(Math.floor(diff / (1000 * 60 * 60 * 24)))
-    if (daysPast === 0) return { label: 'Due today',     urgent: true,  past: true }
-    if (daysPast === 1) return { label: 'Due yesterday', urgent: false, past: true }
-    return { label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), urgent: false, past: true }
-  }
-  if (days === 0) return { label: 'Due today',    urgent: true,  past: false }
-  if (days === 1) return { label: 'Due tomorrow', urgent: true,  past: false }
-  if (days <= 7)  return { label: `Due in ${days} days`, urgent: false, past: false }
-  return { label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), urgent: false, past: false }
+  if (days === 0)  return { label: 'Due today',     urgent: true,  past }
+  if (days === -1) return { label: 'Due yesterday', urgent: false, past: true }
+  if (days < 0)    return { label: date,            urgent: false, past: true }
+  if (days === 1)  return { label: 'Due tomorrow',  urgent: true,  past: false }
+  if (days <= 7)   return { label: `Due in ${days} days`, urgent: false, past: false }
+  return { label: date, urgent: false, past: false }
 }
 
 /**
