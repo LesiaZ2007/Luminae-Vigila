@@ -71,6 +71,21 @@ describe('isPublicAddress', () => {
       expect(isPublicAddress('::ffff:8.8.8.8')).toBe(true)
     })
 
+    it('judges NAT64 (64:ff9b::/96) and 6to4 (2002::/16) by the IPv4 they carry', () => {
+      // Both encodings of 127.0.0.1 used to pass as "public IPv6".
+      expect(isPublicAddress('64:ff9b::7f00:1')).toBe(false)
+      expect(isPublicAddress('64:ff9b::c0a8:101')).toBe(false)   // 192.168.1.1
+      expect(isPublicAddress('64:ff9b::808:808')).toBe(true)     // 8.8.8.8
+      expect(isPublicAddress('2002:7f00:1::')).toBe(false)
+      expect(isPublicAddress('2002:a9fe:a9fe::1')).toBe(false)   // 169.254.169.254
+      expect(isPublicAddress('2002:808:808::1')).toBe(true)
+    })
+
+    it('rejects local-use NAT64 and the documentation range', () => {
+      expect(isPublicAddress('64:ff9b:1::808:808')).toBe(false)
+      expect(isPublicAddress('2001:db8::1')).toBe(false)
+    })
+
     it('strips brackets, as a URL.hostname leaves them on', () => {
       expect(isPublicAddress('[::1]')).toBe(false)
       expect(isPublicAddress('[2606:4700:4700::1111]')).toBe(true)

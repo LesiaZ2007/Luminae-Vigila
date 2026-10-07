@@ -137,12 +137,20 @@ function isPublicIPv6(ip) {
   if ((g[0] & 0xfe00) === 0xfc00) return false // fc00::/7 — unique local
   if ((g[0] & 0xff00) === 0xff00) return false // ff00::/8 — multicast
 
-  // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d) — judge the embedded
-  // IPv4 address by the same rules, rather than letting it ride through as "it's IPv6".
-  if (g.slice(0, 5).every(n => n === 0) && (g[5] === 0 || g[5] === 0xffff)) {
-    const embedded = `${(g[6] >> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >> 8) & 0xff}.${g[7] & 0xff}`
-    return isPublicIPv4(embedded)
-  }
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return false // 2001:db8::/32 — documentation
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 1) return false // 64:ff9b:1::/48 — local-use NAT64
+
+  /* Addresses that carry an IPv4 address inside them are judged by that address,
+     rather than let through as "it's IPv6". A hostname's AAAA record is entirely the
+     feed owner's to choose, so any of these encodings of 127.0.0.1 would otherwise be
+     a way past the IPv4 rules — on a network that translates them, at least. */
+  const v4 = (hi, lo) => `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+  // IPv4-mapped ::ffff:a.b.c.d and IPv4-compatible ::a.b.c.d
+  if (g.slice(0, 5).every(n => n === 0) && (g[5] === 0 || g[5] === 0xffff)) return isPublicIPv4(v4(g[6], g[7]))
+  // NAT64 well-known prefix 64:ff9b::/96 — the low 32 bits
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g.slice(2, 6).every(n => n === 0)) return isPublicIPv4(v4(g[6], g[7]))
+  // 6to4 2002::/16 — bits 16 to 47
+  if (g[0] === 0x2002) return isPublicIPv4(v4(g[1], g[2]))
 
   return true
 }
