@@ -39,8 +39,27 @@
  * is still exactly what /api/push/status needs — it just has to allow for the
  * scan cadence rather than the ping cadence.
  */
+import { timingSafeEqual } from 'node:crypto'
 import sql from '@/lib/db'
 import { ddlOnce } from '@/lib/ddlOnce'
+
+/**
+ * Constant-time comparison for the bearer token against the real secret.
+ *
+ * A plain `!==` short-circuits on the first mismatched byte, so how long the
+ * comparison takes leaks how many leading characters of a guess were right —
+ * a timing side channel against a secret whose entire job is being unguessable.
+ * `timingSafeEqual` only accepts equal-length buffers, so a length mismatch is
+ * rejected up front rather than passed in and left to throw; a length mismatch
+ * is itself not a secret worth hiding the timing of (string length is cheap to
+ * probe from outside no matter how this function is written).
+ */
+function safeEqual(a, b) {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
+}
 
 /** One row per cron path, upserted — bounded regardless of ping frequency. */
 function ensurePingTable() {
@@ -96,7 +115,7 @@ export async function requireCron(request, path, opts = {}) {
       { status: 503 },
     )
   }
-  if (!token || token !== process.env.CRON_SECRET) {
+  if (!token || !safeEqual(token, process.env.CRON_SECRET)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
