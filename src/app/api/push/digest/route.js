@@ -17,6 +17,7 @@ import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid } from '@/lib/cronAuth'
 import { ensurePushSchema }          from '@/lib/pushSchema'
+import { sendToSubscription }        from '@/lib/pushSend'
 
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
@@ -52,14 +53,30 @@ export async function GET(request) {
     WHERE u.digest_enabled = true
   `
 
+  // Grouped by user: the digest body is identical for every device a reader
+  // owns, so it — and the todos/events rows behind it — is computed once per
+  // user rather than once per subscription.
+  const subsByUser = new Map()
+  for (const sub of subs) {
+    const list = subsByUser.get(sub.user_id)
+    if (list) list.push(sub)
+    else subsByUser.set(sub.user_id, [sub])
+  }
+
   let sent = 0, failed = 0, skipped = 0
 
-  const results = await Promise.allSettled(
-    subs.map(async sub => {
+  /* Each account fails on its own. Before the grouping every subscription was its own
+     Promise.allSettled entry, so one bad row or one transient database error was
+     counted and the run carried on; a bare Promise.all would let one account reject
+     the whole run, and nobody would get a digest that week. The sends themselves never
+     throw (sendToSubscription reports instead), so anything caught here happened
+     before any of this account's devices were tried. */
+  await Promise.all(Array.from(subsByUser.entries()).map(async ([userId, userSubs]) => {
+    try {
       // ── Fetch todos for this user ──────────────────────────────────────────
       const todoRows = await sql`
         SELECT data FROM todos
-        WHERE user_id = ${sub.user_id}
+        WHERE user_id = ${userId}
       `
       const todos = todoRows
         .map(r => r.data)
@@ -68,14 +85,14 @@ export async function GET(request) {
       // ── Fetch events for this user ─────────────────────────────────────────
       const eventRows = await sql`
         SELECT data FROM events
-        WHERE user_id = ${sub.user_id}
+        WHERE user_id = ${userId}
       `
       const events = eventRows
         .map(r => r.data)
         .filter(e => e.start && e.start >= nowIso && e.start <= endIso)
 
       const totalItems = todos.length + events.length
-      if (totalItems === 0) { skipped++; return }
+      if (totalItems === 0) { skipped += userSubs.length; return }
 
       // ── Find busiest day ───────────────────────────────────────────────────
       const dayCounts = {}
@@ -96,28 +113,17 @@ export async function GET(request) {
         busiestDay ? `— busiest day: ${busiestDay}` : '',
       ].filter(Boolean).join(', ')
 
-      const pushSub = {
-        endpoint: sub.endpoint,
-        keys: { p256dh: sub.p256dh, auth: sub.auth },
-      }
+      const payload = JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' })
 
-      try {
-        await webpush.sendNotification(
-          pushSub,
-          JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' }),
-        )
-        sent++
-      } catch (err) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          // Expired subscription — remove it
-          await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-        }
-        throw err
-      }
-    })
-  )
-
-  failed = results.filter(r => r.status === 'rejected').length
+      await Promise.all(userSubs.map(async sub => {
+        const result = await sendToSubscription(sub, payload)
+        if (result.ok) sent++
+        else failed++
+      }))
+    } catch {
+      failed += userSubs.length
+    }
+  }))
 
   return Response.json({ ok: true, sent, failed, skipped })
 }

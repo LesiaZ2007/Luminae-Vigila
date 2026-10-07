@@ -12,15 +12,18 @@
  */
 import webpush        from 'web-push'
 import { getSession } from '@/lib/session'
+import { requireVapid } from '@/lib/cronAuth'
+import { sendToSubscription } from '@/lib/pushSend'
 import sql            from '@/lib/db'
 
 export async function POST() {
   const session = await getSession()
   if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
-  if (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
-    // Caught explicitly: setVapidDetails throws on missing keys, which would
-    // surface as an opaque 500 and look like a server outage.
+  // Caught explicitly: setVapidDetails throws on missing keys, which would
+  // surface as an opaque 500 and look like a server outage.
+  const unconfigured = requireVapid()
+  if (unconfigured) {
     return Response.json({
       ok: false,
       error: 'VAPID keys are not configured on this deployment.',
@@ -58,21 +61,17 @@ export async function POST() {
   const results = await Promise.all(subs.map(async sub => {
     let host = 'unknown'
     try { host = new URL(sub.endpoint).host } catch {}
-    try {
-      await webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        payload,
-      )
-      return { host, ok: true }
-    } catch (err) {
-      // A dead subscription is worth clearing out so the next attempt isn't
-      // dragged down by a device that no longer exists.
-      if (err.statusCode === 410 || err.statusCode === 404) {
-        await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-        return { host, ok: false, status: err.statusCode, error: 'Subscription expired — removed. Re-enable notifications on that device.' }
-      }
-      return { host, ok: false, status: err.statusCode ?? null, error: err.body || err.message }
+
+    const result = await sendToSubscription(sub, payload)
+    if (result.ok) return { host, ok: true }
+
+    // A dead subscription is worth clearing out so the next attempt isn't
+    // dragged down by a device that no longer exists — sendToSubscription
+    // already did that; this just gives the client a readable reason.
+    if (result.deleted) {
+      return { host, ok: false, status: result.status, error: 'Subscription expired — removed. Re-enable notifications on that device.' }
     }
+    return { host, ok: false, status: result.status, error: result.error }
   }))
 
   const sent = results.filter(r => r.ok).length
