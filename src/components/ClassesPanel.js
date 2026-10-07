@@ -238,9 +238,29 @@ function TaskRow({ todo, color, onToggle, onToggleSubtask, onClick }) {
   const hasSteps  = subtasks.length > 0
   const doneSteps = subtasks.filter(s => s.completed).length
 
+  // Shared by click and keyboard so the two can't fall out of step.
+  function activate() {
+    if (hasSteps) setExpanded(v => !v)
+    else onClick?.(todo)
+  }
+
   return (
     <div
-      onClick={() => (hasSteps ? setExpanded(v => !v) : onClick?.(todo))}
+      role="button"
+      tabIndex={0}
+      // Without this, the row's computed name would run on into its nested
+      // buttons' own labels ("… 1/3 steps", "… Edit task") — accurate, but it
+      // makes the row impossible to tell apart from them in an accessibility tree.
+      aria-label={todo.title}
+      className="lv-focusable"
+      onClick={activate}
+      onKeyDown={e => {
+        // The toggle, the steps badge and the subtask rows are their own focusable
+        // controls with their own stopPropagation — this guard is what keeps their
+        // Enter/Space from *also* firing the row underneath them.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
