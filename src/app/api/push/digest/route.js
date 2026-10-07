@@ -17,6 +17,7 @@ import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid } from '@/lib/cronAuth'
 import { ensurePushSchema }          from '@/lib/pushSchema'
+import { sendToSubscription }        from '@/lib/pushSend'
 
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
@@ -52,72 +53,67 @@ export async function GET(request) {
     WHERE u.digest_enabled = true
   `
 
+  // Grouped by user: the digest body is identical for every device a reader
+  // owns, so it — and the todos/events rows behind it — is computed once per
+  // user rather than once per subscription.
+  const subsByUser = new Map()
+  for (const sub of subs) {
+    const list = subsByUser.get(sub.user_id)
+    if (list) list.push(sub)
+    else subsByUser.set(sub.user_id, [sub])
+  }
+
   let sent = 0, failed = 0, skipped = 0
 
-  const results = await Promise.allSettled(
-    subs.map(async sub => {
-      // ── Fetch todos for this user ──────────────────────────────────────────
-      const todoRows = await sql`
-        SELECT data FROM todos
-        WHERE user_id = ${sub.user_id}
-      `
-      const todos = todoRows
-        .map(r => r.data)
-        .filter(t => !t.completed && t.dueDate && t.dueDate >= nowIso.slice(0,10) && t.dueDate <= endIso.slice(0,10))
+  await Promise.all(Array.from(subsByUser.entries()).map(async ([userId, userSubs]) => {
+    // ── Fetch todos for this user ──────────────────────────────────────────
+    const todoRows = await sql`
+      SELECT data FROM todos
+      WHERE user_id = ${userId}
+    `
+    const todos = todoRows
+      .map(r => r.data)
+      .filter(t => !t.completed && t.dueDate && t.dueDate >= nowIso.slice(0,10) && t.dueDate <= endIso.slice(0,10))
 
-      // ── Fetch events for this user ─────────────────────────────────────────
-      const eventRows = await sql`
-        SELECT data FROM events
-        WHERE user_id = ${sub.user_id}
-      `
-      const events = eventRows
-        .map(r => r.data)
-        .filter(e => e.start && e.start >= nowIso && e.start <= endIso)
+    // ── Fetch events for this user ─────────────────────────────────────────
+    const eventRows = await sql`
+      SELECT data FROM events
+      WHERE user_id = ${userId}
+    `
+    const events = eventRows
+      .map(r => r.data)
+      .filter(e => e.start && e.start >= nowIso && e.start <= endIso)
 
-      const totalItems = todos.length + events.length
-      if (totalItems === 0) { skipped++; return }
+    const totalItems = todos.length + events.length
+    if (totalItems === 0) { skipped += userSubs.length; return }
 
-      // ── Find busiest day ───────────────────────────────────────────────────
-      const dayCounts = {}
-      for (const t of todos) {
-        const d = t.dueDate?.slice(0, 10)
-        if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
-      }
-      for (const e of events) {
-        const d = e.start?.slice(0, 10)
-        if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
-      }
-      const busiestDate = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
-      const busiestDay  = busiestDate ? DAYS[new Date(busiestDate + 'T12:00:00').getDay()] : null
+    // ── Find busiest day ───────────────────────────────────────────────────
+    const dayCounts = {}
+    for (const t of todos) {
+      const d = t.dueDate?.slice(0, 10)
+      if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
+    }
+    for (const e of events) {
+      const d = e.start?.slice(0, 10)
+      if (d) dayCounts[d] = (dayCounts[d] ?? 0) + 1
+    }
+    const busiestDate = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
+    const busiestDay  = busiestDate ? DAYS[new Date(busiestDate + 'T12:00:00').getDay()] : null
 
-      const body = [
-        `${todos.length} task${todos.length !== 1 ? 's' : ''}`,
-        `${events.length} event${events.length !== 1 ? 's' : ''}`,
-        busiestDay ? `— busiest day: ${busiestDay}` : '',
-      ].filter(Boolean).join(', ')
+    const body = [
+      `${todos.length} task${todos.length !== 1 ? 's' : ''}`,
+      `${events.length} event${events.length !== 1 ? 's' : ''}`,
+      busiestDay ? `— busiest day: ${busiestDay}` : '',
+    ].filter(Boolean).join(', ')
 
-      const pushSub = {
-        endpoint: sub.endpoint,
-        keys: { p256dh: sub.p256dh, auth: sub.auth },
-      }
+    const payload = JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' })
 
-      try {
-        await webpush.sendNotification(
-          pushSub,
-          JSON.stringify({ title: 'Your week ahead', body, tag: 'lv-digest' }),
-        )
-        sent++
-      } catch (err) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          // Expired subscription — remove it
-          await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-        }
-        throw err
-      }
-    })
-  )
-
-  failed = results.filter(r => r.status === 'rejected').length
+    await Promise.all(userSubs.map(async sub => {
+      const result = await sendToSubscription(sub, payload)
+      if (result.ok) sent++
+      else failed++
+    }))
+  }))
 
   return Response.json({ ok: true, sent, failed, skipped })
 }
