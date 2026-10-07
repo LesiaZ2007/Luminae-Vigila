@@ -204,8 +204,10 @@ export function classReminderKey(kind, id, ms, at) {
 /**
  * Fire time for a class-derived reminder, or null.
  *
- * Mirrors `reminderFireTime` in the push cron — an absolute reminder ignores the
- * offset, a relative one counts back from the item's own time.
+ * Shared with the push cron's own item-level reminders (the `itemCandidates`
+ * loop in src/app/api/push/reminders/route.js) rather than mirrored, so the two
+ * cannot drift apart: an absolute reminder ignores the offset, a relative one
+ * counts back from the item's own time.
  */
 export function fireTimeFor(reminder, dueIso) {
   if (!reminder) return null

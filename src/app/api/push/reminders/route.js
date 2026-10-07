@@ -30,8 +30,9 @@ import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid, stampCronPing } from '@/lib/cronAuth'
 import { ddlOnce }                         from '@/lib/ddlOnce'
+import { sendToSubscription }              from '@/lib/pushSend'
 import { noteDisplayTitle, notePlainText, noteHasImage } from '@/lib/notes'
-import { classReminderCandidates }         from '@/lib/classReminders'
+import { classReminderCandidates, fireTimeFor } from '@/lib/classReminders'
 import { shouldScan, recordScan, reminderWindowState, earliestFuture } from '@/lib/reminderWindow'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
@@ -165,42 +166,27 @@ function groupByUser(rows) {
   return out
 }
 
-/** Compute the epoch-ms fire time for an item's reminder, or null if none/invalid. */
-function reminderFireTime(item, dueIso) {
-  const r = item.reminder
-  if (!r) return null
-  if (r.at) {
-    const t = new Date(r.at).getTime()
-    return Number.isNaN(t) ? null : t
-  }
-  if (dueIso && typeof r.ms === 'number') {
-    const due = new Date(dueIso).getTime()
-    return Number.isNaN(due) ? null : due - r.ms
-  }
-  return null
-}
-
 /** Everything one user's own item-level reminders imply. */
 function itemCandidates({ events, todos, notes }) {
   const candidates = []
 
   for (const ev of events) {
     if (!ev?.reminder || ev.completed) continue
-    const at = reminderFireTime(ev, ev.start)
+    const at = fireTimeFor(ev.reminder, ev.start)
     if (at == null) continue
     candidates.push({ key: `ev-${ev.id}-${at}`, at, title: `Reminder: ${ev.title}`, body: ev.reminder.label ?? '' })
   }
   for (const td of todos) {
     if (!td?.reminder || td.completed) continue
     const dueIso = td.dueDate ? td.dueDate + 'T00:00:00' : null
-    const at = reminderFireTime(td, dueIso)
+    const at = fireTimeFor(td.reminder, dueIso)
     if (at == null) continue
     candidates.push({ key: `td-${td.id}-${at}`, at, title: `Reminder: ${td.title}`, body: td.reminder.label ?? '' })
   }
   for (const nt of notes) {
     // Notes have no due date, so only absolute `reminder.at` values apply.
     if (!nt?.reminder || nt.trashedAt) continue
-    const at = reminderFireTime(nt, null)
+    const at = fireTimeFor(nt.reminder, null)
     if (at == null) continue
     // Lead with the note's own text — the reminder label is just the time,
     // which the notification already shows.
@@ -336,18 +322,9 @@ export async function GET(request) {
 
         const payload = JSON.stringify({ title: c.title, body: c.body, tag: c.key })
         await Promise.all(subs.map(async sub => {
-          try {
-            await webpush.sendNotification(
-              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-              payload,
-            )
-            sent++
-          } catch (err) {
-            failed++
-            if (err.statusCode === 410 || err.statusCode === 404) {
-              await sql`DELETE FROM push_subscriptions WHERE id = ${sub.id}`
-            }
-          }
+          const result = await sendToSubscription(sub, payload)
+          if (result.ok) sent++
+          else failed++
         }))
       }
     }
