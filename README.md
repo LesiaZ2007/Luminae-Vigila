@@ -642,7 +642,11 @@ cleared: the row stayed dimmed, and the list went on drawing the snapshot it too
 the drag began, so new tasks, ticks and anything synced in from another device stopped
 appearing until some later drag happened to finish on a row. Pressing the grip without
 dragging dimmed the row the same way, and Firefox would not start a drag at all, because
-the drag carried no data.
+the drag carried no data. It carries the row's id now, under a private type of its own
+rather than as plain text — Firefox only needs *some* data. Text fields, the notes editor
+and other apps insert a drag's plain text when it is let go over them, so a row dropped
+just past the top of a custom list, onto the *Add an item…* box above it, would have
+typed its internal id there.
 
 The list you drag is the filtered one — Upcoming hides finished tasks, the category chips
 hide whole categories — and a drop used to renumber only the visible tasks 0, 1, 2…, over
