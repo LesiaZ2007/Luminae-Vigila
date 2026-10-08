@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useEffectEvent } from 'react'
 import { createPortal } from 'react-dom'
 import useAnchoredPosition from '@/lib/useAnchoredPosition'
+import { usePopoverContainer } from './Dialog'
 
 function pad(n) { return String(n).padStart(2, '0') }
 
@@ -139,6 +140,8 @@ export default function TimePicker({ value, onChange }) {
   const timerRef  = useRef(null)
   const inputRef  = useRef(null)
   const revertRef = useRef(null)   // value to restore if digit entry is escaped
+  // <body>, or the dialog this sits in, so the clock is part of that dialog.
+  const container = usePopoverContainer()
 
   // Centred under the trigger, flipped above it when there is no room below, and
   // clamped inside the viewport either way. See lib/useAnchoredPosition.
@@ -191,7 +194,7 @@ export default function TimePicker({ value, onChange }) {
     return true
   }
 
-  // The clock is portaled to <body> (see below), so it is no longer a DOM
+  // The clock is portaled out (see below), so it is no longer a DOM
   // descendant of the trigger — an outside-click test against wrapRef alone would
   // treat every tap on the clock face as "outside" and close it mid-drag.
   // Declared after commitInline, which it calls through an effect event so the
@@ -506,8 +509,9 @@ export default function TimePicker({ value, onChange }) {
           Portaled to <body> rather than absolutely positioned inside the trigger:
           as a descendant it was clipped by any scrolling ancestor (the note editor's
           meta bar, modals) and could only ever open downward, off the bottom of the
-          screen. */}
-      {open && typeof document !== 'undefined' && createPortal(
+          screen. Inside a dialog it goes to the dialog's root instead, so it is part
+          of the dialog for Tab and for screen readers (see Dialog.js). */}
+      {open && container && createPortal(
         <div ref={popupRef} style={{
           position: 'fixed',
           top:   popupPos.top,
@@ -618,7 +622,7 @@ export default function TimePicker({ value, onChange }) {
                     style={{ padding: '6px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, flex: '0 0 auto' }}>OK</button>
           </div>
         </div>,
-        document.body,
+        container,
       )}
     </div>
   )

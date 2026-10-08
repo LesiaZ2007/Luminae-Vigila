@@ -2,13 +2,16 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { usePopoverContainer } from './Dialog'
 
 /**
  * Branded dropdown.
  *
  * The menu is rendered in a PORTAL with fixed positioning so it is never clipped by
  * a scrollable/overflow:hidden ancestor (e.g. the Focus Timer panel) and always sits
- * above other layers. It flips upward when there isn't room below.
+ * above other layers. It flips upward when there isn't room below. Inside a dialog
+ * the portal is the dialog's root, not <body>, so the menu is part of the dialog —
+ * reachable with Tab and not hidden by aria-modal (see Dialog.js).
  *
  * options: array of { value, label } — or { header: true, label } for a non-selectable
  * group header row.
@@ -19,6 +22,7 @@ export default function Select({ value, onChange, options, placeholder = 'Select
   const [pos,        setPos]        = useState(null) // { left, top, width, openUp }
   const triggerRef = useRef(null)
   const menuRef    = useRef(null)
+  const container  = usePopoverContainer()
 
   function computePos() {
     const el = triggerRef.current
@@ -89,8 +93,8 @@ export default function Select({ value, onChange, options, placeholder = 'Select
         </svg>
       </button>
 
-      {/* Dropdown — portaled to body so no overflow ancestor can clip it */}
-      {open && pos && createPortal(
+      {/* Dropdown — portaled out (to the dialog, or body) so no overflow ancestor can clip it */}
+      {open && pos && container && createPortal(
         <div
           ref={menuRef}
           style={{
@@ -140,7 +144,7 @@ export default function Select({ value, onChange, options, placeholder = 'Select
             )
           })}
         </div>,
-        document.body,
+        container,
       )}
     </div>
   )

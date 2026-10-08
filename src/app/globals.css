@@ -312,6 +312,18 @@ select option {
      6000+  popovers — selects, date/time pickers, task and day menus. They
             open from inside dialogs, so they have to clear every one.
 ══════════════════════════════════════════════ */
+/* Carries the dialog's role and label, and holds the backdrop and any popover
+   opened from the panel (see Dialog.js). It must stay a plain box. A z-index
+   here would make it the stacking context of those popovers and cap them at the
+   dialog's tier, under the toasts; a transform, filter or backdrop-filter would
+   do that and also become the box they are positioned against. Positioned only
+   so that it has the viewport's size for assistive tech rather than none — with
+   z-index left at auto that creates neither. The backdrop covers it, so it never
+   takes a click. */
+.dialog-root {
+  position: absolute;
+  inset: 0;
+}
 .dialog-backdrop {
   position: fixed;
   inset: 0;

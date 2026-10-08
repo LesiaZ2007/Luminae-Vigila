@@ -2573,6 +2573,30 @@ the page. Focus is *not* held on the panel when you press on the backdrop, becau
 blur is what commits an inline rename, and the click outside that follows then saves the
 form with the rename in it. Each dialog is announced as a modal dialog under its title.
 
+**A menu opened from a dialog is part of it.** The selects, date picker and time picker
+render through a portal, so no scrolling panel can clip them — and they have always
+portaled onto `<body>`, which is outside the dialog they were opened from. Once dialogs
+trapped Tab, two things went wrong there. Tab wrapped from the panel's last field straight
+back to its first and never reached an open menu, and since opening one does not move
+focus into it, a keyboard user had no way to change a form's date, category, priority or
+reminder. And the dialog is marked `aria-modal`, which tells screen readers that nothing
+outside it is available — the menus included. Inside a dialog they now portal into the
+dialog itself, so Tab runs through the panel's fields and then through the open menu
+before wrapping, and a screen reader finds the menu inside the modal. Outside a dialog
+they still go to `<body>`. A press in a menu still never counts as a press on the
+backdrop, so picking a date in the event form does not save it, and Escape in an open
+menu closes the menu and leaves the dialog up.
+
+They go in beside the backdrop rather than inside it or the panel. The panel's entrance
+animation leaves a transform on it, and a transform makes an element the box that
+`position: fixed` children are placed against, so a menu in the panel would be drawn
+offset by the panel's own position. The backdrop has a z-index and a `backdrop-filter`,
+and either one would confine a menu's z-index to the dialog's own tier — under the
+toasts. The element that carries the dialog's role is a plain wrapper around the backdrop
+and the menus, with no z-index, transform or filter, so a menu inside it is positioned
+and stacked exactly as it was on `<body>`. A dialog opened from inside another one has a
+wrapper of its own, and a menu opened from it goes there, not into the dialog underneath.
+
 **One backdrop.** The scrim had been anything from 35% to 55% black, blurred or not,
 depending on who wrote the modal. It is now a single token, `--backdrop`: 40% black with a
 6px blur, which is the middle of what most modals already used, and 50% in dark mode,
@@ -3238,12 +3262,14 @@ changes. It flips only when flipping helps, since opening upward into an equally
 space just moves the problem. It clamps on both axes, because neither picker clamped
 horizontally and a trigger near the right edge pushed a fixed-width popover past it; when
 neither side fits at all the popover is clamped into view and given a `maxHeight` so it
-scrolls instead of spilling. `TimePicker` is now portaled to `document.body` like
-`DatePicker` — it used to be `position: absolute` inside the trigger's wrapper, so any
-scrolling ancestor clipped it and it could only ever open downward. Outside-click
-detection tests the popover *and* the trigger, so tapping the clock face no longer counts
-as clicking away. Everything recalculates on scroll captured on any ancestor, on resize,
-and on `visualViewport` resize, which is what actually fires when a mobile keyboard opens.
+scrolls instead of spilling. `TimePicker` is now portaled out of its trigger like
+`DatePicker` — onto `document.body`, or into the dialog it was opened from, which counts
+it as part of that dialog. It used to be `position: absolute` inside the trigger's
+wrapper, so any scrolling ancestor clipped it and it could only ever open downward.
+Outside-click detection tests the popover *and* the trigger, so tapping the clock face no
+longer counts as clicking away. Everything recalculates on scroll captured on any
+ancestor, on resize, and on `visualViewport` resize, which is what actually fires when a
+mobile keyboard opens.
 
 `TimePicker` offers the same time two ways, a text field and a radial clock, and both were
 awkward in ways that pushed you to the other one.

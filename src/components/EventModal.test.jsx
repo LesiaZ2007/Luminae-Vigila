@@ -192,7 +192,7 @@ describe('EventModal — a range dragged on the calendar', () => {
    do is treat a text selection that started in a field and was released over the
    backdrop as a click outside, which saved a half-typed event. */
 describe('EventModal — click outside', () => {
-  const backdrop = () => screen.getByRole('dialog').parentElement
+  const backdrop = () => screen.getByRole('dialog').querySelector('.dialog-backdrop')
 
   it('saves on a click on the backdrop', async () => {
     const user = userEvent.setup()
