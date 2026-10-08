@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import EventModal from './EventModal'
 
@@ -185,5 +185,55 @@ describe('EventModal — a range dragged on the calendar', () => {
   it('is unchanged when no range was dragged', () => {
     renderModal({ initialDate: '2026-08-17' })
     expect(screen.queryByText('End Date')).toBeNull()
+  })
+})
+
+/* Clicking outside the form saves it — that is the form's contract. What it must not
+   do is treat a text selection that started in a field and was released over the
+   backdrop as a click outside, which saved a half-typed event. */
+describe('EventModal — click outside', () => {
+  const backdrop = () => screen.getByRole('dialog').parentElement
+
+  it('saves on a click on the backdrop', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    renderModal({ onSave })
+    await user.type(screen.getByPlaceholderText('e.g. CS101 Lecture'), 'Lab')
+    await user.click(backdrop())
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave.mock.calls[0][0].title).toBe('Lab')
+  })
+
+  it('does not save when a drag from a field ends on the backdrop', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    renderModal({ onSave })
+    const title = screen.getByPlaceholderText('e.g. CS101 Lecture')
+    await user.type(title, 'Lab')
+
+    fireEvent.pointerDown(title)
+    fireEvent.click(backdrop())
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+})
+
+/* The category manager opens on top of the form. One Escape used to reach both — the
+   manager's backdrop and the form's own listener — and close everything. */
+describe('EventModal — the category manager on top', () => {
+  it('Escape closes the manager and leaves the form open', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    renderModal({ onClose })
+
+    await user.click(screen.getByRole('button', { name: /edit/i }))
+    expect(screen.getByRole('dialog', { name: 'Event Categories' })).toBeTruthy()
+
+    await user.keyboard('{Escape}')
+    await new Promise(r => setTimeout(r, 220))
+
+    expect(screen.queryByRole('dialog', { name: 'Event Categories' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'New event' })).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

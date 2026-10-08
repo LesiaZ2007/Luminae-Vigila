@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react'
 import { X, ExternalLink, CheckCircle2, Circle, Clock, AlertCircle, FileText, Upload, Link2, Pencil } from 'lucide-react'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 
 const CANVAS_COLOR = '#E8751A'
 
@@ -48,18 +49,10 @@ function submissionTypeLabel(type) {
 }
 
 export default function AssignmentDetailModal({ assignment: a, courseColor, onClose, onToggleDone, onUpdateNotes }) {
-  const [closing,   setClosing]   = useState(false)
+  const [closing, handleClose] = useDialogExit(onClose)
   const [notes,     setNotes]     = useState(a?.notes ?? '')
   const [editNotes, setEditNotes] = useState(false)
   const color = courseColor ?? CANVAS_COLOR
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line
 
   // Sync notes if assignment changes
   useEffect(() => { setNotes(a?.notes ?? '') }, [a?.id]) // eslint-disable-line
@@ -75,16 +68,8 @@ export default function AssignmentDetailModal({ assignment: a, courseColor, onCl
   }
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
-      onClick={handleClose}
-    >
-      <div
-        className={`modal-surface${closing ? ' modal-closing' : ''}`}
-        style={{ width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog label={a.title || 'Assignment'} closing={closing} onClose={handleClose}
+            panelStyle={{ width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto' }}>
         {/* Header */}
         <div className="modal-header" style={{ gap: 10 }}>
           {/* Course color dot + name */}
@@ -248,7 +233,6 @@ export default function AssignmentDetailModal({ assignment: a, courseColor, onCl
             </a>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

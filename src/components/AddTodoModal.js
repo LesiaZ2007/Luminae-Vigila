@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useEffectEvent, useRef } from 'react'
+import { useState, useRef } from 'react'
 import LinkedNotes from '@/components/LinkedNotes'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
 import DatePicker from '@/components/DatePicker'
@@ -70,11 +71,9 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   const [editingVal,    setEditingVal]    = useState('')
   const [dragOverIdx,   setDragOverIdx]   = useState(-1)
   const [error,         setError]         = useState('')
-  const [closing,       setClosing]       = useState(false)
+  const [closing, handleClose] = useDialogExit(onClose)
   const subtaskInputRef = useRef(null)
   const dragIdxRef      = useRef(null)
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
 
   /* One definition of "add whatever is typed in the step field", so the Enter key, the
      + button and Escape can't drift apart — they had already drifted, which is how
@@ -87,14 +86,6 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
     setNewSubtask('')
     return true
   }
-
-  // Registered once; the effect event always reaches the current handleClose.
-  const onEscape = useEffectEvent(() => handleClose())
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onEscape() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
 
   const upcomingEvents = events
     .filter(e => !e.allDay && new Date(e.start) >= new Date())
@@ -161,11 +152,9 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
   }
 
   return (
-    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-         style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={trySubmit}>
-      <div className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
-           onClick={e => e.stopPropagation()}>
+    <Dialog label={isCanvas ? 'Canvas assignment' : isEdit ? 'Edit task' : 'New task'} closing={closing}
+            onClose={handleClose} onBackdropClick={trySubmit}
+            className="w-full max-w-sm overflow-hidden">
 
         <div className="modal-header">
           <h2>{isCanvas ? 'Canvas Assignment' : isEdit ? 'Edit Task' : 'New Task'}</h2>
@@ -447,9 +436,9 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                               /* Same two bugs as the step field below, on a rename: the
                                  edit was thrown away, and Escape then carried on to the
                                  modal's handler and closed the form as well. Blur is
-                                 what commits a rename, so hand it to blur and stop it
-                                 there. */
-                              e.stopPropagation()
+                                 what commits a rename, so hand it to blur, and mark the
+                                 key as used so the dialog stays open (lib/dialogStack). */
+                              e.preventDefault()
                               e.currentTarget.blur()
                             }
                           }}
@@ -499,9 +488,13 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
                          every other unsaved edit with it. With something typed it now
                          means "I'm done with this step": add it and stay put. An empty
                          field has nothing to lose, so Escape still closes the modal,
-                         which is what it means everywhere else. */
+                         which is what it means everywhere else.
+
+                         preventDefault is what keeps the dialog open — the stack
+                         skips an Escape something already used. stopPropagation
+                         never could in production: React listens on `document`,
+                         the same node the modal's old listener sat on. */
                       e.preventDefault()
-                      e.stopPropagation()
                       addStep()
                     }
                   }}
@@ -546,7 +539,6 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
             <button type="submit" className="btn-primary" style={{ flex: 1 }}>{isCanvas ? 'Save' : isEdit ? 'Save Changes' : 'Add Task'}</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Dialog>
   )
 }

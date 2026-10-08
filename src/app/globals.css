@@ -39,6 +39,11 @@
   --shadow-md:   0 4px 16px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
   --shadow-modal:0 8px 40px rgba(0,0,0,.13), 0 2px 8px rgba(0,0,0,.06);
   --shadow-lg:   0 12px 48px rgba(0,0,0,.15);
+
+  /* Dialog scrim — see DIALOGS below */
+  --backdrop:      rgba(0, 0, 0, 0.4);
+  --backdrop-blur: 6px;
+  --z-dialog:      3500;
 }
 
 /* ── Accent themes — light mode ── */
@@ -117,6 +122,8 @@
   --shadow-md:   0 4px 16px rgba(0,0,0,.5);
   --shadow-modal:0 8px 40px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.4);
   --shadow-lg:   0 12px 48px rgba(0,0,0,.7);
+
+  --backdrop:      rgba(0, 0, 0, 0.5);
 }
 
 /* ── Accent themes — dark mode overrides ── */
@@ -284,6 +291,47 @@ select option {
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-modal);
+}
+
+/* ══════════════════════════════════════════════
+   DIALOGS — components/Dialog.js
+   One scrim for every modal. There were five (0.35 to 0.55, with and
+   without blur); 0.4 + 6px is the middle of the ones most modals already
+   used. Dark mode gets a heavier one because it is darkening a page that is
+   already dark — at 0.4 the panel's faint border was nearly all that
+   separated it from what was behind.
+
+   Stacking, lowest first:
+     ≤ 500  page chrome (toasts, floating Corvus, menus)
+     2001   focus timer panel · 3000 offline pill
+     3500   dialogs (--z-dialog)
+     4000   focus timer full-screen
+     6000+  popovers — selects, date/time pickers, task and day menus. They
+            open from inside dialogs, so they have to clear every one.
+══════════════════════════════════════════════ */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--backdrop);
+  -webkit-backdrop-filter: blur(var(--backdrop-blur));
+  backdrop-filter: blur(var(--backdrop-blur));
+}
+.dialog-panel {
+  width: 100%;
+  /* A scroll that reaches the end of the panel stops there instead of
+     carrying on into the page (or the pull-to-refresh) behind it. */
+  overscroll-behavior: contain;
+}
+/* The panel takes focus only so keyboard users start inside the dialog; it
+   is not a control, so it gets no ring. */
+.dialog-panel:focus { outline: none; }
+@media (max-width: 639px) {
+  .dialog-backdrop[data-align="bottom-on-mobile"] { align-items: flex-end; }
 }
 
 /* ══════════════════════════════════════════════

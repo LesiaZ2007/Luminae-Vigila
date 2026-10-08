@@ -195,10 +195,11 @@ describe('EventDetailModal — colour', () => {
   afterEach(cleanup)
 
   it('offers the app palette rather than an OS colour wheel', () => {
-    const { container } = render(
+    render(
       <EventDetailModal event={ownEvent()} categories={CATEGORIES} onClose={() => {}} onRecolor={() => {}} />,
     )
-    expect(container.querySelector('input[type="color"]')).toBeNull()
+    // The dialog is portaled onto <body>, outside RTL's container.
+    expect(document.body.querySelector('input[type="color"]')).toBeNull()
     expect(screen.getByRole('button', { name: /Color this event #10b981/i })).toBeTruthy()
   })
 

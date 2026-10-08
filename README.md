@@ -686,7 +686,10 @@ draft; nothing stopped it reaching the modal's own Escape handler, so it closed 
 entire form, and a modal that closes without saving takes the title, the date, the
 category and every other unsaved edit with it. Escape in a half-typed step field now
 adds the step and stays put. An empty field still closes the modal, because there is
-nothing to lose and Escape means *close* everywhere else in the app.
+nothing to lose and Escape means *close* everywhere else in the app. (The first fix for
+this stopped the key's propagation, which kept the form open in tests and not in the app;
+the field now marks the key as used instead — see [Dialogs](#dialogs) for why only that
+works.)
 
 The asymmetry is deliberate. Escape-as-cancel is the usual convention, but the cost
 here is not symmetrical: a step added by accident is one click to delete, and a step
@@ -2576,17 +2579,97 @@ Single keys, anywhere outside a text field:
 
 The arrow keys use the same slide animation as swipe and trackpad paging, and stand down
 for modifier combos so browser-back and text selection still work. Every shortcut is
-suppressed while typing in an input, textarea or contenteditable, and while a blocking
-modal is open — except `Esc`, which always works.
+suppressed while typing in an input, textarea or contenteditable, and while any dialog is
+open — except `Esc`, which always works. "Any dialog" is asked of the dialog stack (see
+[Dialogs](#dialogs)) rather than of a hand-kept list of which modals were open. The list
+had missed the event detail view, the exam and study-plan forms, the onboarding tour and
+every modal a panel opened for itself, so `N` with the detail view open opened the event
+form over it, and `←` paged the calendar behind the tour.
 
-`Esc` closes **one layer at a time**, innermost first, because two layers used to answer
-the same keypress. The shortcuts overlay fades out before it closes, but the planner's own
-`Esc` handler unmounted it in the same keypress, so the fade never showed; the planner now
-stops at the overlay and lets it close itself. In the focus timer's zen mode, the timer's
-handler and the planner's both listened on `window`, and the planner's — which closes the
-whole timer — was registered first, so one `Esc` meant to leave full-screen shut the timer
+`Esc` closes **one layer at a time**, innermost first, because several layers used to
+answer the same keypress. Dialogs take it from the dialog stack; only when no dialog is
+open does the planner's own handler see it, and that closes the focus timer panel or the
+floating Corvus window, one per press. In the focus timer's zen mode, the timer's handler
+and the planner's both listened on `window`, and the planner's — which closes the whole
+timer — was registered first, so one `Esc` meant to leave full-screen shut the timer
 instead. Zen mode now takes the key first, on `document`, and stops it there: the settings
 card closes, then full-screen, and the timer stays open.
+
+### Dialogs
+
+Every modal — the event and task forms, the event detail view, the class, exam and
+study-plan forms, the category manager, Google and Canvas settings, the onboarding tour,
+the shortcuts overlay, the desktop search popup and the custom-list modals — is drawn by
+one component, [`Dialog`](src/components/Dialog.js). There were sixteen hand-built ones,
+and they had drifted: five different backdrops, Escape answered by some and ignored by
+others, and no focus handling anywhere. These are the rules they now share.
+
+**Escape closes the top dialog, and only that.** Each modal used to add its own Escape
+listener to `document`, and the planner had another on `window`; nothing chose between
+them, so one press reached them all. With the category manager open, Escape went past it
+— it ignored the key — and closed the event form underneath, taking the manager with it;
+a dialog closed together with the focus timer behind it; and
+the search popup — which had a listener of its own *and* a branch in the planner's — was
+told to close twice. Now the open dialogs sit in one ordered stack
+([`lib/dialogStack.js`](src/lib/dialogStack.js)) behind a single listener, and Escape goes
+to the topmost. The category manager closes, the next press closes the event form.
+
+Something *inside* a dialog that wants Escape for itself — a rename field, the step field
+in the task form, a date, time or select popover — marks the key as used with
+`preventDefault`, and the stack leaves it alone. So Escape in a category rename cancels
+the rename and the manager stays open; Escape with the time picker open closes the clock
+and not the form. It is `preventDefault` rather than `stopPropagation` on purpose. Next
+mounts React on `document`, the same node the old modal listeners sat on, and stopping
+propagation there does not reach other listeners on that node — so the task form's step
+field, which stopped the key to keep the form open, closed it anyway in the app. In tests
+React mounts into a `div`, where stopping *does* keep the event from `document`, which is
+how that passed its tests for as long as it was broken. A mark works the same in both.
+The stack listens on `window` because a keydown reaches `window` last: every React handler
+and every `document` listener has had its turn by then, and the stack can see whether any
+of them used the key.
+
+**Clicking the backdrop closes the dialog — except in the event and task forms, where it
+saves.** Those forms are where the typing is, and a stray click outside cost every unsaved
+field; saving instead is cheap to undo, and if the form does not validate it stays open
+with the message showing. The *this event or the whole series* question that opens first
+on a repeating event closes instead, since nothing has been chosen to save yet. Confirm
+questions treat the backdrop as Cancel.
+
+A click only counts as *on the backdrop* when the press started there too. Selecting text
+in the title by dragging and letting go a little past the edge of the panel is a drag, not
+a click outside — but the browser reports a `click` on the backdrop for it, and in the two
+forms that saved a half-typed event or task mid-edit. While a dialog fades out, further
+presses and clicks are ignored: a quick double-click on the task form's backdrop used to
+save it twice, the second time during the fade.
+
+**Focus.** Opening a dialog moves focus into it, unless a field inside already took it
+with `autoFocus`. Tab and Shift+Tab wrap around inside the top dialog instead of wandering
+off to the page behind it, and when the dialog closes, focus goes back to whatever had it
+before — usually the button that opened it — so the keyboard is not dropped at the top of
+the page. Focus is *not* held on the panel when you press on the backdrop, because the
+blur is what commits an inline rename, and the click outside that follows then saves the
+form with the rename in it. Each dialog is announced as a modal dialog under its title.
+
+**One backdrop.** The scrim had been anything from 35% to 55% black, blurred or not,
+depending on who wrote the modal. It is now a single token, `--backdrop`: 40% black with a
+6px blur, which is the middle of what most modals already used, and 50% in dark mode,
+because there it darkens a page that is already dark and at 40% the panel's faint border
+was most of what set it apart.
+
+**It sits above the page, and below the popovers.** Dialogs render into `<body>` through a
+portal, at one z-index. A modal opened from inside the floating Corvus window used to be
+trapped in that window's stacking context, under anything the page drew above it. The
+tiers, lowest first: page chrome (toasts, the Corvus window, menus) up to 500; the focus
+timer panel at 2001 and the offline pill at 3000; dialogs at 3500; the focus timer's
+full-screen mode at 4000, since it is meant to cover everything; and from 6000 up the
+popovers — selects, date and time pickers, task and day menus — which open from inside
+dialogs and have to clear every one of them.
+
+**Questions are dialogs too.** *Disconnect this Google account?*, *Disconnect Canvas?* and
+the custom-list delete confirms are a `ConfirmDialog` rather than `window.confirm`, which
+cannot be styled, freezes the whole tab while it waits, and looks like a different app.
+For a destructive question focus starts on Cancel, so an Enter pressed out of habit does
+not delete anything.
 
 ### Today at a glance
 
@@ -3345,6 +3428,7 @@ src/
     ├── googleMirror.js     # Writing out to the luminaeVigila Google calendar
     ├── maps.js             # Classifying a location string
     ├── palette.js          # The hand-picked colour presets shared by the pickers
+    ├── dialogStack.js      # Which open dialog an Escape belongs to (Dialog is in components/)
     ├── accent.js           # The app accent colour: apply, read, save
     └── dbErrors.js         # Naming a Neon 402 as spent allowance
 ```

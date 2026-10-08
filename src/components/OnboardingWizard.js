@@ -20,6 +20,7 @@
 
 import { useState, useEffect } from 'react'
 import { X, ChevronRight, ChevronLeft, CalendarDays, BookOpen, Timer, Sparkles, Check } from 'lucide-react'
+import Dialog from '@/components/Dialog'
 
 const STORAGE_KEY = 'lv-onboarding-done'
 
@@ -78,44 +79,32 @@ export default function OnboardingWizard({ onClose, onOpenGoogleSettings, onOpen
     setStep(s => s - 1)
   }
 
-  // Keyboard: Escape = dismiss, ArrowRight = next, ArrowLeft = prev
+  // Keyboard: ArrowRight = next, ArrowLeft = prev. Escape is the dialog's, and
+  // dismisses the same way the close button does — the tour counts as seen.
   useEffect(() => {
     function onKey(e) {
-      if (e.key === 'Escape') dismiss()
       if (e.key === 'ArrowRight' && !isLast) setStep(s => s + 1)
       if (e.key === 'ArrowLeft'  && !isFirst) setStep(s => s - 1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, isFirst, isLast])
+  }, [isFirst, isLast])
 
   const StepContent = steps[step].content
 
   return (
-    /* Backdrop */
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 5000,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16,
-        animation: closing ? 'backdrop-out 0.22s ease forwards' : 'backdrop-in 0.22s ease',
+    <Dialog
+      label={steps[step].title}
+      closing={closing}
+      onClose={dismiss}
+      panelStyle={{
+        width: 'min(520px, 100%)',
+        maxHeight: 'min(640px, calc(100dvh - 32px))',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
       }}
-      onClick={e => { if (e.target === e.currentTarget) dismiss() }}
     >
-      {/* Modal card */}
-      <div
-        className="modal-surface"
-        style={{
-          width: 'min(520px, 100%)',
-          maxHeight: 'min(640px, calc(100dvh - 32px))',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          animation: closing ? 'modal-out 0.18s cubic-bezier(0.4,0,1,1) forwards' : undefined,
-        }}
-      >
         {/* Header */}
         <div style={{
           padding: '20px 24px 16px',
@@ -192,8 +181,7 @@ export default function OnboardingWizard({ onClose, onOpenGoogleSettings, onOpen
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }
 

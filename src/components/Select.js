@@ -42,7 +42,8 @@ export default function Select({ value, onChange, options, placeholder = 'Select
       if (menuRef.current?.contains(e.target)) return
       setOpen(false)
     }
-    function onKey(e) { if (e.key === 'Escape') setOpen(false) }
+    // preventDefault marks the key as used, so the dialog this sits in stays open.
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); setOpen(false) } }
     // capture scrolls from any ancestor so the menu tracks the trigger
     window.addEventListener('scroll', reposition, true)
     window.addEventListener('resize', reposition)

@@ -18,6 +18,7 @@
 import { useState } from 'react'
 import { X, Plus, Trash2, Pencil, Check } from 'lucide-react'
 import { COLOR_PRESETS as PRESETS } from '@/lib/palette'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 
 export default function CategoryManager({
   categories,
@@ -35,6 +36,7 @@ export default function CategoryManager({
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState('')
   const [confirmId, setConfirmId] = useState(null)
+  const [closing, handleClose] = useDialogExit(onClose)
 
   const nameTaken = (name, exceptId) => cats.some(
     c => c.id !== exceptId && c.label.toLowerCase() === name.trim().toLowerCase()
@@ -79,14 +81,12 @@ export default function CategoryManager({
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-[60] p-4"
-         style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={onClose}>
-      <div className="modal-surface w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+    <Dialog label={title} closing={closing} onClose={handleClose}
+            className="w-full max-w-sm overflow-hidden">
 
         <div className="modal-header">
           <h2>{title}</h2>
-          <button onClick={onClose} aria-label="Close"
+          <button onClick={handleClose} aria-label="Close"
                   style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
             <X size={16} />
           </button>
@@ -124,6 +124,8 @@ export default function CategoryManager({
                         onBlur={commitEdit}
                         onKeyDown={e => {
                           if (e.key === 'Enter')  { e.preventDefault(); commitEdit() }
+                          // preventDefault also tells the dialog the key is spoken for:
+                          // Escape cancels the rename and leaves the manager open.
                           if (e.key === 'Escape') { e.preventDefault(); setEditingId(null); setError('') }
                         }}
                         maxLength={32}
@@ -210,11 +212,10 @@ export default function CategoryManager({
           </div>
 
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button type="button" onClick={onClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
-            <button type="button" onClick={() => { onChange(cats); onClose() }} className="btn-primary" style={{ flex: 1 }}>Save</button>
+            <button type="button" onClick={handleClose} className="btn-ghost" style={{ flex: 1 }}>Cancel</button>
+            <button type="button" onClick={() => { onChange(cats); handleClose() }} className="btn-primary" style={{ flex: 1 }}>Save</button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

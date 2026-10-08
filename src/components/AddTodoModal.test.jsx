@@ -64,6 +64,33 @@ describe('AddTodoModal — Escape in the step field', () => {
     expect(stepField().value).toBe('')
   })
 
+  /* The two tests above passed while the bug was live. The field stopped the event's
+     propagation, which in a test — React mounted in a div — kept it from the modal's
+     listener on `document`. In the app React listens on `document` itself, the same
+     node, so the modal still heard it and the form closed. The fix doesn't depend on
+     where React is mounted: the field marks the key as used, and the dialog stack
+     skips an Escape that is. So this checks the event does travel all the way up,
+     marked, and the form stays open even so. */
+  it('keeps the form open by marking the key used, not by stopping it', async () => {
+    const user = userEvent.setup()
+    const { onClose } = renderModal()
+    const seen = []
+    const spy = e => { if (e.key === 'Escape') seen.push(e.defaultPrevented) }
+    window.addEventListener('keydown', spy)
+
+    try {
+      await user.type(stepField(), 'Find three sources')
+      await user.keyboard('{Escape}')
+      await new Promise(r => setTimeout(r, 220))
+    } finally {
+      window.removeEventListener('keydown', spy)
+    }
+
+    expect(seen).toEqual([true])
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByText('Find three sources')).toBeTruthy()
+  })
+
   // Nothing typed, nothing to lose — Escape still means what it means everywhere else.
   it('still closes the modal when the field is empty', async () => {
     const user = userEvent.setup()

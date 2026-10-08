@@ -277,6 +277,9 @@ export default function TimePicker({ value, onChange }) {
   // re-subscribing on every keystroke.
   const onPopupKey = useEffectEvent((e) => {
     if (e.key === 'Escape') {
+      // A digit field already used this Escape to cancel its typing; that is all
+      // it should do. (preventDefault, here and there, also keeps the dialog open.)
+      if (e.defaultPrevented) return
       e.preventDefault()
       if (typing) cancelTyping(true)
       else setOpen(false)
@@ -527,7 +530,7 @@ export default function TimePicker({ value, onChange }) {
                      onBlur={() => cancelTyping()}
                      onKeyDown={e => {
                        if (e.key === 'Enter')  { e.preventDefault(); cancelTyping(); setMode('minute') }
-                       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelTyping(true) }
+                       if (e.key === 'Escape') { e.preventDefault(); cancelTyping(true) }
                        if (e.key === 'Tab')    { cancelTyping(); setMode('minute') }
                      }}
                      style={digitInput} />
@@ -551,7 +554,7 @@ export default function TimePicker({ value, onChange }) {
                      onBlur={() => cancelTyping()}
                      onKeyDown={e => {
                        if (e.key === 'Enter')  { e.preventDefault(); cancelTyping(); setOpen(false) }
-                       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelTyping(true) }
+                       if (e.key === 'Escape') { e.preventDefault(); cancelTyping(true) }
                      }}
                      style={digitInput} />
             ) : (
