@@ -2519,17 +2519,30 @@ its code, and the planner opens from a cold start with no connection at all.
 - **Pages are network first.** A page load goes to the network and waits up to four
   seconds; when that fails or stalls, it gets the last copy saved on this device. Four
   seconds is long enough for a slow connection that works to still get fresh HTML, and short
-  enough that one bar of signal does not mean a blank screen. If the timeout answered, the
-  late response is still saved for next time; if there is nothing saved, the slow answer is
-  waited for rather than replaced with an error. A 5xx is treated as the server failing, so
-  the saved copy wins over it.
+  enough that one bar of signal does not mean a blank screen. If there is nothing saved, the
+  slow answer is waited for rather than replaced with an error. A 5xx is treated as the
+  server failing, so the saved copy wins over it.
+- **A page is saved only once its code is.** A fresh copy (the page that was shown, or one
+  that arrived after the timeout had already answered) replaces the saved one only after
+  every `/_next/static` file it names is in the cache. If any of them cannot be fetched, the
+  old copy stays, and all of its files are already there. It used to save the HTML the
+  moment it arrived. A late arrival is usually a new deploy, and nothing else fetches its
+  files: the page on screen is the older saved one, which only ever asks for its own code.
+  The next launch with no signal then opened the new HTML with none of its scripts, as
+  static markup with none of your data on it, in place of a copy that had worked. The same
+  happened, in a narrower window, when the signal went while a fresh page was still
+  loading its chunks. The split chunks a page imports only later are named in no HTML, so a
+  late copy cannot bring them along. One that has not changed since the last build keeps
+  its content-hashed name and is already saved. One that has changed is saved the first
+  time the new page is opened with a connection.
 - **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
   open from the saved `/`. Those flags are read on the client, and Next takes the URL from
   the address bar rather than from the HTML, so one copy serves every query.
 - **`/`, `/today` and `/share` are saved at install**, with every `/_next/static` file they
-  name. They are the three places the OS launches the app into directly — the icon; the
-  Today shortcut and the daily push; the share sheet and the New note shortcut — so they
-  open offline even on a device that has never visited them.
+  name. The same rule applies: a page whose files did not all arrive is left out, and the
+  previous build's copy goes on serving. They are the three places the OS launches the app
+  into directly — the icon; the Today shortcut and the daily push; the share sheet and the
+  New note shortcut — so they open offline even on a device that has never visited them.
 - **A page never opened on this device** gets a small *You're offline* page with *Try
   again*, and *Open the planner* when the planner is saved. Not the planner itself, served
   at the wrong address: that would look like it worked while quietly dropping whatever the

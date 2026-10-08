@@ -6,7 +6,8 @@
 // phone opened with no signal showed the browser's dinosaur — even though every task,
 // event and note was sitting in localStorage the whole time. So:
 //
-//   • page loads go to the network first and fall back to the last copy saved here;
+//   • page loads go to the network first and fall back to the last copy saved here —
+//     and a copy is only saved once the build files it names are (see savePage);
 //   • `/_next/static/*` files are content-hashed and never change, so they are served
 //     straight from the cache once saved — including the ones a first visit loaded
 //     before this worker took over, which the page hands over in a message;
@@ -138,12 +139,12 @@ async function respondToNavigation(event, url) {
   const key = shellKey(url.pathname)
   const network = fetch(event.request)
   // Registered before anything else awaits the response, so the copy is taken
-  // before the browser starts reading the body — and kept even when the timeout
-  // has already answered with the saved page.
+  // before the browser starts reading the body. The same rule saves it whether it is
+  // the page served or one that arrives after the timeout answered with the saved
+  // copy: only once every build file it names is in the cache (see savePage).
   event.waitUntil(network.then(response => {
     if (!isCacheablePage(response)) return
-    const copy = response.clone()
-    return caches.open(SHELL_CACHE).then(cache => cache.put(key, copy))
+    return savePage(key, response.clone())
   }).catch(() => {}))
 
   const timer = delay(NAVIGATION_TIMEOUT_MS)
@@ -197,26 +198,44 @@ async function staleWhileRevalidate(event, request) {
 // ── Caches ───────────────────────────────────────────────────────────────────
 
 async function precache() {
-  const shell = await caches.open(SHELL_CACHE)
-  const store = await caches.open(STATIC_CACHE)
-  const claimed = new Set()
+  // Shared between the pages, so a file two of them name is fetched once.
+  const assets = new Map()
   // Each page carries on to its own files as soon as it arrives, so one page that
-  // stalls does not keep the others' code out of the cache.
+  // stalls does not keep the others out of the cache.
   await Promise.all(PRECACHE_PAGES.map(async path => {
-    let html
     try {
       const response = await fetch(absolute(path), { credentials: 'same-origin' })
-      if (!isCacheablePage(response)) return
-      html = await response.clone().text()
-      await shell.put(shellKey(path), response)
-    } catch { return }
-    // Everything the page loads up front. Chunks that are only imported later (the
-    // calendar, the notes editor, Corvus) are fetched by the planner itself once it
-    // is idle, which lands them here through cacheFirst.
-    const mine = [...staticAssetsIn(html)].filter(href => !claimed.has(href))
-    for (const href of mine) claimed.add(href)
-    await Promise.all(mine.map(href => precacheAsset(store, href)))
+      await savePage(shellKey(path), response, assets)
+    } catch {}
   }))
+}
+
+/**
+ * Save a page, but only once every `/_next/static` file it names is in the cache.
+ *
+ * A saved page is what the next offline launch runs, and HTML whose scripts are not
+ * saved runs as static markup with none of the user's data on it. Nothing else is
+ * sure to save a new page's files: when the timeout has already answered with the
+ * saved copy, the page on screen is the old one and only ever asks for its own code,
+ * and even a page that was served can lose the signal before it has loaded its
+ * chunks. So the files come first, and if any of them cannot be saved the page is
+ * not either — the copy already here, whose files are all here too, stays.
+ *
+ * "Names" is what the page loads up front. Chunks that are only imported later (the
+ * calendar, the notes editor, Corvus) appear in no HTML; the planner fetches them
+ * itself once it is idle, which lands them here through cacheFirst.
+ */
+async function savePage(key, response, assets = new Map()) {
+  if (!isCacheablePage(response)) return false
+  const html = await response.clone().text()
+  const store = await caches.open(STATIC_CACHE)
+  const saved = await Promise.all([...staticAssetsIn(html)].map(href => {
+    if (!assets.has(href)) assets.set(href, precacheAsset(store, href))
+    return assets.get(href)
+  }))
+  if (!saved.every(Boolean)) return false
+  await (await caches.open(SHELL_CACHE)).put(key, response)
+  return true
 }
 
 async function saveLoadedAssets(urls) {
@@ -233,16 +252,21 @@ async function saveLoadedAssets(urls) {
   await Promise.all([...wanted].map(href => precacheAsset(store, href)))
 }
 
+/** Put one build file in the current generation. True once it is there. */
 async function precacheAsset(store, href) {
   try {
     const hit = await findStatic(href)
     if (hit) {
       if (hit.cacheName !== STATIC_CACHE) await store.put(href, hit.response)
-      return
+      return true
     }
     const response = await fetch(href, { credentials: 'same-origin' })
-    if (isCacheableAsset(response)) await store.put(href, response)
-  } catch {}
+    if (!isCacheableAsset(response)) return false
+    await store.put(href, response)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** `/_next/static/...` URLs named in a page: script and stylesheet tags, preloads, fonts. */
