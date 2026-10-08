@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { moveId, neighbourId, applyOrder, sameOrder, nextSortOrder, reassignSortOrder } from './reorder'
+import { moveId, neighbourId, applyOrder, sameOrder, nextSortOrder, reassignSortOrder, reassignSortOrderInGroups } from './reorder'
 
 describe('moveId', () => {
   it('lands after the target when moving down', () => {
@@ -153,5 +153,62 @@ describe('reassignSortOrder', () => {
   it('carries the rest of the item through', () => {
     const a = { id: 'a', title: 'Essay', sortOrder: 1 }, b = { id: 'b', sortOrder: 0 }
     expect(reassignSortOrder([a, b])[0]).toEqual({ id: 'a', title: 'Essay', sortOrder: 0 })
+  })
+})
+
+describe('reassignSortOrderInGroups', () => {
+  const group = item => item.due ?? 'none'
+
+  /* The bug: the whole array went through reassignSortOrder, so unordered tasks under
+     other headings got fresh slots on every reorder and were stamped as edited — an
+     edit made to them on another device could then lose to the reorder. */
+  it('leaves tasks under other headings alone', () => {
+    const a  = { id: 'a',  due: 'today', sortOrder: 0 }
+    const b  = { id: 'b',  due: 'today', sortOrder: 1 }
+    const n1 = { id: 'n1', due: 'week',  sortOrder: null }
+    const n2 = { id: 'n2' }
+    const before = [a, b, n1, n2]
+    expect(reassignSortOrderInGroups(before, [b, a, n1, n2], group, before)).toEqual([
+      { id: 'b', due: 'today', sortOrder: 0 },
+      { id: 'a', due: 'today', sortOrder: 1 },
+    ])
+  })
+
+  // Moving a task up the single array passes other headings' tasks; their slots stay.
+  it('does not restamp tasks the move passed in the array', () => {
+    const t1 = { id: 't1', due: 'today', sortOrder: 0 }
+    const w1 = { id: 'w1', due: 'week',  sortOrder: 1 }
+    const w2 = { id: 'w2', due: 'week',  sortOrder: 2 }
+    const n  = { id: 'n',  due: 'today' }
+    const changed = reassignSortOrderInGroups([t1, w1, w2, n], [n, t1, w1, w2], group)
+    expect(changed).toEqual([
+      { id: 'n',  due: 'today', sortOrder: 0 },
+      { id: 't1', due: 'today', sortOrder: 3 },
+    ])
+  })
+
+  it('still keeps clear of values held by hidden tasks', () => {
+    const hidden = { id: 'h', due: 'today', sortOrder: 7, completed: true }
+    const a = { id: 'a', due: 'today', sortOrder: 2 }, n = { id: 'n', due: 'today' }
+    const changed = reassignSortOrderInGroups([a, n], [n, a], group, [a, hidden, n])
+    expect(changed).toEqual([
+      { id: 'n', due: 'today', sortOrder: 2 },
+      { id: 'a', due: 'today', sortOrder: 8 },
+    ])
+  })
+
+  it('returns nothing when no heading changed order', () => {
+    const a = { id: 'a', due: 'today', sortOrder: 0 }, n = { id: 'n', due: 'week' }
+    expect(reassignSortOrderInGroups([a, n], [a, n], group)).toEqual([])
+  })
+
+  // Never happens from one move, but two headings' fresh slots must not collide.
+  it('keeps fresh slots distinct across headings', () => {
+    const a = { id: 'a', due: 'today' }, b = { id: 'b', due: 'today' }
+    const c = { id: 'c', due: 'week' },  d = { id: 'd', due: 'week' }
+    const changed = reassignSortOrderInGroups([a, b, c, d], [b, a, d, c], group)
+    const slots = changed.map(t => t.sortOrder)
+    expect(new Set(slots).size).toBe(slots.length)
+    expect(changed.map(t => t.id)).toEqual(['b', 'a', 'd', 'c'])
   })
 })

@@ -113,3 +113,41 @@ export function reassignSortOrder(orderedVisible, allItems = orderedVisible) {
   })
   return changed
 }
+
+function groupRows(items, groupOf) {
+  const groups = new Map()
+  for (const item of items) {
+    const key = groupOf(item)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  }
+  return groups
+}
+
+/**
+ * reassignSortOrder for a list drawn under headings, run only on the headings whose
+ * order actually changed between `before` and `after`.
+ *
+ * The task list is one array drawn under date headings, and a move only ever happens
+ * among the tasks under one of them. Running reassignSortOrder over the whole array
+ * dealt slots to the other headings' tasks too: an unordered task under another
+ * heading got a fresh slot, and so did any task whose place in the single array
+ * shifted because the moved one passed it. Nothing changed on screen for them — a
+ * heading draws its own tasks, so where they sit relative to another heading's is
+ * invisible — but each came back as changed, was stamped as edited, and so could
+ * overwrite an edit made to it on another device.
+ *
+ * A heading's tasks only ever compare with each other once drawn, so trading slots
+ * among them alone keeps every heading's order intact. `allItems` still bounds the
+ * fresh slots, so none can land on a value a hidden or other-heading task holds.
+ */
+export function reassignSortOrderInGroups(before, after, groupOf, allItems = after, getId = i => i.id) {
+  const was = groupRows(before, groupOf)
+  const changed = []
+  for (const [key, rows] of groupRows(after, groupOf)) {
+    if (sameOrder(rows, was.get(key) ?? [], getId)) continue
+    // A second heading's fresh slots must start above the first one's.
+    changed.push(...reassignSortOrder(rows, [...allItems, ...changed]))
+  }
+  return changed
+}
