@@ -40,6 +40,7 @@ import { reminderLabelForMs }   from '@/lib/reminders'
 import { classIdFromCategoryId } from '@/lib/classCategories'
 import { getExceptions }         from '@/lib/classInstances'
 import { classLinksFor, canonicalClassId, isLinkedSection, sectionIds } from '@/lib/classLinks'
+import { floatingToMs }          from '@/lib/zonedTime'
 
 const DAY  = 24 * 60 * 60_000
 const WEEK = 7 * DAY
@@ -166,8 +167,9 @@ export function effectiveReminders(item, rules, kind = 'tasks') {
  * inheritance the calendar does when it paints the block. An exam with no time to
  * inherit either is skipped rather than guessed at.
  *
- * Local-time ISO with no `Z`, matching what the modals store and what
- * `reminderFireTime` parses: an exam happens at 9am where you are.
+ * Local-time ISO with no `Z`, matching what the modals store and what `fireTimeFor`
+ * reads: an exam happens at 9am where you are. Turning that into an instant needs to
+ * know where "where you are" is, which is `fireTimeFor`'s job, not this one's.
  */
 export function examOccurrences(cls) {
   if (!cls?.id || cls.enabled === false || cls.deletedAt) return []
@@ -202,22 +204,36 @@ export function classReminderKey(kind, id, ms, at) {
 }
 
 /**
- * Fire time for a class-derived reminder, or null.
+ * Fire time for a reminder, as epoch ms, or null.
  *
  * Shared with the push cron's own item-level reminders (the `itemCandidates`
  * loop in src/app/api/push/reminders/route.js) rather than mirrored, so the two
  * cannot drift apart: an absolute reminder ignores the offset, a relative one
  * counts back from the item's own time.
+ *
+ * ## Whose 9am
+ *
+ * Both `reminder.at` and `dueIso` are floating local times — `2026-10-08T09:00:00`,
+ * no zone — because that is what the modals store. In the browser, `new Date()` reads
+ * them in the browser's own zone, which is the right one, so the client passes no
+ * `timeZone` and gets exactly that.
+ *
+ * The cron runs in UTC, where the same `new Date()` means 9am *UTC*. That once pushed a
+ * New York student's 9:00 reminder at 4:45 in the morning. So the server passes the
+ * reader's zone (see lib/zonedTime's `resolveUserZone`) and the digits are read on
+ * their clock instead. Values that already carry a `Z` or an offset — a Canvas
+ * `dueAt` — are instants and read the same either way.
+ *
+ * @param {object} reminder `{ ms, label }` or `{ at, label, ms: 0 }`.
+ * @param {string|null} dueIso The item's own floating time.
+ * @param {{timeZone?: string|{utcOffsetMinutes:number}}} [opts]
  */
-export function fireTimeFor(reminder, dueIso) {
+export function fireTimeFor(reminder, dueIso, { timeZone } = {}) {
   if (!reminder) return null
-  if (reminder.at) {
-    const t = new Date(reminder.at).getTime()
-    return Number.isNaN(t) ? null : t
-  }
+  if (reminder.at) return floatingToMs(reminder.at, timeZone)
   if (!dueIso || typeof reminder.ms !== 'number') return null
-  const due = new Date(dueIso).getTime()
-  return Number.isNaN(due) ? null : due - reminder.ms
+  const due = floatingToMs(dueIso, timeZone)
+  return due === null ? null : due - reminder.ms
 }
 
 /** A task is due at midnight on its date — the same convention the cron uses. */
@@ -237,12 +253,16 @@ export function todoDueIso(todo) {
  * @param {object[]} todos       Tasks. Completed and deleted ones are skipped.
  * @param {object[]} assignments Canvas assignments (client only — the server never
  *                               stores them). Matched by the class's `canvasCourseId`.
+ * @param {string|{utcOffsetMinutes:number}} [timeZone] Whose wall clock the floating
+ *                               due dates and exam times are on. The cron passes the
+ *                               user's; the browser passes none and reads its own —
+ *                               see `fireTimeFor`.
  *
  * Linked sections are resolved throughout: a rule set on the lecture covers the lab's
  * tasks, the lab's Canvas course and the lab's exams, because they are one class. Only
  * the parent carries rules (see `classRulesById`), so nothing fires twice.
  */
-export function classReminderCandidates({ classes = [], todos = [], assignments = [] } = {}) {
+export function classReminderCandidates({ classes = [], todos = [], assignments = [], timeZone } = {}) {
   const rulesById = classRulesById(classes)
   if (rulesById.size === 0) return []
 
@@ -261,7 +281,7 @@ export function classReminderCandidates({ classes = [], todos = [], assignments 
     if (!dueIso) continue
     const className = byId.get(classId)?.courseName || 'Class'
     for (const rule of rules.tasks) {
-      const at = fireTimeFor(rule, dueIso)
+      const at = fireTimeFor(rule, dueIso, { timeZone })
       if (at == null) continue
       out.push({
         key:   classReminderKey('td', td.id, rule.ms, at),
@@ -292,7 +312,7 @@ export function classReminderCandidates({ classes = [], todos = [], assignments 
       if (!match?.rules.tasks.length) continue
       const className = byId.get(match.classId)?.courseName || a.courseName || 'Class'
       for (const rule of match.rules.tasks) {
-        const at = fireTimeFor(rule, a.dueAt)
+        const at = fireTimeFor(rule, a.dueAt, { timeZone })
         if (at == null) continue
         out.push({
           key:   classReminderKey('cv', a.id, rule.ms, at),
@@ -310,7 +330,7 @@ export function classReminderCandidates({ classes = [], todos = [], assignments 
     for (const sectionId of sectionIds(links, classId)) {
       for (const exam of examOccurrences(byId.get(sectionId))) {
         for (const rule of rules.exams) {
-          const at = fireTimeFor(rule, exam.startIso)
+          const at = fireTimeFor(rule, exam.startIso, { timeZone })
           if (at == null) continue
           out.push({
             // Keyed on the *section* the exam sits on, not on the merged class: two

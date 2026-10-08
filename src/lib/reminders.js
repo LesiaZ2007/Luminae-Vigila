@@ -1,7 +1,8 @@
 /**
  * Reminder objects — one definition of the shape, shared by everything that makes one.
  *
- * Two forms, both understood by `reminderFireTime()` in the push cron:
+ * Two forms, both understood by `fireTimeFor()` in lib/classReminders, which the push
+ * cron uses for every reminder it sends:
  *
  *   { ms, label }            relative — fires `ms` before the item's own time
  *                            (an event's `start`, a task's `dueDate` at midnight)
@@ -101,9 +102,11 @@ export function buildReminder({ minutesBefore, at, isTask = false } = {}) {
 /**
  * Serialise a Date as a local-time ISO string with no timezone suffix.
  *
- * Deliberately not `toISOString()`, which converts to UTC: the cron parses `at`
- * with `new Date(...)`, so a Z-suffixed value would fire at the wrong wall-clock
- * time for anyone not on UTC. This matches what the modals store.
+ * Deliberately not `toISOString()`, which converts to UTC: `at` is a wall-clock time,
+ * the same floating shape the modals store and the labels describe. The browser
+ * reads it on its own clock, and the push cron reads it on the reader's (their
+ * subscription's recorded zone — see lib/zonedTime), so both fire it at the 8am the
+ * person meant rather than 8am UTC.
  */
 function toLocalIso(d) {
   const p = n => String(n).padStart(2, '0')
