@@ -1600,7 +1600,7 @@ API there is — about 197 MB installed — and every route that touched Google 
 the same google-auth-library client, so sign-in, token refresh and the health check are
 unchanged; the one call outside Calendar, reading your email after sign-in, is a plain
 authorised request to Google's userinfo endpoint. Each Google route now loads about
-0.55 MB, and the server build shrank from about 82 MB to 16 MB. Current releases of the
+0.55 MB, and the whole server build is about 65 MB smaller. Current releases of the
 package require Node.js 22 or newer, so the Vercel project has to build and run on 22.x
 or later.
 
