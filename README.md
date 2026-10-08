@@ -2579,14 +2579,22 @@ depending on who wrote the modal. It is now a single token, `--backdrop`: 40% bl
 because there it darkens a page that is already dark and at 40% the panel's faint border
 was most of what set it apart.
 
-**It sits above the page, and below the popovers.** Dialogs render into `<body>` through a
-portal, at one z-index. A modal opened from inside the floating Corvus window used to be
-trapped in that window's stacking context, under anything the page drew above it. The
-tiers, lowest first: page chrome (toasts, the Corvus window, menus) up to 500; the focus
-timer panel at 2001 and the offline pill at 3000; dialogs at 3500; the focus timer's
-full-screen mode at 4000, since it is meant to cover everything; and from 6000 up the
-popovers — selects, date and time pickers, task and day menus — which open from inside
-dialogs and have to clear every one of them.
+**It sits above the page, below the toasts and the popovers.** Dialogs render into
+`<body>` through a portal, at one z-index. A modal opened from inside the floating Corvus
+window used to be trapped in that window's stacking context, under anything the page drew
+above it. The tiers, lowest first: page chrome (the Corvus window, menus) up to 500; the
+focus timer panel at 2001 and the offline pill at 3000; dialogs at 3500; toasts at 3600;
+the focus timer's full-screen mode at 4000, since it is meant to cover everything; and
+from 6000 up the popovers — selects, date and time pickers, task and day menus — which
+open from inside dialogs and have to clear every one of them.
+
+Toasts sit just above dialogs because so many are raised while one is open. Marking a
+class period as an exam announces it as the study-plan dialog opens; *Sync now* in the
+Canvas settings reports its result, or an expired token, with the settings still up; and
+a reminder can come due over any form. Left at the page-chrome tier, every one of those
+would be drawn under the blurred scrim, unreadable and out of reach of a click — and a
+reminder toast is only ever shown once, so anyone without OS notifications turned on would
+simply miss it.
 
 **Questions are dialogs too.** *Disconnect this Google account?*, *Disconnect Canvas?* and
 the custom-list delete confirms are a `ConfirmDialog` rather than `window.confirm`, which

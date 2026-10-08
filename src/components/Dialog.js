@@ -28,9 +28,10 @@
  *    usually — so a keyboard user is not dropped at the top of the page.
  *
  * Stacking tiers (z-index, see globals.css `--z-dialog`):
- *    ≤ 500   page chrome — toasts, the floating Corvus panel, menus
+ *    ≤ 500   page chrome — the floating Corvus panel, menus
  *    2001    focus timer panel ·  3000  offline / sync pill
  *    3500    dialogs (this)
+ *    3600    toasts — above dialogs, so one raised while a dialog is open is seen
  *    4000    focus timer full-screen — it covers everything, dialogs included
  *    6000+   popovers: selects, date and time pickers, task and day menus. These are
  *            opened *from* dialogs, so they must sit above every one of them.

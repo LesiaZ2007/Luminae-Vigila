@@ -44,6 +44,7 @@
   --backdrop:      rgba(0, 0, 0, 0.4);
   --backdrop-blur: 6px;
   --z-dialog:      3500;
+  --z-toast:       3600;
 }
 
 /* ── Accent themes — light mode ── */
@@ -302,9 +303,11 @@ select option {
    separated it from what was behind.
 
    Stacking, lowest first:
-     ≤ 500  page chrome (toasts, floating Corvus, menus)
+     ≤ 500  page chrome (floating Corvus, menus)
      2001   focus timer panel · 3000 offline pill
      3500   dialogs (--z-dialog)
+     3600   toasts (--z-toast) — a toast raised while a dialog is open
+            (a Canvas sync result, a reminder) has to be seen over it
      4000   focus timer full-screen
      6000+  popovers — selects, date/time pickers, task and day menus. They
             open from inside dialogs, so they have to clear every one.
