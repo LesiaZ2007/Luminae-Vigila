@@ -2543,6 +2543,7 @@ its code, and the planner opens from a cold start with no connection at all.
   previous build's copy goes on serving. They are the three places the OS launches the app
   into directly — the icon; the Today shortcut and the daily push; the share sheet and the
   New note shortcut — so they open offline even on a device that has never visited them.
+  After a sign-out they are saved again (see below).
 - **A page never opened on this device** gets a small *You're offline* page with *Try
   again*, and *Open the planner* when the planner is saved. Not the planner itself, served
   at the wrong address: that would look like it worked while quietly dropping whatever the
@@ -2596,7 +2597,12 @@ so registration no longer waits for one. Push subscription sync still does.
 
 **Signing out drops the saved pages.** They were rendered for the signed-in session, so both
 sign-out buttons tell the worker to delete every `lv-shell-*` cache on the way out. The
-code caches stay; they are the same for everyone.
+code caches stay; they are the same for everyone. That also deletes `/today` and `/share`,
+which the share sheet, the Today shortcut and the daily push open directly. So the launch
+pages are saved again, signed out, along with the first page that loads after the
+sign-out, which is the `/login` it redirects to. They are not saved straight away. The
+message goes out just before the sign-out request, while the session cookie is still set,
+and pages fetched at that moment would come back signed in.
 
 **Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
 be asked once, at mount. An app opened with no connection then stayed signed out — and

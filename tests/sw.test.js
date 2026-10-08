@@ -715,6 +715,45 @@ describe('clear-shell', () => {
     expect(await caches.keys()).toEqual([`lv-static-${V3}`])
   })
 
+  // The share sheet, the Today shortcut and the daily push open these directly, so a
+  // sign-out must not leave them unsaved until the next deploy.
+  it('saves the launch pages again with the first page that loads after it', async () => {
+    const caches = new FakeCacheStorage()
+    for (const path of ['/', '/today', '/share']) await caches.seed(`lv-shell-${V3}`, path, `signed in ${path}`)
+    const sw = loadWorker({ caches })
+    onlineSite(sw)
+    sw.fetch.route('/login', page('sign in'))
+
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    // Not straight away: the message goes out before the sign-out request, so the
+    // session cookie is still there and the pages would come back signed in.
+    expect(sw.fetch).not.toHaveBeenCalled()
+    expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual([])
+
+    // The /login the sign-out redirects to; the cookie is gone by then.
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
+    expect(await sw.caches.text(`lv-shell-${V3}`, '/today')).toBe(TODAY_HTML)
+    expect(sw.caches.paths(`lv-static-${V3}`)).toEqual(expect.arrayContaining(PLANNER_ASSETS))
+
+    // Once: the load after that is an ordinary one.
+    sw.fetch.mockClear()
+    await sw.navigate('/login').settled()
+    expect(sw.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for a page that actually loads before saving them again', async () => {
+    const sw = loadWorker()
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual([])
+
+    onlineSite(sw)
+    sw.fetch.route('/login', page('sign in'))
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
+  })
+
   it('ignores other messages', async () => {
     const caches = new FakeCacheStorage()
     await caches.seed(`lv-shell-${V3}`, '/', 'planner')

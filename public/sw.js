@@ -41,15 +41,20 @@ const GENERATIONS_KEPT = 2
 // screen blank.
 const NAVIGATION_TIMEOUT_MS = 4000
 
-// Saved at install so they open offline even if they were never visited: the planner,
-// plus the two other places the OS can launch the app into directly — the Today
-// shortcut and push, and the share target / New note shortcut.
+// Saved at install, and again after a sign-out clears the saved pages, so they open
+// offline even if they were never visited: the planner, plus the two other places the
+// OS can launch the app into directly — the Today shortcut and push, and the share
+// target / New note shortcut.
 const PRECACHE_PAGES = ['/', '/today', '/share']
 // Install waits on the precache, and a stalled request must not hold the new worker
 // (and with it every fix in the deploy) hostage. Whatever finished by then is kept.
 const PRECACHE_BUDGET_MS = 30000
 
 const PUBLIC_ASSET = /\.(?:png|jpe?g|gif|webp|avif|svg|ico|webmanifest|woff2?|ttf|otf)$/i
+
+// Set by clear-shell to the clearing in progress, and taken by the first page that
+// loads after it, which saves the launch pages again (see respondToNavigation).
+let resaveAfterSignOut = null
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -77,8 +82,16 @@ self.addEventListener('message', event => {
   const data = event.data || {}
   // Sent by the sign-out buttons: a saved page has the signed-in state rendered into
   // it, and it should not outlive the session it was rendered for.
+  //
+  // That takes /today and /share with it, which the OS opens directly and which must
+  // work offline, so they are saved again — but not yet. The message goes out just
+  // before the sign-out request, while the session cookie is still there, and pages
+  // fetched now would come back signed in. The first page that loads after this is
+  // the /login the sign-out redirects to, and by then the cookie is gone.
   if (data.type === 'clear-shell') {
-    event.waitUntil(clearShell().catch(() => {}))
+    const cleared = clearShell().catch(() => {})
+    resaveAfterSignOut = cleared
+    event.waitUntil(cleared)
   }
   // Sent by the page with the build files it loaded before this worker controlled it.
   // On a first visit that is the whole initial load and usually the idle prefetch too —
@@ -144,7 +157,13 @@ async function respondToNavigation(event, url) {
   // copy: only once every build file it names is in the cache (see savePage).
   event.waitUntil(network.then(response => {
     if (!isCacheablePage(response)) return
-    return savePage(key, response.clone())
+    const copy = response.clone()
+    const cleared = resaveAfterSignOut
+    if (!cleared) return savePage(key, copy)
+    // The first page to load since a sign-out: the session cookie is gone now, so
+    // the launch pages clear-shell dropped can be saved again, signed out.
+    resaveAfterSignOut = null
+    return cleared.then(() => Promise.all([savePage(key, copy), precache()]))
   }).catch(() => {}))
 
   const timer = delay(NAVIGATION_TIMEOUT_MS)
