@@ -618,11 +618,49 @@ same colours as everywhere else.
 
 Any task takes up to twenty subtasks, added in the Add/Edit modal and checked off
 individually. A progress chip on the row shows `2/5 steps`; clicking it expands the
-checklist inline.
+checklist inline. That works from every view now: the mobile layout's Done list draws
+its rows from a separate copy of the list, and that copy never wired the step
+checkboxes up, so they took the click and changed nothing.
 
 Grab the grip handle — it appears on hover, desktop only — to drag tasks into any
 order. Order persists in a `sortOrder` field and survives refreshes and sync; tasks
-without one fall back to date sorting.
+without one fall back to date sorting. A task moves among the tasks under its own
+heading: the order is one list drawn under the date headings, so a move across a
+heading would change the stored order and nothing you could see.
+
+The grip is a real button, so the keyboard reorders too: Tab to it and press `↑` or `↓`
+to move the task one place, saved straight away, with focus staying on the task you
+moved. It shows itself on keyboard focus the way it does on hover. The row itself takes
+focus as well, and Enter or Space opens the editor the way a click does — before, the
+only way into a task was the mouse.
+
+Letting go anywhere inside the list drops the task where the preview showed it, the gap
+between two rows and the headings included; letting go outside the list, or pressing
+Escape, puts it back. Both used to go wrong in the same way. Nothing listened for the end
+of a drag, only for a drop on another row, so a drag that finished anywhere else never
+cleared: the row stayed dimmed, and the list went on drawing the snapshot it took when
+the drag began, so new tasks, ticks and anything synced in from another device stopped
+appearing until some later drag happened to finish on a row. Pressing the grip without
+dragging dimmed the row the same way, and Firefox would not start a drag at all, because
+the drag carried no data.
+
+The list you drag is the filtered one — Upcoming hides finished tasks, the category chips
+hide whole categories — and a drop used to renumber only the visible tasks 0, 1, 2…, over
+values the hidden ones were already using. Two tasks with the same `sortOrder` have no
+order between them, so un-hiding a category put its tasks back in arbitrary places among
+the ones you had just arranged. A drop now deals the visible tasks the values they already
+held, in their new order, so a hidden task keeps its value and with it its place; a task
+that never had one gets a fresh value above everything in use. Only the tasks that
+actually moved are saved. Stamping one that stayed put would let a reorder overwrite an
+unrelated edit made to it on another device.
+
+The task rows and the custom-list rows were copies of each other, which is how the same
+drag bug came to live in both. They now share the mechanics — the drag and keyboard
+reordering in [`lib/useDragReorder.js`](src/lib/useDragReorder.js) with its arithmetic in
+[`lib/reorder.js`](src/lib/reorder.js), the swipe in
+[`SwipeActions.js`](src/components/SwipeActions.js), and the checkbox, grip and action
+buttons in [`TaskRowParts.js`](src/components/TaskRowParts.js) — while each keeps its own
+look, so a fix to one is a fix to both.
 
 On touch, swipe right on a task to complete it and left to delete it, with a red trash
 background as feedback. The axis locks after 6px of movement so horizontal swipes do
@@ -711,6 +749,14 @@ list's tab shows a faded strikethrough with a check mark. Both clear if anything
 unchecked again. There is also drag-to-reorder by grip handle on desktop, the same
 swipe gestures as the main task list on touch, a per-list *Clear checked*, and a `×` on
 each tab that opens the same confirm dialog as the in-list delete. My Tasks has no `×`.
+
+Reordering is the task list's own, shared rather than copied: the grip moves an item with
+`↑` / `↓` as well as by drag, and a drag let go off a row puts the list back instead of
+freezing it on its drag-time snapshot, which here used to hide every item added or ticked
+until the next drag landed. A new item goes one past the highest `sortOrder` in the list
+rather than at the item count, because after a reorder and a couple of deletions the count
+can be a value a live item still holds, and the new item used to sort into the middle of
+the list instead of landing at the bottom.
 
 ---
 
@@ -1495,10 +1541,14 @@ in the evening was filed under tomorrow and stayed hidden through most of the ne
 
 **Corvus loads on demand.** It is around 33 KB of the bundle that most sessions never
 open, so it is split out with `next/dynamic` like the calendar and the notes editor, and
-fetched in the background once the planner is idle so opening it is still instant. The
-task and event editors are deliberately *not* split the same way: the service worker
-caches no code, so a chunk that was never fetched cannot load once the connection drops,
-and those editors have to open offline. Corvus needs the network to do anything at all.
+fetched in the background once the planner is idle so opening it is still instant — and
+so the service worker has it cached, like every other chunk the planner has fetched (see
+[Working offline](#working-offline)). The task and event editors are deliberately *not*
+split the same way: a chunk that was never fetched still cannot load once the connection
+drops, and those editors have to open offline even on a device that lost its connection
+before the idle fetch ran. Corvus needs the network to do anything at all. Splitting the
+two editors out was measured, too: it takes about 36 KB off a 1.1 MB uncompressed first
+load, which does not pay for that window.
 
 Chat history persists to `localStorage`, capped at 50 messages and pruned oldest-first,
 and recent history is sent as context on every request so Corvus remembers the session.
@@ -2306,6 +2356,14 @@ your default. Auto-start is off by default, so the timer pauses between phases a
 for you, and a lightbulb in the header toggles a short dismissible note explaining the
 flow.
 
+**Pause keeps your place.** Pausing at 18:42 and coming back resumes from 18:42; only Reset,
+Skip, picking another phase, or finishing one starts the clock from the top. That used to be
+broken: an effect re-synced the clock to the full phase length whenever the timer was not
+running, and pausing is exactly the moment it stops running, so Pause behaved like Reset.
+The time left is now only stored once a phase has started; before that it is derived from
+the phase length, which is also why a length changed in settings shows up on the idle clock
+straight away while a phase already under way keeps the length it started with.
+
 **Pick what you are focusing on** — a task, a Canvas assignment, or a calendar event.
 Completed sessions accumulate focus time on it. Exams and quizzes lead the list, because
 revising for a specific exam is the longest-running focus target a student has, followed
@@ -2502,6 +2560,103 @@ reopen the modal.
 
 Android reads `shortcuts` and `share_target` **at install time**, so remove and re-add the
 PWA after deploying to see new entries.
+
+### Working offline
+
+Every task, event and note already lived in `localStorage`, so the *data* was always there
+offline. The app itself was not. Every page is rendered per request — the root layout
+reads the session cookie — so the HTML is `no-store`, and the service worker cached
+nothing. Opened with no signal, a phone showed the browser's offline dinosaur in front of a
+perfectly good copy of everything. The worker in `public/sw.js` now keeps the app shell and
+its code, and the planner opens from a cold start with no connection at all.
+
+- **Pages are network first.** A page load goes to the network and waits up to four
+  seconds; when that fails or stalls, it gets the last copy saved on this device. Four
+  seconds is long enough for a slow connection that works to still get fresh HTML, and short
+  enough that one bar of signal does not mean a blank screen. If the timeout answered, the
+  late response is still saved for next time; if there is nothing saved, the slow answer is
+  waited for rather than replaced with an error. A 5xx is treated as the server failing, so
+  the saved copy wins over it.
+- **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
+  open from the saved `/`. Those flags are read on the client, and Next takes the URL from
+  the address bar rather than from the HTML, so one copy serves every query.
+- **`/`, `/today` and `/share` are saved at install**, with every `/_next/static` file they
+  name. They are the three places the OS launches the app into directly — the icon; the
+  Today shortcut and the daily push; the share sheet and the New note shortcut — so they
+  open offline even on a device that has never visited them.
+- **A page never opened on this device** gets a small *You're offline* page with *Try
+  again*, and *Open the planner* when the planner is saved. Not the planner itself, served
+  at the wrong address: that would look like it worked while quietly dropping whatever the
+  page was for.
+- **Build files are cache first.** Everything under `/_next/static/` is content-hashed and
+  never changes, so once saved it is served without asking the network. The code-split
+  chunks — the calendar, the notes editor, Corvus — are named by no page; the planner
+  fetches all three in the background once it is idle, and that is what lands them in the
+  cache. After one online visit, all of the planner loads offline.
+- **A first visit hands its files over.** The page is not controlled until the worker has
+  installed, so on a first visit the initial load and usually the idle fetch go straight to
+  the network, past the worker. A real-browser check caught exactly that: the calendar
+  chunk was missing from the cache and only opened offline because the browser's HTTP cache
+  still held it, which on a phone is not something to count on. So the page watches its
+  resource timings and posts every `/_next/static` file that bypassed the worker (a
+  `workerStart` of 0) once there is a controller, and the worker saves those too.
+- **Icons, the manifest and the favicon** come from the cache and are refreshed in the
+  background.
+- **Left alone:** `/api/*`, because it is live data and the app keeps its own copy;
+  RSC requests, because those are client-side navigations, and when one fails Next falls
+  back to a full page load, which the rules above then handle; anything that is not a GET;
+  and other origins.
+
+**Every deploy is a new worker.** `sw.js` is a static, hand-written file, so its bytes
+would be identical on every deploy and the browser would never install a new one — nor
+know the cached code was stale. So the page registers `/sw.js?v=<build time>-<commit>`,
+from the same `APP_BUILT_AT` and `APP_COMMIT_SHA` the build marker uses: a new script URL
+is a new worker. Every caller registers through one `registerServiceWorker()` in
+`src/lib/pushClient.js`, so two code paths can never register two URLs and swap the worker
+back and forth. The worker names its caches after its version (`lv-shell-…` for pages,
+`lv-static-…` for code), skips waiting, claims open tabs, and prunes to two generations:
+the running one and the newest other. The older one is kept for a tab still running the
+previous build, whose not-yet-opened chunks can then still load. A file found only in the
+older generation is copied forward when it is served, so pruning that generation later
+cannot lose a file the current build still uses. The running version is never pruned, even
+when it sorts older than another — which is what a rollback looks like. `sw.js` itself is
+served `no-cache, no-store` with the headers from Next's PWA guide, and registered with
+`updateViaCache: 'none'`, so an update check is never answered from an HTTP cache.
+
+**`next dev` turns all of it off.** There the version is `dev`, and the worker answers no
+requests and deletes any build caches it finds on activation: hot reload and a cached chunk
+do not mix.
+
+**Registered for everyone.** The worker used to be registered only for signed-in users,
+because all it did was push. Opening offline matters at least as much without an account,
+so registration no longer waits for one. Push subscription sync still does.
+
+**Signing out drops the saved pages.** They were rendered for the signed-in session, so both
+sign-out buttons tell the worker to delete every `lv-shell-*` cache on the way out. The
+code caches stay; they are the same for everyone.
+
+**Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
+be asked once, at mount. An app opened with no connection then stayed signed out — and
+unsynced — until a reload. It now asks again on reconnect and on returning to the tab, until
+the server has answered once; a 401 counts as an answer.
+
+**If a device gets stuck.** Open any page with `?reset-offline=1`. It unregisters the
+worker, deletes every `lv-*` cache — `localStorage`, where the data is, is not touched — and
+reloads without the flag, which registers a fresh worker. Pages are network first, so this
+reaches a live page whenever there is a connection. If a broken worker ever stopped even that
+from loading, the fallback is to deploy a `public/sw.js` that removes itself. The browser
+checks the registered script for changes on navigation, and every `?v=` serves the same file,
+so devices pick it up on their next load. Remove the `registerServiceWorker()` call in the
+same deploy, or the next page load registers it again:
+
+```js
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name.startsWith('lv-')) await caches.delete(name)
+  await self.registration.unregister()
+  for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url)
+})()))
+```
 
 ### Publishing to Google Play
 
@@ -2892,6 +3047,12 @@ next to it; component tests sit beside their component as `<Name>.test.jsx` and 
 jsdom with a `@vitest-environment jsdom` docblock, so the default environment stays `node`
 and the pure-logic suite does not pay for a DOM.
 
+The service worker is the exception, in `tests/sw.test.js`: `public/sw.js` is a plain
+script with nothing to import, so the test reads its text and runs it in a `node:vm`
+context whose `self`, `caches`, `fetch` and `clients` are fakes, then dispatches the events
+a browser would. Testing the real file rather than a copy of its logic is the point — a
+worker that is wrong fails on every device at once, and only on the next cold start.
+
 The suite runs with `TZ=America/New_York`, pinned in `vitest.config.js`, so
 timezone-sensitive logic is exercised deterministically rather than passing by accident on
 a UTC runner. That matters more than it sounds: a recurring theme in this codebase is
@@ -2934,33 +3095,43 @@ existing ones.
 npm run lint
 ```
 
-The React Compiler lint rules were adopted after most of this code was written, so there
-is a standing backlog. It went from 79 errors to 29 by fixing what were genuine defects,
-and from 29 errors and 12 warnings to 26 and 7 in a later cleanup pass. No file got worse
-in that pass; `page.js` went from 10 errors and 5 warnings to 9 and none.
+`npm run lint` is clean — no errors and no warnings — and is meant to stay that way, so a
+new problem shows up as the only line in the output instead of one more in a long list.
 
-The remaining ones are not believed to be bugs, and are left unsilenced rather than
-blanket-disabled, since a disable comment would make the count read clean without making
-the code better. Most are `react-hooks/set-state-in-effect`, and nearly all of those are
-"read `localStorage`, `navigator` or the DOM on mount, then `setState`". A lazy `useState`
-initializer would be the usual fix, but these are Client Components that Next.js still
-server-renders, so touching `localStorage` during the initializer throws on the server and
-mismatches on hydration. The effect is the correct pattern here; the rule is being
-conservative.
+The React Compiler lint rules were adopted after most of this code was written, and the
+backlog went from 79 errors to 29 by fixing genuine defects before the rest were cleared.
+Most of the rest were `react-hooks/set-state-in-effect`, and nearly all of those were
+"read `localStorage`, `navigator` or the DOM on mount, then `setState`" — one wasted render
+at best, and at worst a real bug: the focus timer's version of it made Pause act as Reset.
+They were cleared by fixing the pattern, not by silencing the rule:
 
-The exception is anything that renders nothing until it has mounted. The planner shell
-returns `null` until its `mounted` flag is set, so the server render and the first client
-render agree whatever its state holds, and it reads its stored collections in the
-initialiser (guarded, so the server's missing `localStorage` just means the default) —
-see [Where data lives](#where-data-lives). The settings menu, which only ever mounts
-inside that shell, does the same for the accent colour. The rest are TDZ and purity flags on deferred calls — functions referenced
-above their own declaration, safe as written but worth reordering if those files are
-refactored.
+- **Derive it.** State that is a function of other state is computed during render. The
+  deadline nudge, the weekly recap's numbers and the study-time list were all effects
+  copying a calculation into state.
+- **Read it in the initializer.** A lazy `useState` initializer can't touch `localStorage`
+  in a component that Next.js server-renders, because it throws on the server and
+  mismatches on hydration. But the planner renders nothing until it has mounted — `mounted`
+  is a `useSyncExternalStore` that is false on the server and during hydration — so every
+  component inside it only ever renders in a browser. The focus timer, GPA panel, offline
+  banner, recap and settings menu (for the accent colour) all read their saved state on
+  their first render. The planner's own initializers read its stored collections through
+  `readStored`, which is guarded so the server's missing `localStorage` just means the
+  default — see [Where data lives](#where-data-lives).
+- **Subscribe to it.** The window width is `useSyncExternalStore` over `resize`.
+- **Handle it in the event.** "Edit all in series" fills the form in its own click, rather
+  than in an effect watching the scope it sets.
+- **Effect events.** Listeners that need the latest props — Escape to close, the clock's
+  keyboard and outside-click handling, the timer's tick — use `useEffectEvent`, which
+  replaces both the stale-closure `exhaustive-deps` disables and refs assigned during render.
 
-The derived-state cases in that group have been converted individually. `TimePicker` in
-particular kept `hour`, `minute` and `period` in state and copied the `value` prop back
-into them through an effect, so the state was never the source of truth, only a lagging
-cache that disagreed with the prop for one render on every change.
+Eight suppressions remain, each on an effect that genuinely talks to something outside
+React, and each says why on the line above it: network loads whose only synchronous update
+is a loading flag or an in-flight marker, async loaders whose updates all land after an
+`await` (the rule cannot see through an async function), and taking the one-shot Web Share
+handoff out of `localStorage`. One `exhaustive-deps` disable keeps the recap re-reading
+`localStorage` when a focus session finishes — the version number it depends on is a signal,
+not an input. A suppression is a claim about one specific line, so each carries its reason;
+a blanket disable would make the count read clean without making the code better.
 
 ### Date and time pickers
 
@@ -3024,7 +3195,9 @@ docs/
 ├── NOTIFICATIONS.md        # Push setup, cron wiring, troubleshooting
 └── TWA-ANDROID-WIDGET.md   # Play Store / TWA notes
 public/
-└── sw.js                   # Service worker — push events and notification clicks
+└── sw.js                   # Service worker — offline pages and code cache, push, notification clicks
+tests/
+└── sw.test.js              # Runs the real sw.js against fake caches and fetch
 
 src/
 ├── app/

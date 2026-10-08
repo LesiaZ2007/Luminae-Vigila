@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useEffectEvent, useRef } from 'react'
 import LinkedNotes from '@/components/LinkedNotes'
 import { X, Link2, BookOpen, RefreshCw, Plus, Trash2, GripVertical } from 'lucide-react'
 import Select     from '@/components/Select'
@@ -88,8 +88,10 @@ export default function AddTodoModal({ events, canvasClasses = [], todoCategorie
     return true
   }
 
+  // Registered once; the effect event always reaches the current handleClose.
+  const onEscape = useEffectEvent(() => handleClose())
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
+    function onKey(e) { if (e.key === 'Escape') onEscape() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [])

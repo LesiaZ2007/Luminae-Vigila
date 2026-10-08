@@ -103,6 +103,7 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
     onSync?.()
   }, [loadAccounts, onSync])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- loadAccounts is async; every update in it lands after the request
   useEffect(() => { loadAccounts() }, [loadAccounts])
 
   /* ── Pull saved calendar choices down once the accounts are known ──
@@ -128,6 +129,7 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
       // null = pending, [] = loaded (empty), array = loaded
       if (calendars[acc.id] !== undefined) continue
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- null marks the fetch in flight, and is what stops a second one
       setCalendars(prev => ({ ...prev, [acc.id]: null })) // mark as loading
 
       fetch(`/api/google/calendars?accountId=${acc.id}`)

@@ -11,7 +11,7 @@
  * to say once Canvas is connected and the timer has been used.
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Timer } from 'lucide-react'
 import SessionHistory, { buildCourseOptions } from '@/components/SessionHistory'
 import { getCourseColor } from '@/lib/courseColors'
@@ -38,11 +38,7 @@ function fmtHours(sec) {
 export default function StudyTimeCard({ courseColors, studySessions, canvasAssignments = [], onTagSession }) {
   // Use prop when provided (synced state from page.js); fall back to localStorage
   // for backwards compat and for the case where the component is used standalone.
-  const [localSessions, setLocalSessions] = useState([])
-  useEffect(() => {
-    if (!studySessions) setLocalSessions(loadStudySessions())
-  }, [studySessions])
-  const sessions = studySessions ?? localSessions
+  const sessions = useMemo(() => studySessions ?? loadStudySessions(), [studySessions])
   const courseOptions = useMemo(() => buildCourseOptions(canvasAssignments), [canvasAssignments])
 
   const { thisWeek, lastWeekTotal, maxSec } = useMemo(() => {

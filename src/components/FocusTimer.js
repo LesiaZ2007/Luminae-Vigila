@@ -26,7 +26,7 @@
  *   onUpdateTodo, onUpdateCanvas, onSaveEvent, pushToast
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useEffectEvent, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Play, Pause, RotateCcw, SkipForward, X, Volume2, VolumeX, Sliders,
@@ -127,16 +127,22 @@ function saveStudySession(session) {
 }
 
 export default function FocusTimer({ open, onClose, isMobile, todos = [], canvasAssignments = [], events = [], studySessions, onTagSession, onUpdateTodo, onUpdateCanvas, onSaveEvent, onSessionComplete, pushToast, digest = null }) {
-  const [hydrated,   setHydrated]   = useState(false)
-  const [settings,   setSettings]   = useState(DEFAULTS)
-  const [taskId,     setTaskId]     = useState(null)
+  // Read once, on the first render. The planner renders nothing until it has
+  // mounted, so localStorage is always there by now — and reading it here rather
+  // than in an effect means the first frame already shows the saved durations.
+  const [saved]                    = useState(loadState)
+  const [settings,   setSettings]   = useState(saved.settings)
+  const [taskId,     setTaskId]     = useState(saved.taskId)
   // courseTag: null = None, or { courseId, courseName }
-  const [courseTag,  setCourseTag]  = useState(null)
+  const [courseTag,  setCourseTag]  = useState(saved.courseTag)
   const [phase,      setPhase]      = useState('focus')
   const [running,    setRunning]    = useState(false)
-  const [secondsLeft, setSecondsLeft] = useState(DEFAULTS.focusMin * 60)
-  const [sessionsToday, setSessionsToday] = useState(0)
-  const [focusSecondsToday, setFocusSecondsToday] = useState(0)
+  // Seconds left in a phase that has been started, whether running or paused.
+  // null = not started, so the clock shows the phase's full length — derived, so
+  // a duration changed in settings shows up at once without an effect to sync it.
+  const [remaining,  setRemaining]  = useState(null)
+  const [sessionsToday, setSessionsToday] = useState(saved.sessionsToday)
+  const [focusSecondsToday, setFocusSecondsToday] = useState(saved.focusSecondsToday)
   const [showSettings, setShowSettings] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [burst,      setBurst]      = useState(null)   // confetti { id, x, y }
@@ -151,46 +157,16 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     [settings],
   )
 
-  /* ── Hydrate once from localStorage ── */
-  useEffect(() => {
-    const s = loadState()
-    setSettings(s.settings)
-    setTaskId(s.taskId)
-    if (s.courseTag) setCourseTag(s.courseTag)
-    setSessionsToday(s.sessionsToday)
-    setFocusSecondsToday(s.focusSecondsToday)
-    setSecondsLeft(s.settings.focusMin * 60)
-    setHydrated(true)
-  }, [])
+  const secondsLeft = remaining ?? phaseDurMin(phase) * 60
 
-  /* ── Persist (after hydration only) ── */
+  /* ── Persist ── */
   useEffect(() => {
-    if (!hydrated) return
     try {
       localStorage.setItem('lv-focus', JSON.stringify({
         settings, taskId, courseTag, day: todayStr(), sessionsToday, focusSecondsToday,
       }))
     } catch {}
-  }, [hydrated, settings, taskId, courseTag, sessionsToday, focusSecondsToday])
-
-  /* ── If not running, keep the displayed time in sync with the phase length ── */
-  useEffect(() => {
-    if (!running) setSecondsLeft(phaseDurMin(phase) * 60)
-  }, [phase, settings, running, phaseDurMin])
-
-  /* ── Drift-free ticking ── */
-  useEffect(() => {
-    if (!running) return
-    endAtRef.current = Date.now() + secondsLeft * 1000
-    const tick = () => {
-      const remain = Math.max(0, Math.round((endAtRef.current - Date.now()) / 1000))
-      setSecondsLeft(remain)
-      if (remain <= 0) handleComplete()
-    }
-    const id = setInterval(tick, 250)
-    return () => clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running])
+  }, [settings, taskId, courseTag, sessionsToday, focusSecondsToday])
 
   /* ── Escape in full-screen: one layer at a time ──
      The settings card closes first, then full-screen. Listening on `document` and
@@ -266,13 +242,13 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       ? (linkedEvent ? { ...linkedEvent, focusSeconds: linkedEvent.extendedProps?.focusSeconds || 0 } : null)
       : (todos.find(t => t.id === taskId && !t.completed) || null)
 
-  function handleComplete() {
+  /** `endMs` is when the phase ran out, as the ticking effect observed it. */
+  function handleComplete(endMs) {
     setRunning(false)
     endAtRef.current = null
 
     if (phase === 'focus') {
       const elapsed = phaseDurMin('focus') * 60
-      const endMs   = Date.now()
       const newCount = sessionsToday + 1
       setSessionsToday(newCount)
       setFocusSecondsToday(s => s + elapsed)
@@ -350,13 +326,13 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       // Next phase: long break every N sessions, else short break
       const next = newCount % settings.longEvery === 0 ? 'long' : 'short'
       setPhase(next)
-      setSecondsLeft(phaseDurMin(next) * 60)
+      setRemaining(null)
       if (settings.autoStartNext) setTimeout(() => setRunning(true), 60)
     } else {
       playChime()
       notify('Break over', 'Back to focus.')
       setPhase('focus')
-      setSecondsLeft(phaseDurMin('focus') * 60)
+      setRemaining(null)
       if (settings.autoStartNext) setTimeout(() => setRunning(true), 60)
     }
   }
@@ -376,10 +352,32 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     } catch {}
   }
 
+  /* ── Drift-free ticking ──
+     Restarts only when `running` flips. The countdown starts from whatever the
+     clock showed at that moment, and completion runs the latest handleComplete —
+     both read through effect events, so neither has to be a dependency. */
+  const startingSeconds = useEffectEvent(() => secondsLeft)
+  const onTimeUp        = useEffectEvent(endMs => handleComplete(endMs))
+  useEffect(() => {
+    if (!running) return
+    endAtRef.current = Date.now() + startingSeconds() * 1000
+    let id
+    const tick = () => {
+      const now    = Date.now()
+      const remain = Math.max(0, Math.round((endAtRef.current - now) / 1000))
+      setRemaining(remain)
+      // Stop here rather than waiting for `running` to flip: a tick that lands
+      // before the re-render would otherwise complete the same phase twice.
+      if (remain <= 0) { clearInterval(id); onTimeUp(now) }
+    }
+    id = setInterval(tick, 250)
+    return () => clearInterval(id)
+  }, [running])
+
   function toggleRun() {
     if (running) {
       const remain = Math.max(0, Math.round(((endAtRef.current ?? Date.now()) - Date.now()) / 1000))
-      setSecondsLeft(remain)
+      setRemaining(remain)
       setRunning(false)
     } else {
       try {
@@ -394,7 +392,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
   function reset() {
     setRunning(false)
     endAtRef.current = null
-    setSecondsLeft(phaseDurMin(phase) * 60)
+    setRemaining(null)
   }
 
   function skipPhase() {
@@ -404,7 +402,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
       ? ((sessionsToday + 1) % settings.longEvery === 0 ? 'long' : 'short')
       : 'focus'
     setPhase(next)
-    setSecondsLeft(phaseDurMin(next) * 60)
+    setRemaining(null)
   }
 
   function selectPhase(p) {
@@ -412,7 +410,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     setRunning(false)
     endAtRef.current = null
     setPhase(p)
-    setSecondsLeft(phaseDurMin(p) * 60)
+    setRemaining(null)
   }
 
   // Build unique course list: Canvas courses + any manual classes from canvasAssignments.
@@ -582,7 +580,7 @@ export default function FocusTimer({ open, onClose, isMobile, todos = [], canvas
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: light ? 18 : 10 }}>
         <IconBtn title="Reset" onClick={reset} color={muted}><RotateCcw size={light ? 20 : 16} /></IconBtn>
-        <button onClick={toggleRun}
+        <button onClick={toggleRun} title={running ? 'Pause' : 'Start'}
           style={{
             width: light ? 72 : 56, height: light ? 72 : 56, borderRadius: '50%', border: 'none', cursor: 'pointer',
             background: accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
