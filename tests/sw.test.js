@@ -374,18 +374,34 @@ describe('a page copy replaces the saved one only once its build files are saved
     expect(await (await sw.get(OLD_CHUNK).responded).text()).toBe('old code')
   })
 
-  it('replaces it with a late page once that page’s files are saved', async () => {
+  // Even when everything the late page *names* could be fetched: its lazy chunks (the
+  // calendar, notes) are named nowhere in the HTML, and the old page that is running
+  // never asks for them, so swapping copies would leave the default tab unable to
+  // load offline.
+  it('never replaces it with a page that arrived after the timeout', async () => {
     const sw = await workingDevice()
     sw.fetch.route(NEW_CHUNK, asset('new code'))
     const late = await lateNavigation(sw)
     late.arrive()
     await late.event.settled()
-    expect(await sw.caches.text(`lv-static-${V3}`, NEW_CHUNK)).toBe('new code')
-    expect(await sw.caches.text(shell, '/')).toBe(NEW_HTML)
+    expect(await sw.caches.text(shell, '/')).toBe(OLD_HTML)
+    expect(sw.fetch).not.toHaveBeenCalledWith(abs(NEW_CHUNK), { credentials: 'same-origin' })
 
     sw.fetch.offline()
-    expect(await (await sw.navigate('/').responded).text()).toBe(NEW_HTML)
-    expect(await (await sw.get(NEW_CHUNK).responded).text()).toBe('new code')
+    expect(await (await sw.navigate('/').responded).text()).toBe(OLD_HTML)
+  })
+
+  it('saves a slow page when it was the one served, because nothing was saved', async () => {
+    vi.useFakeTimers()
+    const sw = loadWorker()
+    const slow = deferred()
+    sw.fetch.route('/', () => slow.promise).route(NEW_CHUNK, asset('new code'))
+    const event = sw.navigate('/')
+    await vi.advanceTimersByTimeAsync(4000)
+    slow.resolve(respond(NEW_HTML, { contentType: 'text/html' }))
+    expect(await (await event.responded).text()).toBe(NEW_HTML)
+    await event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(NEW_HTML)
   })
 
   it('saves a page it served only once the page’s files are in the cache', async () => {
@@ -740,6 +756,26 @@ describe('clear-shell', () => {
     sw.fetch.mockClear()
     await sw.navigate('/login').settled()
     expect(sw.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  // A signed-in load still downloading when Sign out was tapped must not be the one
+  // that saves the launch pages again: its request carried the session cookie.
+  it('is not taken by a page that was requested before the sign-out', async () => {
+    const sw = loadWorker()
+    onlineSite(sw)
+    const slow = deferred()
+    sw.fetch.route('/', () => slow.promise)
+    const before = sw.navigate('/')
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    slow.resolve(respond('signed in', { contentType: 'text/html' }))
+    await before.settled()
+    expect(sw.fetch).not.toHaveBeenCalledWith(abs('/today'), { credentials: 'same-origin' })
+
+    // The /login the sign-out redirects to takes it, and saves signed-out copies.
+    sw.fetch.route('/', page(PLANNER_HTML)).route('/login', page('sign in'))
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
+    expect(await sw.caches.text(`lv-shell-${V3}`, '/')).toBe(PLANNER_HTML)
   })
 
   it('waits for a page that actually loads before saving them again', async () => {

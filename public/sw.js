@@ -7,7 +7,8 @@
 // event and note was sitting in localStorage the whole time. So:
 //
 //   • page loads go to the network first and fall back to the last copy saved here —
-//     and a copy is only saved once the build files it names are (see savePage);
+//     and only the page actually shown is saved, once the build files it names are
+//     (see respondToNavigation and savePage);
 //   • `/_next/static/*` files are content-hashed and never change, so they are served
 //     straight from the cache once saved — including the ones a first visit loaded
 //     before this worker took over, which the page hands over in a message;
@@ -150,19 +151,37 @@ function isPublicAsset(url) {
  */
 async function respondToNavigation(event, url) {
   const key = shellKey(url.pathname)
+
+  /* Taken now, while the request is being made, not when its answer arrives: only a
+     page *requested* after a sign-out can be the one that saves the launch pages
+     again. A signed-in load still downloading when Sign out was tapped would
+     otherwise take the flag and re-save signed-in copies straight after the clear. */
+  const cleared = resaveAfterSignOut
+  resaveAfterSignOut = null
+
   const network = fetch(event.request)
-  // Registered before anything else awaits the response, so the copy is taken
-  // before the browser starts reading the body. The same rule saves it whether it is
-  // the page served or one that arrives after the timeout answered with the saved
-  // copy: only once every build file it names is in the cache (see savePage).
-  event.waitUntil(network.then(response => {
-    if (!isCacheablePage(response)) return
-    const copy = response.clone()
-    const cleared = resaveAfterSignOut
+  // The copy is taken the moment the response arrives, before the browser starts
+  // reading the body.
+  const copied = network.then(r => (isCacheablePage(r) ? r.clone() : null), () => null)
+
+  /* Only the page actually served is saved — never one that turned up after the
+     timeout had already answered with the saved copy. The running page is then the
+     old one: it only ever requests the old build's chunks, so the calendar and notes
+     chunks the late page needs (lazy-loaded, so named nowhere in its HTML) would
+     never be fetched, and a working offline copy would be swapped for one whose
+     default tab cannot load. The served page loads its own chunks, so they are saved
+     as it runs. */
+  let settle
+  const served = new Promise(resolve => { settle = resolve })
+  event.waitUntil(Promise.all([copied, served]).then(([copy, wasServed]) => {
+    if (!wasServed || !copy) {
+      // Not used — leave it for the next page that does load.
+      if (cleared && !resaveAfterSignOut) resaveAfterSignOut = cleared
+      return
+    }
     if (!cleared) return savePage(key, copy)
     // The first page to load since a sign-out: the session cookie is gone now, so
     // the launch pages clear-shell dropped can be saved again, signed out.
-    resaveAfterSignOut = null
     return cleared.then(() => Promise.all([savePage(key, copy), precache()]))
   }).catch(() => {}))
 
@@ -175,15 +194,16 @@ async function respondToNavigation(event, url) {
 
   // A 5xx is the server failing rather than the page not existing; the saved copy
   // is the better answer if there is one.
-  if (first.response && first.response.status < 500) return first.response
+  if (first.response && first.response.status < 500) { settle(true); return first.response }
 
   const saved = await matchShell(key)
-  if (saved) return saved
-  if (first.response) return first.response
+  if (saved) { settle(false); return saved }
+  if (first.response) { settle(true); return first.response }
   if (first.timedOut) {
     // Nothing saved to fall back on, so a slow answer is still better than none.
-    try { return await network } catch {}
+    try { const response = await network; settle(true); return response } catch {}
   }
+  settle(false)
   const plannerSaved = url.pathname !== '/' && Boolean(await matchShell(shellKey('/')))
   return offlinePage(plannerSaved)
 }

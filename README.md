@@ -2522,19 +2522,18 @@ its code, and the planner opens from a cold start with no connection at all.
   enough that one bar of signal does not mean a blank screen. If there is nothing saved, the
   slow answer is waited for rather than replaced with an error. A 5xx is treated as the
   server failing, so the saved copy wins over it.
-- **A page is saved only once its code is.** A fresh copy (the page that was shown, or one
-  that arrived after the timeout had already answered) replaces the saved one only after
-  every `/_next/static` file it names is in the cache. If any of them cannot be fetched, the
-  old copy stays, and all of its files are already there. It used to save the HTML the
-  moment it arrived. A late arrival is usually a new deploy, and nothing else fetches its
-  files: the page on screen is the older saved one, which only ever asks for its own code.
-  The next launch with no signal then opened the new HTML with none of its scripts, as
-  static markup with none of your data on it, in place of a copy that had worked. The same
-  happened, in a narrower window, when the signal went while a fresh page was still
-  loading its chunks. The split chunks a page imports only later are named in no HTML, so a
-  late copy cannot bring them along. One that has not changed since the last build keeps
-  its content-hashed name and is already saved. One that has changed is saved the first
-  time the new page is opened with a connection.
+- **Only the page that was shown is saved, and only once its code is.** It replaces the
+  saved copy after every `/_next/static` file it names is in the cache; if any of them
+  cannot be fetched, the old copy stays, and all of its files are already there. A page
+  that arrives *after* the timeout has already answered with the saved copy is not saved at
+  all. It used to be, and a late arrival is usually a new deploy: the page on screen is the
+  older saved one, which only ever asks for its own code, so nothing fetched the new page's
+  files. The next launch with no signal then opened the new HTML with none of its scripts —
+  static markup with none of your data on it — in place of a copy that had worked. Saving
+  only once the files a page *names* are cached is not enough on its own for a late page:
+  the calendar and notes chunks are imported later and named in no HTML, so the default tab
+  could still fail to load. The page that is shown loads all of those itself (see *Build
+  files are cache first*), which is why it is the only one worth keeping.
 - **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
   open from the saved `/`. Those flags are read on the client, and Next takes the URL from
   the address bar rather than from the HTML, so one copy serves every query.
@@ -2552,7 +2551,8 @@ its code, and the planner opens from a cold start with no connection at all.
   never changes, so once saved it is served without asking the network. The code-split
   chunks — the calendar, the notes editor, Corvus — are named by no page; the planner
   fetches all three in the background once it is idle, and that is what lands them in the
-  cache. After one online visit, all of the planner loads offline.
+  cache. After one online visit that stays open until the planner is idle, all of the
+  planner loads offline.
 - **A first visit hands its files over.** The page is not controlled until the worker has
   installed, so on a first visit the initial load and usually the idle fetch go straight to
   the network, past the worker. A real-browser check caught exactly that: the calendar
@@ -2602,7 +2602,10 @@ which the share sheet, the Today shortcut and the daily push open directly. So t
 pages are saved again, signed out, along with the first page that loads after the
 sign-out, which is the `/login` it redirects to. They are not saved straight away. The
 message goes out just before the sign-out request, while the session cookie is still set,
-and pages fetched at that moment would come back signed in.
+and pages fetched at that moment would come back signed in. For the same reason the job
+goes to the first page *requested* after the sign-out, not the first whose answer happens
+to arrive: on a slow connection a signed-in load can still be downloading when Sign out is
+tapped, and its request carried the cookie.
 
 **Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
 be asked once, at mount. An app opened with no connection then stayed signed out — and
