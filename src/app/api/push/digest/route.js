@@ -43,7 +43,8 @@ const WINDOW_DAYS = 7
 /**
  * The digest's body for one reader, or null when their week holds nothing.
  *
- * Pure apart from its inputs, so the window logic is the same for every device.
+ * Pure — no clock, no database — so every device's window is cut by the same rules
+ * from the same `now`, differing only in its zone.
  *
  * @param {object}   opts
  * @param {object[]} opts.todos  The account's todo rows' data.
