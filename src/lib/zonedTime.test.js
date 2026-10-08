@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isValidTimeZone, zoneFromTzOffset, resolveUserZone, offsetMinutesAt, zonedWallToMs,
   floatingToMs, dateStrInZone, localDateOf, addDaysToDateStr, formatWallTime,
-  MAX_ZONE_LENGTH,
+  MAX_ZONE_LENGTH, MAX_CACHED_ZONES, cachedZoneCount,
 } from './zonedTime'
 
 const utc = (...args) => Date.UTC(...args)
@@ -30,6 +30,43 @@ describe('isValidTimeZone', () => {
 
   it('rejects an over-long string before handing it to Intl', () => {
     expect(isValidTimeZone('A'.repeat(MAX_ZONE_LENGTH + 1))).toBe(false)
+  })
+})
+
+/* Zone names arrive from clients, and the formatter cache was keyed on the string as
+   sent. Intl accepts any casing of a name, so a client cycling through spellings of
+   one zone added a formatter per request, without limit. */
+describe('the zone formatter cache', () => {
+  it('keeps one entry per zone, however its name is spelled', () => {
+    expect(isValidTimeZone('America/Chicago')).toBe(true)
+    const before = cachedZoneCount()
+    for (const spelling of ['america/chicago', 'AMERICA/CHICAGO', 'America/chicago', 'aMeRiCa/ChIcAgO']) {
+      expect(isValidTimeZone(spelling)).toBe(true)
+    }
+    expect(cachedZoneCount()).toBe(before)
+  })
+
+  it('reads a misspelt zone exactly as the real one', () => {
+    const t = utc(2026, 6, 1, 12)
+    expect(offsetMinutesAt('asia/tokyo', t)).toBe(540)
+    expect(offsetMinutesAt('AMERICA/NEW_YORK', t)).toBe(offsetMinutesAt('America/New_York', t))
+  })
+
+  it('never holds more than its cap, however many zones arrive', () => {
+    const zones = Intl.supportedValuesOf('timeZone')
+    expect(zones.length).toBeGreaterThan(MAX_CACHED_ZONES) // otherwise this proves nothing
+    for (const zone of zones) {
+      expect(isValidTimeZone(zone)).toBe(true)
+      expect(cachedZoneCount()).toBeLessThanOrEqual(MAX_CACHED_ZONES)
+    }
+    // And it still answers once it has started over.
+    expect(offsetMinutesAt('Asia/Tokyo', utc(2026, 0, 1))).toBe(540)
+  })
+
+  it('caches nothing for a name Intl rejects', () => {
+    const before = cachedZoneCount()
+    expect(isValidTimeZone('Not/AZone')).toBe(false)
+    expect(cachedZoneCount()).toBe(before)
   })
 })
 

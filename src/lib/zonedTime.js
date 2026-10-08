@@ -57,22 +57,52 @@ const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\
 
 const pad = n => String(n).padStart(2, '0')
 
+/**
+ * Most zones the formatter cache holds before it starts again from empty. Far more than
+ * the handful real devices report, so honest traffic never notices it.
+ */
+export const MAX_CACHED_ZONES = 200
+
 // Constructing an Intl.DateTimeFormat is far slower than using one, and the cron asks
 // the same handful of zones the same question for every candidate it looks at.
+//
+// Keyed by the *canonical* name, and bounded, because the names come from clients.
+// `Intl` accepts any casing of a zone ('america/new_york', 'AMERICA/NEW_YORK', …) and
+// any spelling of an offset ('+0530', '+05:30'), so keying on the string as sent let
+// one signed-in client mint a new ~23 KB formatter per request until the instance ran
+// out of memory. Every spelling of a zone now shares one entry, and the distinct zones
+// that remain (real names, and every whole-minute offset) cannot pile up past the cap.
 const formatters = new Map()
 
+/** `Intl`'s own spelling of a zone name — throws a RangeError for one it does not know. */
+function canonicalName(timeZone) {
+  return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone
+}
+
 function partsFormatter(timeZone) {
+  // The canonical spelling — which is what devices send — hits without building anything.
   let f = formatters.get(timeZone)
+  if (f) return f
+  const canonical = canonicalName(timeZone)
+  f = formatters.get(canonical)
   if (!f) {
+    // Clearing outright rather than evicting one at a time: a full cache only happens
+    // under a flood of made-up zones, and rebuilding a few real ones afterwards is cheap.
+    if (formatters.size >= MAX_CACHED_ZONES) formatters.clear()
     f = new Intl.DateTimeFormat('en-US', {
-      timeZone,
+      timeZone: canonical,
       hourCycle: 'h23', // avoids a `hour12: false` quirk that formats midnight as "24"
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
-    formatters.set(timeZone, f)
+    formatters.set(canonical, f)
   }
   return f
+}
+
+/** How many zones have a cached formatter. Only the tests that bound the cache need it. */
+export function cachedZoneCount() {
+  return formatters.size
 }
 
 /**
