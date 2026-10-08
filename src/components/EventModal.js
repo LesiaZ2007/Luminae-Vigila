@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { X, Trash2, RefreshCw, EyeOff, AlertTriangle, Settings2, MapPin } from 'lucide-react'
 import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
@@ -247,7 +247,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
       existingEvents,
       canvasClasses,
     })
-  }, [date, startTime, endTime, allDay, event?.id, existingEvents, canvasClasses]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [date, startTime, endTime, allDay, event?.id, existingEvents, canvasClasses])
 
   const cat = categories.find(c => c.id === category) || categories[0]
   // What the event will actually be: the pick if there is one, else the category's.
@@ -255,9 +255,11 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
 
   const [closing, handleClose] = useDialogExit(onClose)
 
-  // When the user picks "Edit all in series", re-populate form with series-level data
-  useEffect(() => {
-    if (editScope !== 'all' || !isRecurringEdit) return
+  // Picking "Edit all in series" re-populates the form with series-level data. Done in
+  // the click rather than in an effect on editScope, so the form never shows a frame of
+  // the occurrence's values under the series heading.
+  function chooseAllInSeries() {
+    setEditScope('all')
     const seriesRec   = event?.extendedProps?.seriesRecurrence
     const seriesStart = event?.extendedProps?.seriesStart
     if (seriesStart) {
@@ -278,7 +280,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
       setRepeatDays(seriesRec.days || [new Date(event.start).getDay()])
       setRepeatUntil(seriesRec.until || '')
     }
-  }, [editScope]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   function toggleDay(i) {
     setRepeatDays(prev =>
@@ -435,7 +437,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
                   </span>
                 </button>
                 {hasSeriesData && (
-                  <button type="button" onClick={() => setEditScope('all')}
+                  <button type="button" onClick={chooseAllInSeries}
                           style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--blue, #3b82f6)', background: 'var(--blue-bg)', color: 'var(--blue-text)', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
                     All events in series
                     <span style={{ display: 'block', fontSize: '0.74rem', fontWeight: 400, color: 'var(--text-3)', marginTop: 2 }}>

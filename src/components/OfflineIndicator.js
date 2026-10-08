@@ -11,8 +11,10 @@ import { WifiOff, Wifi, RefreshCw } from 'lucide-react'
  * Styled to the Luminae Vigila brand; auto-hides after reconnect.
  */
 export default function OfflineIndicator({ onReconnect, syncStalled = false, onRetrySync }) {
-  const [online,  setOnline]  = useState(true)   // starts optimistic; corrected after mount
-  const [phase,   setPhase]   = useState('hidden') // 'hidden' | 'offline' | 'back-online' | 'hiding'
+  // 'hidden' | 'offline' | 'back-online' | 'hiding'. Starts from the browser's own answer:
+  // this only renders inside the planner, which renders nothing until it is in a browser.
+  const [phase,   setPhase]   = useState(() =>
+    typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'hidden')
   // Was a plain `{ current: null }` object literal, which is rebuilt on every
   // render — so `clearTimeout(hideTimer.current)` always read null and could
   // never actually cancel anything. A connection that flapped left orphaned
@@ -28,12 +30,7 @@ export default function OfflineIndicator({ onReconnect, syncStalled = false, onR
   useEffect(() => { onReconnectRef.current = onReconnect }, [onReconnect])
 
   useEffect(() => {
-    // Initialise from actual browser state
-    setOnline(navigator.onLine)
-    if (!navigator.onLine) setPhase('offline')
-
     function handleOnline() {
-      setOnline(true)
       setPhase('back-online')
       // Flush any pending offline edits to the cloud now that we're back online.
       try { onReconnectRef.current?.() } catch {}
@@ -46,7 +43,6 @@ export default function OfflineIndicator({ onReconnect, syncStalled = false, onR
     }
 
     function handleOffline() {
-      setOnline(false)
       clearTimeout(hideTimer.current)
       setPhase('offline')
     }
@@ -58,7 +54,6 @@ export default function OfflineIndicator({ onReconnect, syncStalled = false, onR
       window.removeEventListener('offline', handleOffline)
       clearTimeout(hideTimer.current)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /* Sync can be stalled while the browser is perfectly online — a failed initial

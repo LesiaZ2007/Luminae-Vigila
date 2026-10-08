@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, useSyncExternalStore } from 'react'
 import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
@@ -16,16 +16,18 @@ import TaskActionMenu from '@/components/TaskActionMenu'
 import CrowIcon from '@/components/CrowIcon'
 import LiveClock, { NextUpCard } from '@/components/LiveClock'
 
-function useWindowWidth() {
-  const [w, setW] = useState(1280)
-  useEffect(() => {
-    setW(window.innerWidth)
-    function onResize() { setW(window.innerWidth) }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-  return w
+function subscribeResize(onChange) {
+  window.addEventListener('resize', onChange)
+  return () => window.removeEventListener('resize', onChange)
 }
+
+/** The window's width, kept current. The server has no window, so it assumes a desktop. */
+function useWindowWidth() {
+  return useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1280)
+}
+
+/** Nothing to subscribe to — see `mounted` in the planner. */
+const subscribeNothing = () => () => {}
 
 /**
  * A zero-size rect at the pointer, for anchoring a popover to a click that had no
@@ -102,11 +104,12 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   loading: () => <NotesPanelSkeleton />,
 })
 /* Corvus is 1,100 lines that most sessions never open, and it needs the network to do
-   anything, so unlike the task and event editors it never has to open offline. That
-   makes it safe to split out: the service worker caches no code, so a chunk that has
-   not been fetched yet cannot load once the connection drops. The editors stay in the
-   main bundle for exactly that reason. Corvus is also fetched in the background once
-   the planner is idle (see the effect in Home), so opening it is still instant. */
+   anything. All three split-out chunks are fetched in the background once the planner
+   is idle (see the effect in Home), so opening any of them is instant — and the service
+   worker keeps every chunk it serves, so after one online visit they all load offline
+   too. A chunk nobody has fetched yet still cannot load once the connection drops,
+   which is why the task and event editors stay in the main bundle: they have to open
+   offline even on a device that went offline before the idle fetch ran. */
 const Corvus = dynamic(() => import('@/components/Corvus'), {
   ssr: false,
   loading: () => <ListSkeleton rows={4} label="Loading Corvus" padding="20px" />,
@@ -186,7 +189,10 @@ export default function Home() {
   }, [setTheme])
   useEffect(() => () => themeCleanupRef.current?.(), [])
 
-  const [mounted,       setMounted]       = useState(false)
+  // False on the server and during hydration, so both agree on rendering nothing;
+  // true on every render after that. Everything below may assume a browser once
+  // this is true — the state initialisers read localStorage on that basis.
+  const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false)
   const [todoPanelWidth, setTodoPanelWidth] = useState(520)
   const resizingRef    = useRef(false)
   const startXRef      = useRef(0)
@@ -212,6 +218,13 @@ export default function Home() {
   const [eventCategories, setEventCategories] = useState(() => readStored('lv-event-cats', DEFAULT_EVENT_CATEGORIES, reviveEventCategories))
   const [studySessions,  setStudySessions]  = useState(() => readStored('lv-study-sessions', []))
   const [toasts,         setToasts]         = useState([])
+  // Declared up here because the cloud-sync effect below toasts from inside it.
+  const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
+    const id = String(Date.now())
+    setToasts(p => [...p, { id, title, subtitle, ...(actions ? { actions } : {}), ...opts }])
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), actions ? 6000 : 5000)
+    return id
+  }, [])
 
   const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
   // The event whose detail view is open. A tap lands here first; Edit hands off to
@@ -232,7 +245,10 @@ export default function Home() {
   const [taskMenu,      setTaskMenu]      = useState(null)
   const [activeNav,     setActiveNav]     = useState('calendar')
   const [corvusFloat,   setCorvusFloat]   = useState(false)
-  const [nudgeCluster,  setNudgeCluster]  = useState(null)
+  // The day the deadline nudge was last dismissed (YYYY-MM-DD). Corvus writes the same key.
+  const [nudgeDismissedOn, setNudgeDismissedOn] = useState(() => {
+    try { return localStorage.getItem('corvus-nudge-dismissed') } catch { return null }
+  })
   const [focusOpen,     setFocusOpen]     = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showAddMenu,   setShowAddMenu]   = useState(false)
@@ -444,34 +460,58 @@ export default function Home() {
     [events, googleEvents, eventPrefs],
   )
 
-  // Warm Corvus's chunk once the first render has settled — see the dynamic() above.
+  // Warm every split-out chunk once the first render has settled — see the dynamic()
+  // calls above. Fetching them is also what puts them in the service worker's cache,
+  // so this is the step that makes the calendar and notes open offline later.
   useEffect(() => {
     const whenIdle   = window.requestIdleCallback ?? (cb => setTimeout(cb, 2000))
     const cancelIdle = window.cancelIdleCallback  ?? clearTimeout
-    const id = whenIdle(() => { import('@/components/Corvus').catch(() => {}) })
+    const id = whenIdle(() => {
+      import('@/components/WeeklyCalendar').catch(() => {})
+      import('@/components/NotesPanel').catch(() => {})
+      import('@/components/Corvus').catch(() => {})
+    })
     return () => cancelIdle(id)
   }, [])
 
   useEffect(() => {
-    setMounted(true)
     // Small delay so the app renders first, then the wizard slides in gracefully
-    if (typeof window !== 'undefined') {
-      setTimeout(() => { if (shouldShowOnboarding()) setShowOnboarding(true) }, 600)
-    }
+    const id = setTimeout(() => { if (shouldShowOnboarding()) setShowOnboarding(true) }, 600)
+    return () => clearTimeout(id)
   }, [])
 
   // If the user was on the mobile-only 'settings' tab and the window grows past mobile breakpoint,
-  // redirect them to calendar so they don't land on a blank screen.
-  useEffect(() => {
-    if (!isMobile && activeNav === 'settings') setActiveNav('calendar')
-  }, [isMobile]) // eslint-disable-line react-hooks/exhaustive-deps
+  // redirect them to calendar so they don't land on a blank screen. Done during render rather
+  // than in an effect, so the blank frame never paints.
+  if (!isMobile && activeNav === 'settings') setActiveNav('calendar')
 
-  // Fetch current user for display / logout
+  // Fetch current user for display / logout. Retried on reconnect and on returning to
+  // the tab until the server has answered once: an app opened with no connection
+  // (which the service worker now makes possible) would otherwise stay signed out —
+  // and unsynced — until a reload. A 401 is an answer; a network error or 5xx is not.
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.user) setCurrentUser(d.user) })
-      .catch(() => {})
+    let answered = false
+    let inFlight = false
+    const load = () => {
+      if (answered || inFlight) return
+      inFlight = true
+      fetch('/api/auth/me')
+        .then(r => {
+          if (r.status >= 500) throw new Error(`auth/me ${r.status}`)
+          return r.ok ? r.json() : null
+        })
+        .then(d => { answered = true; if (d?.user) setCurrentUser(d.user) })
+        .catch(() => {})
+        .finally(() => { inFlight = false })
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    load()
+    window.addEventListener('online', load)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', load)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   /* ── Initial cloud merge ──────────────────────────────────────────────────
@@ -966,6 +1006,9 @@ export default function Home() {
       tags: ['shared'],
     })
 
+    // Taking a one-shot handoff out of localStorage is a side effect — the read clears
+    // the key — so it belongs in an effect, not in a state initialiser that must stay pure.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNotes(prev => [note, ...prev])
     setActiveNoteId(note.id)
     setActiveNav('notes')
@@ -1012,21 +1055,14 @@ export default function Home() {
   usePersist('lv-canvas-ics-events',  canvasIcsEvents)
   usePersist('lv-clock-24h',          militaryTime)
 
-  const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
-    const id = String(Date.now())
-    setToasts(p => [...p, { id, title, subtitle, ...(actions ? { actions } : {}), ...opts }])
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), actions ? 6000 : 5000)
-    return id
-  }, [])
-
-  // ── Proactive nudge: detect deadline cluster on load (client-side, no AI cost) ──
-  useEffect(() => {
+  // ── Proactive nudge: a deadline cluster with no study time booked (client-side, no AI cost) ──
+  // Derived, not stored: it is a function of the lists and today's dismissal, so it
+  // recomputes whenever either changes instead of an effect setting it after the fact.
+  const nudgeCluster = useMemo(() => {
     try {
       // Local, not UTC: a UTC date rolls over at 8pm in New York, so a nudge
       // dismissed in the evening came back the next afternoon, or not at all.
-      const today = todayStr()
-      const dismissed = localStorage.getItem('corvus-nudge-dismissed')
-      if (dismissed === today) return   // already dismissed today
+      if (nudgeDismissedOn === todayStr()) return null   // already dismissed today
 
       const now    = new Date()
       const cutoff = new Date(now.getTime() + 72 * 60 * 60 * 1000)
@@ -1045,7 +1081,7 @@ export default function Home() {
         }
       })
 
-      if (items.length < 3) { setNudgeCluster(null); return }
+      if (items.length < 3) return null
 
       // Check for existing study blocks in that window
       const studyKws = ['study', 'review', 'work on', 'prep', 'prepare', 'homework', 'hw', 'read', 'practice']
@@ -1056,10 +1092,15 @@ export default function Home() {
         return studyKws.some(kw => (e.title || '').toLowerCase().includes(kw))
       })
 
-      setNudgeCluster(hasStudy ? null : { items })
-    } catch (_) {}
-  // Run once on mount after data is available; re-run if todos/assignments change
-  }, [todos, canvasAssignments, events])
+      return hasStudy ? null : { items }
+    } catch (_) { return null }
+  }, [todos, canvasAssignments, events, nudgeDismissedOn])
+
+  const dismissNudge = useCallback(() => {
+    const today = todayStr()
+    try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
+    setNudgeDismissedOn(today)
+  }, [])
 
   // ── Manual cloud refresh ─────────────────────────────────────────────────────
   // Pulls the latest cloud state and merges it into local — cloud wins on conflicts,
@@ -1806,6 +1847,10 @@ export default function Home() {
   }, [eventsRaw, todosRaw, notes, canvasClassesRaw, customListsRaw, pushToast])
 
   /* ── Google Calendar sync ── */
+  // The Reconnect toast below re-runs this sync from inside it. A callback can't name
+  // itself while it is still being declared, so the toast goes through this ref, which
+  // always holds the current one — same arrangement as runInitialMergeRef.
+  const syncGoogleCalendarRef = useRef(null)
   const syncGoogleCalendar = useCallback(async () => {
     setGcSyncing(true)
     try {
@@ -1862,7 +1907,7 @@ export default function Home() {
                   return
                 }
                 gcDisconnectWarnedRef.current = null
-                syncGoogleCalendar()
+                syncGoogleCalendarRef.current?.()
               },
             }],
           )
@@ -1876,6 +1921,7 @@ export default function Home() {
       setGcSyncing(false)
     }
   }, [pushToast])
+  useEffect(() => { syncGoogleCalendarRef.current = syncGoogleCalendar }, [syncGoogleCalendar])
 
   /* ── Initial sync, after pulling saved calendar choices down ──
      Hydrating first matters on a device that has never seen these accounts: without
@@ -2063,6 +2109,9 @@ export default function Home() {
   // Initial sync on mount
   useEffect(() => {
     const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    // Starting a network sync is what effects are for; the only synchronous update in it
+    // is the spinner flag, and everything else lands when the requests do.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (prefs.connected) syncCanvas()
     else if (prefs.icsUrl) syncCanvasIcs()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -2969,7 +3018,10 @@ export default function Home() {
                       onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
                 <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
               </button>
-              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
+              {/* The worker's saved pages were rendered signed in; drop them on the way
+                  out (see public/sw.js). Fire-and-forget, so it never delays the POST. */}
+              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}
+                    onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
                 <button type="submit" title="Sign out"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
                         onMouseEnter={e => e.currentTarget.style.color = '#fca5a5'}
@@ -3304,7 +3356,7 @@ export default function Home() {
               onUpdateTodo={updateTodo}
               onNavigateToItem={navigateToItem}
               nudgeCluster={nudgeCluster}
-              onNudgeDismiss={() => setNudgeCluster(null)}
+              onNudgeDismiss={dismissNudge}
             />
             </ErrorBoundary>
           </main>
@@ -3373,7 +3425,8 @@ export default function Home() {
                           style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
                   </button>
-                  <form action="/api/auth/logout" method="POST">
+                  <form action="/api/auth/logout" method="POST"
+                        onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
                     <button type="submit" title="Sign out"
                             style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
                       <LogOut size={12} /> Sign out
@@ -3826,7 +3879,7 @@ export default function Home() {
               onExpand={() => { setCorvusFloat(false); setActiveNav('corvus') }}
               onClose={() => setCorvusFloat(false)}
               nudgeCluster={nudgeCluster}
-              onNudgeDismiss={() => setNudgeCluster(null)}
+              onNudgeDismiss={dismissNudge}
             />
           </div>
         ) : (
@@ -3853,11 +3906,7 @@ export default function Home() {
                   <div style={{ fontSize: '0.67rem', color: 'var(--text-2)', lineHeight: 1.3 }}>Want help planning it?</div>
                 </button>
                 <button
-                  onClick={() => {
-                    const today = todayStr()
-                    try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
-                    setNudgeCluster(null)
-                  }}
+                  onClick={dismissNudge}
                   style={{ flexShrink: 0, background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center' }}
                   title="Dismiss"
                 >
