@@ -618,11 +618,49 @@ same colours as everywhere else.
 
 Any task takes up to twenty subtasks, added in the Add/Edit modal and checked off
 individually. A progress chip on the row shows `2/5 steps`; clicking it expands the
-checklist inline.
+checklist inline. That works from every view now: the mobile layout's Done list draws
+its rows from a separate copy of the list, and that copy never wired the step
+checkboxes up, so they took the click and changed nothing.
 
 Grab the grip handle — it appears on hover, desktop only — to drag tasks into any
 order. Order persists in a `sortOrder` field and survives refreshes and sync; tasks
-without one fall back to date sorting.
+without one fall back to date sorting. A task moves among the tasks under its own
+heading: the order is one list drawn under the date headings, so a move across a
+heading would change the stored order and nothing you could see.
+
+The grip is a real button, so the keyboard reorders too: Tab to it and press `↑` or `↓`
+to move the task one place, saved straight away, with focus staying on the task you
+moved. It shows itself on keyboard focus the way it does on hover. The row itself takes
+focus as well, and Enter or Space opens the editor the way a click does — before, the
+only way into a task was the mouse.
+
+Letting go anywhere inside the list drops the task where the preview showed it, the gap
+between two rows and the headings included; letting go outside the list, or pressing
+Escape, puts it back. Both used to go wrong in the same way. Nothing listened for the end
+of a drag, only for a drop on another row, so a drag that finished anywhere else never
+cleared: the row stayed dimmed, and the list went on drawing the snapshot it took when
+the drag began, so new tasks, ticks and anything synced in from another device stopped
+appearing until some later drag happened to finish on a row. Pressing the grip without
+dragging dimmed the row the same way, and Firefox would not start a drag at all, because
+the drag carried no data.
+
+The list you drag is the filtered one — Upcoming hides finished tasks, the category chips
+hide whole categories — and a drop used to renumber only the visible tasks 0, 1, 2…, over
+values the hidden ones were already using. Two tasks with the same `sortOrder` have no
+order between them, so un-hiding a category put its tasks back in arbitrary places among
+the ones you had just arranged. A drop now deals the visible tasks the values they already
+held, in their new order, so a hidden task keeps its value and with it its place; a task
+that never had one gets a fresh value above everything in use. Only the tasks that
+actually moved are saved. Stamping one that stayed put would let a reorder overwrite an
+unrelated edit made to it on another device.
+
+The task rows and the custom-list rows were copies of each other, which is how the same
+drag bug came to live in both. They now share the mechanics — the drag and keyboard
+reordering in [`lib/useDragReorder.js`](src/lib/useDragReorder.js) with its arithmetic in
+[`lib/reorder.js`](src/lib/reorder.js), the swipe in
+[`SwipeActions.js`](src/components/SwipeActions.js), and the checkbox, grip and action
+buttons in [`TaskRowParts.js`](src/components/TaskRowParts.js) — while each keeps its own
+look, so a fix to one is a fix to both.
 
 On touch, swipe right on a task to complete it and left to delete it, with a red trash
 background as feedback. The axis locks after 6px of movement so horizontal swipes do
@@ -711,6 +749,14 @@ list's tab shows a faded strikethrough with a check mark. Both clear if anything
 unchecked again. There is also drag-to-reorder by grip handle on desktop, the same
 swipe gestures as the main task list on touch, a per-list *Clear checked*, and a `×` on
 each tab that opens the same confirm dialog as the in-list delete. My Tasks has no `×`.
+
+Reordering is the task list's own, shared rather than copied: the grip moves an item with
+`↑` / `↓` as well as by drag, and a drag let go off a row puts the list back instead of
+freezing it on its drag-time snapshot, which here used to hide every item added or ticked
+until the next drag landed. A new item goes one past the highest `sortOrder` in the list
+rather than at the item count, because after a reorder and a couple of deletions the count
+can be a value a live item still holds, and the new item used to sort into the middle of
+the list instead of landing at the bottom.
 
 ---
 
