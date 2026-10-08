@@ -147,18 +147,14 @@ function fmtFocus(seconds) {
   return `${Math.round((seconds / 3600) * 10) / 10}h`
 }
 
-/** One level deep is enough — the recap data object is all primitives. */
-function shallowEqual(a, b) {
-  if (a === b) return true
-  if (!a || !b) return false
-  const ka = Object.keys(a), kb = Object.keys(b)
-  return ka.length === kb.length && ka.every(k => a[k] === b[k])
-}
+/* Defaults for the list props. A default written inline (`todos = []`) is a new array
+   on every render, which would make everything derived from it recompute every render. */
+const NO_ITEMS = []
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function WeeklyRecap({
-  todos = [], canvasAssignments = [], digest = null,
+  todos = NO_ITEMS, canvasAssignments = NO_ITEMS, digest = null,
   /** Bumped by the parent when a focus session completes, so this re-reads localStorage. */
   sessionsVersion = 0,
   /** Synced sessions from page.js. Falls back to localStorage when absent so the
@@ -168,21 +164,19 @@ export default function WeeklyRecap({
   onTagSession,
   /** 'panel' (themed surface) | 'zen' (on dark backdrop) */ variant = 'panel',
 }) {
-  const [data,       setData]       = useState(null)
-  const [confetti,   setConfetti]   = useState(false)
   const [expanded,   setExpanded]   = useState(false)
   const [showAllSessions, setShowAllSessions] = useState(false)
   // Re-read on the same trigger as the totals, so a session you just finished
   // shows up in the list rather than only in the numbers above it.
-  const localSessions = useMemo(() => parseStudySessions(), [sessionsVersion])
+  // sessionsVersion is not read inside — it is the signal that localStorage changed.
+  const localSessions = useMemo(() => parseStudySessions(), [sessionsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   // Prefer the synced array: tagging writes to page.js state, and re-reading
   // localStorage here would show the pre-edit value until the next version bump.
   const sessions = sessionsProp ?? localSessions
   const courseOptions = useMemo(() => buildCourseOptions(canvasAssignments), [canvasAssignments])
-  const [notifPerm,  setNotifPerm]  = useState('default') // 'granted'|'denied'|'default'|'unsupported'
+  // This card only renders inside the focus timer, so the browser is always there.
+  const [notifPerm,  setNotifPerm]  = useState(pushPermission) // 'granted'|'denied'|'default'|'unsupported'
   const [notifBusy,  setNotifBusy]  = useState(false)
-
-  useEffect(() => { setNotifPerm(pushPermission()) }, [])
 
   const onEnableNotifications = useCallback(async () => {
     setNotifBusy(true)
@@ -191,10 +185,13 @@ export default function WeeklyRecap({
     setNotifBusy(false)
   }, [])
 
-  const refresh = useCallback(() => {
+  // The week's numbers, derived. Recomputes when the lists change, or when a focus
+  // session finishes — localSessions changes identity on that same signal. Without
+  // that the card kept showing the total from mount, and a session you just
+  // completed didn't appear until something else changed.
+  const data = useMemo(() => {
     const { start: wkStart, end: wkEnd }   = thisWeekRange()
     const { start: lwStart, end: lwEnd }   = lastWeekRange()
-    const sessions = parseStudySessions()
 
     // Tasks completed this week
     const completedThisWeek = todos.filter(t => {
@@ -222,63 +219,46 @@ export default function WeeklyRecap({
     const delta    = totalCompleted - lastWeek
 
     // Focus time — kept in seconds so sub-hour sessions survive to the formatter
-    const focusSec     = totalFocusSeconds(sessions, wkStart, wkEnd)
-    const focusSecLast = totalFocusSeconds(sessions, lwStart, lwEnd)
+    const focusSec     = totalFocusSeconds(localSessions, wkStart, wkEnd)
+    const focusSecLast = totalFocusSeconds(localSessions, lwStart, lwEnd)
 
     // Streak
     const streak     = ledger.streak     ?? 0
     const bestStreak = ledger.bestStreak ?? 0
 
-    const next = { totalCompleted, lastWeek, delta, focusSec, focusSecLast, streak, bestStreak }
-    // Bail out when nothing actually changed.
-    //
-    // `todos` and `canvasAssignments` default to `[]`, and a default parameter
-    // builds a *new* array on every render — so `refresh`'s identity churns every
-    // render, so the effect below re-runs every render. Setting a fresh object
-    // each time then renders again, forever. It only stays quiet in the app
-    // because page.js happens to pass memoised arrays; a caller that omits a prop
-    // or passes a literal would spin the tab. Returning `prev` makes React bail
-    // out of the re-render and breaks the cycle at the source, whatever the
-    // callers do.
-    setData(prev => shallowEqual(prev, next) ? prev : next)
-    // sessionsVersion is not read here — it exists so finishing a focus session
-    // re-runs this. Without it the card kept showing the total from mount, and a
-    // session you just completed didn't appear until something else changed.
-  }, [todos, canvasAssignments, sessionsVersion])
+    return { totalCompleted, lastWeek, delta, focusSec, focusSecLast, streak, bestStreak }
+  }, [todos, canvasAssignments, localSessions])
 
-  // Persist last-week count on Sunday
+  // Persist last-week count on Sunday. Keyed on the number, not the object, so it
+  // runs when the count moves rather than whenever the lists change identity.
+  const weekCompleted = data.totalCompleted
   useEffect(() => {
     const now = new Date()
     if (now.getDay() === 0) {
       const ledger = loadLedger()
-      if (data && ledger.lastWeekUpdated !== toDateStr(now)) {
+      if (ledger.lastWeekUpdated !== toDateStr(now)) {
         saveLedger({
           ...ledger,
-          lastWeekCompleted: data.totalCompleted,
+          lastWeekCompleted: weekCompleted,
           lastWeekUpdated:   toDateStr(now),
         })
       }
     }
-  }, [data])
+  }, [weekCompleted])
 
-  // Confetti on new personal-best streak
+  // Confetti on new personal-best streak — once, for 1.6s, the first time this card
+  // sees it. The best as it stood when the card mounted is what "new" is measured against.
   const prevBest = useState(() => {
     try { return JSON.parse(localStorage.getItem(STREAK_KEY) ?? '{}').bestStreak ?? 0 } catch { return 0 }
   })[0]
-
+  const newBest = data.streak > 0 && data.streak === data.bestStreak && data.bestStreak > prevBest && data.bestStreak > 1
+  const [confettiDone, setConfettiDone] = useState(false)
   useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  useEffect(() => {
-    if (!data) return
-    if (data.streak > 0 && data.streak === data.bestStreak && data.bestStreak > prevBest && data.bestStreak > 1) {
-      setConfetti(true)
-      setTimeout(() => setConfetti(false), 1600)
-    }
-  }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!data) return null
+    if (!newBest) return
+    const id = setTimeout(() => setConfettiDone(true), 1600)
+    return () => clearTimeout(id)
+  }, [newBest])
+  const confetti = newBest && !confettiDone
 
   const { totalCompleted, delta, focusSec, streak, bestStreak } = data
 
