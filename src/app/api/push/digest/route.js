@@ -17,10 +17,11 @@
  * on their clock — and every item is filed under its own local date: a task's
  * `dueDate` as written, an event's floating `start` by its own date digits. This used
  * to compare those floating strings against UTC `toISOString()` bounds, so the window
- * was the server's week, shifted by the reader's offset at both ends, and on a Sunday
- * evening west of Greenwich "today" was already Monday. The window is now computed
- * per device in its recorded zone (lib/zonedTime), the same way the daily glance
- * picks its day.
+ * was the server's week, shifted by the reader's offset at both ends: in Tokyo, where
+ * the Sunday 18:00 UTC run is already 3am Monday, the week still began on Sunday, and in
+ * New York a 3pm event that afternoon was dropped as "past" because its digits were
+ * compared against 18:00 UTC. The window is now computed per device in its recorded
+ * zone (lib/zonedTime), the same way the daily glance picks its day.
  *
  * Errors are isolated per account and per device, so one bad row or one transient
  * database error never costs anyone else their digest.
