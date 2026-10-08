@@ -10,7 +10,7 @@ vi.mock('@/lib/pushClient', () => ({
 
 import { registerServiceWorker, registerAndSyncPush, resetOfflineCache } from '@/lib/pushClient'
 import ServiceWorkerRegistration, {
-  startServiceWorker, wantsOfflineReset, withoutOfflineReset,
+  startServiceWorker, wantsOfflineReset, withoutOfflineReset, isCachingWorker,
 } from './ServiceWorkerRegistration'
 
 beforeEach(() => { vi.clearAllMocks() })
@@ -94,13 +94,19 @@ describe('handing loaded build files over to the worker', () => {
     return { Observer, observers, report }
   }
 
-  function fakeServiceWorker(controlled) {
+  const CACHING_WORKER   = `${ORIGIN}/sw.js?v=2026-10-07T10%3A00%3A00.000Z-ccccccc`
+  // What main registered before the cache existed: push only, no message handler.
+  const PUSH_ONLY_WORKER = `${ORIGIN}/sw.js`
+
+  const worker = scriptURL => ({ scriptURL, postMessage: vi.fn() })
+
+  function fakeServiceWorker(controlled, scriptURL = CACHING_WORKER) {
     const listeners = {}
     const sw = {
-      controller: controlled ? { postMessage: vi.fn() } : null,
+      controller: controlled ? worker(scriptURL) : null,
       addEventListener: (type, fn) => { listeners[type] = fn },
-      takeControl() {
-        sw.controller = { postMessage: vi.fn() }
+      takeControl(next = CACHING_WORKER) {
+        sw.controller = worker(next)
         listeners.controllerchange?.()
       },
     }
@@ -148,6 +154,35 @@ describe('handing loaded build files over to the worker', () => {
     // Nothing new to say: no further message.
     report(entry('/_next/static/chunks/later.js', 3))
     expect(serviceWorker.controller.postMessage).toHaveBeenCalledTimes(1)
+  })
+
+  // The first visit after the deploy that brought the cache: the old push-only worker
+  // is still in control when the first timings report, and would drop the list.
+  it('holds them past a worker that does not cache, for the one that does', async () => {
+    const handOverLoadedAssets = await freshHandOver()
+    const { Observer, report } = fakeObserver()
+    const serviceWorker = fakeServiceWorker(true, PUSH_ONLY_WORKER)
+    const pushOnly = serviceWorker.controller
+    handOverLoadedAssets({ serviceWorker, Observer, origin: ORIGIN })
+
+    report(entry('/_next/static/chunks/main.js'), entry('/_next/static/chunks/calendar.js'))
+    expect(pushOnly.postMessage).not.toHaveBeenCalled()
+
+    serviceWorker.takeControl(CACHING_WORKER)
+    expect(pushOnly.postMessage).not.toHaveBeenCalled()
+    expect(serviceWorker.controller.postMessage).toHaveBeenCalledTimes(1)
+    expect(serviceWorker.controller.postMessage).toHaveBeenCalledWith({
+      type: 'cache-urls',
+      urls: [`${ORIGIN}/_next/static/chunks/main.js`, `${ORIGIN}/_next/static/chunks/calendar.js`],
+    })
+  })
+
+  it('tells a caching worker by the version on its script URL', () => {
+    expect(isCachingWorker(worker(CACHING_WORKER))).toBe(true)
+    expect(isCachingWorker(worker(`${ORIGIN}/sw.js?v=dev`))).toBe(true)
+    expect(isCachingWorker(worker(PUSH_ONLY_WORKER))).toBe(false)
+    expect(isCachingWorker(worker('not a url'))).toBe(false)
+    expect(isCachingWorker(null)).toBe(false)
   })
 
   it('starts only once per page', async () => {

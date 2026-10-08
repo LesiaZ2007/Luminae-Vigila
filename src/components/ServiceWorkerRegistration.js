@@ -65,9 +65,10 @@ let handingOver = false
  * would open offline only while the browser's HTTP cache happened to still hold it.
  *
  * A resource the worker handled has a non-zero `workerStart`; anything else under
- * `/_next/static/` is queued and posted once there is a controller. The observer
- * stays on for the page's lifetime, because a request that started just before the
- * worker took over finishes — and reports — after it.
+ * `/_next/static/` is queued and posted once the page is controlled by a worker that
+ * caches (see isCachingWorker). The observer stays on for the page's lifetime,
+ * because a request that started just before the worker took over finishes — and
+ * reports — after it.
  */
 export function handOverLoadedAssets({
   serviceWorker = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined,
@@ -79,7 +80,7 @@ export function handOverLoadedAssets({
   let pending = []
   const flush = () => {
     const controller = serviceWorker.controller
-    if (!controller || !pending.length) return
+    if (!isCachingWorker(controller) || !pending.length) return
     controller.postMessage({ type: 'cache-urls', urls: pending })
     pending = []
   }
@@ -96,4 +97,18 @@ export function handOverLoadedAssets({
     return
   }
   serviceWorker.addEventListener('controllerchange', flush)
+}
+
+/**
+ * True for a worker that caches: one registered with a build version, `/sw.js?v=…`
+ * (see SW_URL in src/lib/pushClient.js).
+ *
+ * The worker before that was registered as plain `/sw.js` and only did push, with no
+ * message handler. On the first visit after the deploy that brought the cache, it is
+ * still in control when the first resource timings report, and a list posted to it is
+ * dropped. So the list waits for a controllerchange to the caching worker instead.
+ */
+export function isCachingWorker(worker) {
+  if (!worker) return false
+  try { return new URL(worker.scriptURL).searchParams.has('v') } catch { return false }
 }

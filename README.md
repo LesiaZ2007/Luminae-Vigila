@@ -2545,7 +2545,11 @@ its code, and the planner opens from a cold start with no connection at all.
   chunk was missing from the cache and only opened offline because the browser's HTTP cache
   still held it, which on a phone is not something to count on. So the page watches its
   resource timings and posts every `/_next/static` file that bypassed the worker (a
-  `workerStart` of 0) once there is a controller, and the worker saves those too.
+  `workerStart` of 0), and the worker saves those too. The list waits until the controller
+  is a worker that caches, meaning one registered as `/sw.js?v=…`. On the first visit after
+  the deploy that added the cache, the controller is still the old push-only `/sw.js`. It
+  has no message handler, so a list posted to it was dropped and the new worker never got
+  it. The list is now held for the `controllerchange` to the new worker.
 - **Icons, the manifest and the favicon** come from the cache and are refreshed in the
   background.
 - **Left alone:** `/api/*`, because it is live data and the app keeps its own copy;
