@@ -6,6 +6,7 @@ import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
 import ColorSwatches, { sameColor } from '@/components/ColorSwatches'
@@ -229,7 +230,6 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
     _existingCustomAt ? toHHMM(_existingCustomAt) : '09:00'
   )
   const [error,         setError]         = useState('')
-  const [closing,       setClosing]       = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // For recurring events: null = scope not yet chosen, 'single' or 'all'
@@ -253,16 +253,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
   // What the event will actually be: the pick if there is one, else the category's.
   const effectiveColor = color ?? cat.color
 
-  function handleClose() {
-    setClosing(true)
-    setTimeout(onClose, 180)
-  }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  const [closing, handleClose] = useDialogExit(onClose)
 
   // When the user picks "Edit all in series", re-populate form with series-level data
   useEffect(() => {
@@ -387,11 +378,9 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
 
   return (
     <>
-    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-         style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={handleBackdropClick}>
-      <div className={`modal-surface w-full max-w-md overflow-hidden${closing ? ' modal-closing' : ''}`}
-           onClick={e => e.stopPropagation()}>
+    <Dialog label={isEdit ? 'Edit event' : 'New event'} closing={closing}
+            onClose={handleClose} onBackdropClick={handleBackdropClick}
+            className="w-full max-w-md overflow-hidden">
 
         {/* Header */}
         <div className="modal-header">
@@ -785,8 +774,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
             )}
           </form>
         )}
-      </div>
-    </div>
+    </Dialog>
 
     {showCatMgr && (
       <CategoryManager

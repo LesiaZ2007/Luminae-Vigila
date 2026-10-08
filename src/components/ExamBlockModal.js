@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { X, GraduationCap } from 'lucide-react'
 import TimePicker from '@/components/TimePicker'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 import { EXAM_COLOR } from '@/lib/classInstances'
 
 /**
@@ -25,15 +26,7 @@ export default function ExamBlockModal({ meeting, defaults = {}, onConfirm, onCl
   const [location, setLocation] = useState(defaults.location  ?? meeting?.location  ?? '')
   const [note,     setNote]     = useState(defaults.note ?? '')
   const [error,    setError]    = useState('')
-  const [closing,  setClosing]  = useState(false)
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const [closing, handleClose] = useDialogExit(onClose)
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -55,11 +48,8 @@ export default function ExamBlockModal({ meeting, defaults = {}, onConfirm, onCl
   const dateLabel = meeting?.dateLabel || ''
 
   return (
-    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-         style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
-         onClick={handleClose}>
-      <div className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
-           onClick={e => e.stopPropagation()}>
+    <Dialog label="Make this an exam" closing={closing} onClose={handleClose}
+            className="w-full max-w-sm overflow-hidden">
 
         <div style={{ height: 4, background: EXAM_COLOR }} />
 
@@ -67,7 +57,7 @@ export default function ExamBlockModal({ meeting, defaults = {}, onConfirm, onCl
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <GraduationCap size={16} style={{ color: EXAM_COLOR }} /> Make this an exam
           </h2>
-          <button onClick={handleClose} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
+          <button onClick={handleClose} aria-label="Close" style={{ padding: 6, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}>
             <X size={16} />
           </button>
         </div>
@@ -125,7 +115,6 @@ export default function ExamBlockModal({ meeting, defaults = {}, onConfirm, onCl
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Dialog>
   )
 }
