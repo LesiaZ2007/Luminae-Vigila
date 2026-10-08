@@ -95,7 +95,8 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
       const inPopup   = popupRef.current && popupRef.current.contains(e.target)
       if (!inTrigger && !inPopup) closePopover()
     }
-    function onKey(e) { if (e.key === 'Escape') closePopover() }
+    // preventDefault marks the key as used, so the dialog this sits in stays open.
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); closePopover() } }
     document.addEventListener('mousedown', onMouse)
     document.addEventListener('keydown',   onKey)
     return () => {

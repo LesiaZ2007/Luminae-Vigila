@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { useDialogOpen } from '@/lib/dialogStack'
+import Dialog from '@/components/Dialog'
 import { readStored, usePersist } from '@/lib/usePersist'
 import { useNow } from '@/lib/useNow'
 import { withThemeTransition } from '@/lib/themeTransition'
@@ -333,14 +335,6 @@ export default function Home() {
     setTimeout(() => { setShowSearchPopup(false); setSearchClosing(false) }, 180)
   }, [])
 
-  // Escape to close search
-  useEffect(() => {
-    if (!showSearchPopup) return
-    const onKeyDown = (e) => { if (e.key === 'Escape') closeSearchPopup() }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [showSearchPopup, closeSearchPopup])
-
   // Ctrl+K / Cmd+K to open search from anywhere
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -422,6 +416,10 @@ export default function Home() {
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // anyModalOpen suppresses non-Escape shortcuts while a blocking overlay is visible.
   const anyModalOpen = eventModal.open || showTodoModal || showGoogleSettings || showCanvasSettings || showClassModal || canvasTodoModal || showSearchPopup || showHelpOverlay
+  /* Every dialog, including the ones this list never named (the event detail view,
+     the exam and study-plan forms, the onboarding tour, a child panel's own modals) —
+     straight from the dialog stack, so a new dialog can't be forgotten here. */
+  const dialogOpen = useDialogOpen()
   useKeyboardShortcuts(
     {
       onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
@@ -429,14 +427,11 @@ export default function Home() {
       onNewNote:     () => quickCaptureNote(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
+      // Only reached when no dialog is open — dialogs, the search popup and the
+      // shortcuts overlay among them, take Escape from the dialog stack. What is
+      // left are the planner's own non-modal layers, one per press.
       onEscape:      () => {
-        // The shortcuts overlay handles its own Escape, and fades out before it
-        // calls onClose. Closing it here too unmounted it mid-fade, so Escape
-        // always hard-cut. Stopping here still keeps the key from also closing
-        // whatever is open underneath.
-        if (showHelpOverlay)   return
         if (focusOpen)         { setFocusOpen(false);       return }
-        if (showSearchPopup)   { closeSearchPopup();        return }
         if (corvusFloat)       { setCorvusFloat(false);     return }
       },
     },
@@ -3089,7 +3084,7 @@ export default function Home() {
                                 onEventDrop={handleEventDrop}
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}
-                                arrowNavEnabled={!anyModalOpen}
+                                arrowNavEnabled={!anyModalOpen && !dialogOpen}
                                 colorSwatches={eventCategories.map(c => c.color)} />
               </ErrorBoundary>
             </main>
@@ -3276,7 +3271,7 @@ export default function Home() {
                 onToggleTodo={toggleTodo}
                 onToggleSubtask={toggleSubtask}
                 onDeleteTodo={deleteTodo}
-                arrowNavEnabled={!anyModalOpen}
+                arrowNavEnabled={!anyModalOpen && !dialogOpen}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
                 onRescheduleTask={(todo, dueDate) => rescheduleTodo(todo.id, dueDate)}
                 onEventClick={ev => setDetailEvent(ev)}
@@ -3683,19 +3678,11 @@ export default function Home() {
 
       {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
       {showSearchPopup && !isMobile && (
-        <div
-          onClick={closeSearchPopup}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 2000,
-            background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-            animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
-          }}>
-          <div onClick={e => e.stopPropagation()}
-               style={{
-                 width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
-                 background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
-                 animation: searchClosing ? 'lv-modal-out .18s ease forwards' : 'lv-modal-in .22s cubic-bezier(.22,1,.36,1)',
-               }}>
+        <Dialog label="Search everything" closing={searchClosing} onClose={closeSearchPopup}
+                panelStyle={{
+                  width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
+                  background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+                }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
               <div>
                 <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
@@ -3722,8 +3709,7 @@ export default function Home() {
                 />
               </ErrorBoundary>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {/* ── Search FAB (desktop only — mobile keeps search in bottom tab bar) ── */}
