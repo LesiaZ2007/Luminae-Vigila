@@ -168,8 +168,10 @@ invalidates every existing subscription — devices must re-enable notifications
 
 Vercel crons run in UTC and there is no per-user send-time preference, so the
 daily glance goes out at a fixed hour (early morning US Eastern). The subscription
-does store the device's `tz_offset`, so the *contents* are computed against the
-reader's calendar day even when the hour isn't ideal for them.
+does store the device's IANA time zone (`time_zone`, falling back to the older
+`tz_offset` for devices that never sent one), so the *contents* — the glance's day,
+the digest's week, and every reminder's fire time — are computed on the reader's own
+clock even when the hour isn't ideal for them. See `src/lib/zonedTime.js`.
 
 ## Diagnostic endpoints
 

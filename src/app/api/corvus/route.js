@@ -1,5 +1,6 @@
 import { getSession } from '@/lib/session'
 import { categoriesContext, describeCategories, resolveCategory } from '@/lib/corvusCategories'
+import { formatWallTime, isValidTimeZone } from '@/lib/zonedTime'
 import Groq from 'groq-sdk'
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -300,16 +301,24 @@ export async function POST(request) {
   const { messages = [], events = [], todos = [], canvasAssignments = [], todoCategories = [], timezone = 'UTC' } = await request.json()
 
   const now     = new Date()
-  const tz      = timezone
+  // The browser's own zone, from the client. Validated because it is request data and
+  // an unknown zone makes every toLocale* call below throw — a 500 for the whole chat.
+  const tz      = isValidTimeZone(timezone) ? timezone : 'UTC'
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: tz })
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz })
 
+  /* Event starts are the app's floating wall-clock strings (`2026-10-08T09:00:00`) or
+     bare dates for all-day events. Parsing them with `new Date()` here reads them on the
+     *server's* clock — UTC — and formatting that in `tz` then shifted every time by the
+     reader's offset: Corvus was told a 9am class in New York was at 5am, and an all-day
+     event west of Greenwich fell on the day before. formatWallTime formats floating
+     values and dates from their own digits, and converts only real instants (a `Z` or
+     offset suffix, which Google events can carry) into `tz`. */
   const eventsCtx = events.length
     ? events.map(e => {
-        const s      = e.start || ''
-        const dt     = s ? new Date(s) : null
-        const datePart = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz }) : 'no date'
-        const timePart = (dt && s.includes('T')) ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }) : 'all-day'
+        const when     = formatWallTime(e.start || '', tz)
+        const datePart = when.date ?? 'no date'
+        const timePart = when.time ?? 'all-day'
         const source   = e.extendedProps?.source
         const typeLabel = source === 'canvas-class' ? '[CLASS]' : source === 'canvas-cal' ? '[CANVAS EVENT]' : '[EVENT]'
         return `${typeLabel} [${e.id}] "${e.title}" — ${datePart} ${timePart}${e.extendedProps?.category ? ` (${e.extendedProps.category})` : ''}`
@@ -329,9 +338,9 @@ export async function POST(request) {
         .filter(a => !a.done && !a.hidden && (!a.dueAt || new Date(a.dueAt) <= thirtyDaysOut))
         .sort((a, b) => (a.dueAt ?? 'z').localeCompare(b.dueAt ?? 'z'))
         .map(a => {
-          const due = a.dueAt
-            ? new Date(a.dueAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz })
-            : 'no due date'
+          // Canvas `dueAt` is a real UTC instant (`…Z`), so this one *is* converted into
+          // the reader's zone — 23:59 Eastern is already tomorrow in UTC.
+          const due = (a.dueAt && formatWallTime(a.dueAt, tz).date) || 'no due date'
           const status = a.submissionState === 'submitted' ? 'submitted' : a.submissionState === 'graded' ? 'graded' : 'unsubmitted'
           return `[${a.id}] [${a.courseName}] "${a.title}" — due ${due} — ${status}`
         })

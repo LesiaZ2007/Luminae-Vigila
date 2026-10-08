@@ -1,8 +1,15 @@
 /**
  * Google OAuth2 client factory.
  * Handles automatic token refresh and persists new tokens back to the DB.
+ *
+ * The client comes from `@googleapis/calendar` rather than the `googleapis` umbrella
+ * package. Its `auth.OAuth2` is the same google-auth-library `OAuth2Client` the
+ * umbrella re-exported, but the umbrella also ships a generated client for every
+ * Google API there is — ~197 MB installed, and about 12 MB of server bundle in every
+ * route that imported it, for an app that calls exactly one API (Calendar) plus one
+ * userinfo request (see /api/google/callback).
  */
-import { google }        from 'googleapis'
+import { auth }          from '@googleapis/calendar'
 import { upsertAccount } from './googleTokenStore'
 
 /**
@@ -29,7 +36,7 @@ function getRedirectUri(origin) {
 }
 
 export function makeOAuth2Client(origin) {
-  return new google.auth.OAuth2(
+  return new auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     getRedirectUri(origin),
@@ -38,8 +45,9 @@ export function makeOAuth2Client(origin) {
 
 /**
  * Returns an authenticated OAuth2 client for a stored account.
- * If the access token has expired, googleapis will refresh it automatically
- * and the 'tokens' event persists the new tokens back to the DB.
+ * If the access token has expired, google-auth-library's OAuth2Client refreshes it
+ * on the next request automatically (it holds the refresh token), and the 'tokens'
+ * event it emits persists the new tokens back to the DB.
  *
  * The account object must include { id, userId, email, accessToken, refreshToken, expiresAt }.
  */

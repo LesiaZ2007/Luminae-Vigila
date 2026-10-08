@@ -9,10 +9,10 @@
  *   Authorization: Bearer $CRON_SECRET
  *
  * Scheduled once a day in vercel.json (11:00 UTC — early morning in US Eastern).
- * Vercel crons run in UTC and there is no per-user timezone stored, so the send
- * time is fixed rather than local-morning-for-everyone. `tz_offset` on the
- * subscription is used to decide which calendar day to summarise, so at least
- * the *contents* are right for the reader even when the hour isn't ideal.
+ * One Vercel cron runs once for everyone, so the send time is fixed rather than
+ * local-morning-for-everyone. Each device's recorded zone decides which calendar
+ * day to summarise, so at least the *contents* are right for the reader even when
+ * the hour isn't ideal.
  */
 import webpush from 'web-push'
 import sql     from '@/lib/db'
@@ -20,7 +20,7 @@ import { requireCron, requireVapid }           from '@/lib/cronAuth'
 import { ensurePushSchema }                    from '@/lib/pushSchema'
 import { sendToSubscription }                  from '@/lib/pushSend'
 import { buildGlance, glanceNotificationBody } from '@/lib/glance'
-import { toDateStr } from '@/lib/localDate'
+import { dateStrInZone, resolveUserZone }      from '@/lib/zonedTime'
 
 export async function GET(request) {
   const denied = await requireCron(request, 'daily')
@@ -40,14 +40,14 @@ export async function GET(request) {
   await ensurePushSchema()
 
   const subs = await sql`
-    SELECT id, user_id, endpoint, p256dh, auth, tz_offset
+    SELECT id, user_id, endpoint, p256dh, auth, tz_offset, time_zone
     FROM push_subscriptions
     WHERE daily_enabled = true
   `
 
   // Grouped by user so a reader with several devices gets one pair of todos/events
   // queries rather than one pair per device — the rows don't vary by device, only
-  // `tz_offset` below does, and that only picks which calendar day to summarise.
+  // the device's zone below does, and that only picks which calendar day to summarise.
   const subsByUser = new Map()
   for (const sub of subs) {
     const list = subsByUser.get(sub.user_id)
@@ -78,10 +78,13 @@ export async function GET(request) {
 
     await Promise.all(userSubs.map(async sub => {
       try {
-        // tz_offset is getTimezoneOffset(): minutes to ADD to local to reach UTC,
-        // so subtracting it converts server-UTC "now" into the reader's wall clock.
-        const local   = new Date(Date.now() - (sub.tz_offset ?? 0) * 60 * 1000)
-        const dateStr = toDateStr(local)
+        // "Today" on this device's own calendar: its IANA zone when it recorded one
+        // (right on both sides of a DST change), else the fixed offset from
+        // `tz_offset`, else UTC. Per device, not per account — a reader whose phone is
+        // travelling gets the phone's today on the phone. The date is computed in the
+        // named zone outright; formatting a shifted Date with local getters, as this
+        // used to, was only correct because the server happens to run in UTC.
+        const dateStr = dateStrInZone(Date.now(), resolveUserZone(sub))
 
         const glance = buildGlance({ todos, events, dateStr })
 

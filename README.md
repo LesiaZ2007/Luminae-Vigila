@@ -1446,6 +1446,16 @@ It is rate limited server-side to 20 requests a minute per user to protect the A
 returning 429 with a 30-second retry hint; the send button then shows a countdown and
 disables the input rather than letting you hammer it.
 
+**It sees your times as you wrote them.** The schedule Corvus is handed is built on the
+server, which runs in UTC, and it used to parse each event's floating start time there and
+then format it in your zone — shifting every event by your UTC offset. Asked about a 9am
+class in New York, it would confidently say 5am; an all-day event, read as UTC midnight,
+landed on the day before for anyone west of Greenwich. Floating times and all-day dates are
+now described from their own digits, with no conversion at all, and only values that are
+genuinely instants — a Google event's `-04:00`, a Canvas due date's `Z` — are converted
+into your zone. An unrecognised zone from the browser falls back to UTC rather than failing
+the whole message.
+
 ### Reminders, categories and steps
 
 **Reminders by asking.** "remind me 30 minutes before", "remind me the day before",
@@ -1581,6 +1591,18 @@ Connect multiple Google accounts and toggle individual calendars on or off. Even
 auto-refresh every five minutes, and visibility toggles and custom colours are never
 reset by a background sync. Signing in to Luminae Vigila does not auto-connect Google
 Calendar — that is a separate, explicit step.
+
+The server talks to Google through
+[`@googleapis/calendar`](https://www.npmjs.com/package/@googleapis/calendar), not the
+`googleapis` umbrella package. The umbrella bundles a generated client for every Google
+API there is — about 197 MB installed — and every route that touched Google loaded about
+12 MB of it, for an app that calls exactly one API. The slim package's `auth.OAuth2` is
+the same google-auth-library client, so sign-in, token refresh and the health check are
+unchanged; the one call outside Calendar, reading your email after sign-in, is a plain
+authorised request to Google's userinfo endpoint. Each Google route now loads about
+0.55 MB, and the whole server build is about 65 MB smaller. Current releases of the
+package require Node.js 22 or newer, so the Vercel project has to build and run on 22.x
+or later.
 
 ### Reconnecting, and hidden calendars that stay hidden
 
@@ -1799,6 +1821,46 @@ overlapping pingers cannot double-send.
 a stray `_comment` fails the build. Explanations live in
 [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) instead.
 
+### Reminders fire on your clock, not the server's
+
+Every time the app stores is a *floating* wall-clock time: an event at
+`2026-10-08T09:00:00`, a task due on `2026-10-08`, a custom reminder at
+`2026-10-08T08:30:00`, none of them with a zone attached. In the browser that is exactly
+right — `new Date()` reads it as 9am wherever the browser is, which is what you meant when
+you typed it. The cron is not in your browser. Vercel runs it in UTC, where the same
+`new Date()` means 9am *UTC*, so a 9:00 class in New York with a 15-minute reminder was
+pushed at 08:45 UTC: **4:45 in the morning**. East of Greenwich it went the other way and
+arrived hours late. Task reminders and class-rule reminders had the same fault, counting
+back from a UTC midnight rather than yours.
+
+So each device now tells the server its **IANA time zone** when it subscribes
+(`America/New_York`, from `Intl.DateTimeFormat().resolvedOptions().timeZone`), stored in
+`push_subscriptions.time_zone`, and the cron reads your times on that clock
+([`lib/zonedTime.js`](src/lib/zonedTime.js)). A zone *name* rather than the offset the
+subscription already carried, because an offset is only right for the season it was
+recorded in: a reminder set in March would be an hour out by April. The name carries the
+zone's own daylight-saving rules, including the two awkward nights — a time in the hour
+the clocks skip is read as the moment they would have shown it (02:30 becomes 03:30), and
+a time in the hour that happens twice takes the first one, both exactly as the browser
+does, so the push and the in-tab notification agree.
+
+Devices that subscribed before this have no zone recorded. They fall back to the old
+offset as a fixed one — right half the year, an hour out the other half, and still far
+better than UTC — and pick up the name the next time the app re-subscribes them. A
+re-subscribe that sends no zone (an older copy of the app) never erases one already
+stored. If your devices disagree, say a phone abroad, the zone most of them report wins,
+ties broken alphabetically. The choice has to be *stable* more than it has to be clever:
+a reminder's de-duplication key includes its fire time, so a zone that flipped between two
+scans would make one reminder look like two.
+
+That same key is why **one reminder may arrive twice around the deploy of this fix**:
+anything the old code already pushed at the wrong time has a different fire time now, so
+it is a new key, and it is sent once more at the right time.
+
+Deleted items no longer remind you either. A delete is a tombstone that keeps syncing so
+your other devices hear about it (see [Sync](#sync)), which means the row — reminder and
+all — stays in the database for the retention window, and the cron used to keep firing it.
+
 ### The daily glance and the Sunday digest
 
 A morning push with the day's counts and the first thing on the calendar:
@@ -1808,14 +1870,29 @@ A morning push with the day's counts and the first thing on the calendar:
 Tapping it opens `/today`; the service worker honours a `url` in the push payload,
 same-origin only. It is **silent on an empty day**, because a push that says "nothing
 today" every morning trains you to ignore the app's notifications entirely, which then
-costs you the reminders that matter. It runs at `0 11 * * *` UTC. Vercel crons run in UTC
-with no per-user send time, but subscriptions store the device's `tz_offset`, so the
-*contents* are computed against the reader's calendar day even when the hour is not
-ideal.
+costs you the reminders that matter. It runs at `0 11 * * *` UTC. Vercel crons run once
+for everyone with no per-user send time, but each subscription records its device's time
+zone (see [above](#reminders-fire-on-your-clock-not-the-servers)), so the *contents* are
+computed against that device's own calendar day even when the hour is not ideal — and
+correctly on the morning after the clocks change, which the stored offset alone got wrong.
+It is decided per device rather than per account, so a phone that is travelling gets the
+phone's "today".
 
 Opted-in users also get a Sunday 6pm UTC digest previewing the coming week:
 
 > **Your week ahead** — 4 tasks, 2 events — busiest day: Wednesday
+
+"The coming week" is today through seven days from now **on the reader's calendar**, cut
+per device in its recorded zone the same way the glance picks its day. Each task is filed
+under its due date and each event under the date its start time falls on, as you wrote
+them. It used to compare those dates against the server's UTC clock instead, so the window
+was shifted by your offset at both ends: in Tokyo, where the Sunday run lands at 3am on
+Monday, the "week ahead" still began with Sunday's tasks, and in New York an event at 3pm
+that Sunday, four hours away, was dropped because its digits were compared against 18:00
+UTC. A timed event earlier today is left out, since it is behind
+you rather than ahead; deleted tasks and events are no longer counted; and the body no
+longer reads "2 events, — busiest day", which came from joining the busiest-day clause on
+with a comma.
 
 Toggle it in the focus timer's "Your week" section. It requires sign-in, and the cron is
 configured in `vercel.json` against `GET /api/push/digest`, protected by the same bearer
@@ -2828,6 +2905,13 @@ instead of the ping cadence.
 Cold starts always scan: module state dies with the process, and no information is never a
 reason to skip. See [`lib/reminderWindow.js`](src/lib/reminderWindow.js).
 
+A scan does read one table more than it used to. The subscriptions were fetched only when
+something was actually due; now that every fire time depends on its owner's time zone (see
+[Reminders fire on your clock](#reminders-fire-on-your-clock-not-the-servers)), they are
+read on every scan, in parallel with the reminder queries, and the same rows are reused for
+the sends. That is one small extra query per *scan*, not per ping — the skipped ticks
+above still open no connection at all — and it adds no latency.
+
 ### The rest of it
 
 - **DDL on every single request.** The self-healing-schema pattern is good — a fresh
@@ -2873,7 +2957,7 @@ reason to skip. See [`lib/reminderWindow.js`](src/lib/reminderWindow.js).
   the loop, so an account with notifications on three devices cost three identical reads.
   Both now group subscriptions by account and read once per account. The daily glance
   still builds each device's message on its own, because each device reports its own
-  timezone offset and "today" can differ between them.
+  time zone and "today" can differ between them.
 - **Four independent reads in a row.** The notification status check awaited its
   subscriptions, digest setting, cron pings and recent sends one after another; they now
   run concurrently.
@@ -3020,7 +3104,7 @@ caught rather than thrown out of an effect, so it cannot take the planner down w
 | Calendar | [FullCalendar 6](https://fullcalendar.io) — daygrid, timegrid, interaction |
 | Notes editor | [Tiptap 3](https://tiptap.dev) on ProseMirror |
 | Assistant | [Groq](https://groq.com) (`groq-sdk`), `openai/gpt-oss-120b` by default |
-| Integrations | Google Calendar (`googleapis`), Canvas LMS REST API and ICS feed |
+| Integrations | Google Calendar (`@googleapis/calendar`), Canvas LMS REST API and ICS feed |
 | Push | `web-push` with VAPID, driven by an external one-minute cron |
 | Auth | Google OAuth 2.0, [jose](https://github.com/panva/jose) JWT sessions in an httpOnly cookie |
 | Icons | [Lucide](https://lucide.dev) |
@@ -3068,9 +3152,11 @@ The areas carrying the most test weight, because they are where a silent bug cos
   an untick beating a stale tick, legacy unstamped rows unioning, subtask tombstones
   surviving a round trip through the edit modal, and a restored backup winning the next
   merge.
-- **Dates** — `localDate`, `dateShift`, `eventSpan`, `todoBuckets`. Local-versus-UTC
-  derivation, whole-day arithmetic across DST and leap days, and the two opposite
-  end-date conventions for all-day and timed events.
+- **Dates** — `localDate`, `dateShift`, `eventSpan`, `todoBuckets`, `zonedTime`.
+  Local-versus-UTC derivation, whole-day arithmetic across DST and leap days, the two
+  opposite end-date conventions for all-day and timed events, and reading a floating time
+  in a *named* zone on the server — New York, Berlin and Tokyo, both DST nights, the hour
+  that does not exist and the one that happens twice.
 - **Import and export** — `backup`, `icsExport`, `ics`. Including a round trip: what
   `icsExport` writes is read back by `parseIcs`, the reader the ICS import uses, along with
   date-only, `Z`, floating and `TZID` values (one `TZID` case sits in the weeks when the US
@@ -3081,6 +3167,14 @@ The areas carrying the most test weight, because they are where a silent bug cos
 - **Storage and timing** — `usePersist` (a corrupt key sparing the others, no `[]` written
   over stored data on mount, an update queued during mount surviving) and `useNow` (ticks
   land on the boundary).
+- **The push routes** — every route under `src/app/api/push/` has a `route.test.js` that
+  drives the real handler, with the database, web-push and the session faked
+  (`src/test/fakeSql.js` answers queries by their text and records every call). Testing
+  the helpers alone was not enough: a change that let one account's failed read cancel
+  every other account's daily glance got as far as review, because nothing ran the route
+  itself. These pin that isolation in the daily glance and the digest, the
+  reminder cron's no-database skip, claim-once sending, and a Tokyo subscriber's 9am
+  reminder firing at midnight UTC while the suite itself runs in New York.
 - **Domain logic** — `recurrence`, `classInstances`, `classCalendar`, `classLinks`,
   `classReminders`, `classCategories`, `grades`, `priority`, `glance`, `maps`,
   `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`,
