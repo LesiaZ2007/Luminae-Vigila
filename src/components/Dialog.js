@@ -79,9 +79,12 @@ function useIsClient() {
 }
 
 /**
- * The exit fade for a modal's own buttons: `[closing, close]`. `close(...args)` sets
- * `closing`, waits out the fade and then calls `onClose(...args)`. Only the first call
+ * The exit fade for a modal's own buttons: `[closing, close]`. `close()` sets
+ * `closing`, waits out the fade and then calls `onClose()`. Only the first call
  * counts — a second click during the fade must not close (or save) twice.
+ *
+ * `close` takes no arguments and passes none on, so it can be handed straight to an
+ * `onClick` without the click event turning up in the parent's onClose.
  */
 export function useDialogExit(onClose, ms = EXIT_MS) {
   const [closing, setClosing] = useState(false)
@@ -89,12 +92,12 @@ export function useDialogExit(onClose, ms = EXIT_MS) {
   const timer  = useRef(null)
   useLayoutEffect(() => { latest.current = onClose })
 
-  const close = useCallback((...args) => {
+  const close = useCallback(() => {
     if (timer.current) return
     setClosing(true)
     // Not cleared on unmount, on purpose: if the parent removes the modal mid-fade,
     // its onClose still has to run — that is where it resets its own state.
-    timer.current = setTimeout(() => latest.current?.(...args), ms)
+    timer.current = setTimeout(() => latest.current?.(), ms)
   }, [ms])
 
   return [closing, close]
@@ -175,7 +178,10 @@ export default function Dialog({
       const active = document.activeElement
       const inside = panel.contains(active)
       // A popover opened from the dialog lives in its own portal, outside the panel;
-      // while it has focus, Tab is its business.
+      // while it has focus, Tab is its business. Focus on <body> — after a press on
+      // the backdrop, or once the focused field was removed — is brought back in.
+      // (The backdrop deliberately doesn't hold focus on press: the blur is what
+      // commits an inline rename before a click outside saves the form.)
       if (!inside && active && active !== document.body) return
       const items = tabbablesIn(panel)
       if (items.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return }
@@ -205,8 +211,6 @@ export default function Dialog({
       className={`dialog-backdrop modal-backdrop${closing ? ' modal-closing' : ''}`}
       data-align={align}
       onPointerDown={e => { pressedOnBackdrop.current = e.target === e.currentTarget }}
-      // Keeps focus in the dialog: a press on the backdrop would otherwise move it to <body>.
-      onMouseDown={e => { if (e.target === e.currentTarget) e.preventDefault() }}
       onClick={e => {
         // A click inside a dialog is not a click on whatever the dialog was opened from.
         // Portals bubble React events up the component tree, not the DOM, so without
@@ -248,9 +252,15 @@ export function ConfirmDialog({
   destructive = false, onConfirm, onCancel,
 }) {
   // Whichever was pressed runs once the fade is over, so the parent can simply
-  // unmount the dialog in its handler.
-  const [closing, close] = useDialogExit(action => action?.())
-  const cancel = () => close(onCancel)
+  // unmount the dialog in its handler. The first answer is the one that counts.
+  const answer = useRef(null)
+  const [closing, close] = useDialogExit(() => answer.current?.())
+  const finish = action => {
+    if (answer.current) return
+    answer.current = action ?? (() => {})
+    close()
+  }
+  const cancel = () => finish(onCancel)
 
   return (
     <Dialog
@@ -269,7 +279,7 @@ export function ConfirmDialog({
                 style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
           {cancelLabel}
         </button>
-        <button type="button" onClick={() => close(onConfirm)} autoFocus={!destructive}
+        <button type="button" onClick={() => finish(onConfirm)} autoFocus={!destructive}
                 style={{ padding: '8px 14px', borderRadius: 9, border: 'none', background: destructive ? 'var(--red)' : 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}>
           {confirmLabel}
         </button>
