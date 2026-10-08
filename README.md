@@ -1541,10 +1541,14 @@ in the evening was filed under tomorrow and stayed hidden through most of the ne
 
 **Corvus loads on demand.** It is around 33 KB of the bundle that most sessions never
 open, so it is split out with `next/dynamic` like the calendar and the notes editor, and
-fetched in the background once the planner is idle so opening it is still instant. The
-task and event editors are deliberately *not* split the same way: the service worker
-caches no code, so a chunk that was never fetched cannot load once the connection drops,
-and those editors have to open offline. Corvus needs the network to do anything at all.
+fetched in the background once the planner is idle so opening it is still instant — and
+so the service worker has it cached, like every other chunk the planner has fetched (see
+[Working offline](#working-offline)). The task and event editors are deliberately *not*
+split the same way: a chunk that was never fetched still cannot load once the connection
+drops, and those editors have to open offline even on a device that lost its connection
+before the idle fetch ran. Corvus needs the network to do anything at all. Splitting the
+two editors out was measured, too: it takes about 36 KB off a 1.1 MB uncompressed first
+load, which does not pay for that window.
 
 Chat history persists to `localStorage`, capped at 50 messages and pruned oldest-first,
 and recent history is sent as context on every request so Corvus remembers the session.
@@ -2557,6 +2561,103 @@ reopen the modal.
 Android reads `shortcuts` and `share_target` **at install time**, so remove and re-add the
 PWA after deploying to see new entries.
 
+### Working offline
+
+Every task, event and note already lived in `localStorage`, so the *data* was always there
+offline. The app itself was not. Every page is rendered per request — the root layout
+reads the session cookie — so the HTML is `no-store`, and the service worker cached
+nothing. Opened with no signal, a phone showed the browser's offline dinosaur in front of a
+perfectly good copy of everything. The worker in `public/sw.js` now keeps the app shell and
+its code, and the planner opens from a cold start with no connection at all.
+
+- **Pages are network first.** A page load goes to the network and waits up to four
+  seconds; when that fails or stalls, it gets the last copy saved on this device. Four
+  seconds is long enough for a slow connection that works to still get fresh HTML, and short
+  enough that one bar of signal does not mean a blank screen. If the timeout answered, the
+  late response is still saved for next time; if there is nothing saved, the slow answer is
+  waited for rather than replaced with an error. A 5xx is treated as the server failing, so
+  the saved copy wins over it.
+- **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
+  open from the saved `/`. Those flags are read on the client, and Next takes the URL from
+  the address bar rather than from the HTML, so one copy serves every query.
+- **`/`, `/today` and `/share` are saved at install**, with every `/_next/static` file they
+  name. They are the three places the OS launches the app into directly — the icon; the
+  Today shortcut and the daily push; the share sheet and the New note shortcut — so they
+  open offline even on a device that has never visited them.
+- **A page never opened on this device** gets a small *You're offline* page with *Try
+  again*, and *Open the planner* when the planner is saved. Not the planner itself, served
+  at the wrong address: that would look like it worked while quietly dropping whatever the
+  page was for.
+- **Build files are cache first.** Everything under `/_next/static/` is content-hashed and
+  never changes, so once saved it is served without asking the network. The code-split
+  chunks — the calendar, the notes editor, Corvus — are named by no page; the planner
+  fetches all three in the background once it is idle, and that is what lands them in the
+  cache. After one online visit, all of the planner loads offline.
+- **A first visit hands its files over.** The page is not controlled until the worker has
+  installed, so on a first visit the initial load and usually the idle fetch go straight to
+  the network, past the worker. A real-browser check caught exactly that: the calendar
+  chunk was missing from the cache and only opened offline because the browser's HTTP cache
+  still held it, which on a phone is not something to count on. So the page watches its
+  resource timings and posts every `/_next/static` file that bypassed the worker (a
+  `workerStart` of 0) once there is a controller, and the worker saves those too.
+- **Icons, the manifest and the favicon** come from the cache and are refreshed in the
+  background.
+- **Left alone:** `/api/*`, because it is live data and the app keeps its own copy;
+  RSC requests, because those are client-side navigations, and when one fails Next falls
+  back to a full page load, which the rules above then handle; anything that is not a GET;
+  and other origins.
+
+**Every deploy is a new worker.** `sw.js` is a static, hand-written file, so its bytes
+would be identical on every deploy and the browser would never install a new one — nor
+know the cached code was stale. So the page registers `/sw.js?v=<build time>-<commit>`,
+from the same `APP_BUILT_AT` and `APP_COMMIT_SHA` the build marker uses: a new script URL
+is a new worker. Every caller registers through one `registerServiceWorker()` in
+`src/lib/pushClient.js`, so two code paths can never register two URLs and swap the worker
+back and forth. The worker names its caches after its version (`lv-shell-…` for pages,
+`lv-static-…` for code), skips waiting, claims open tabs, and prunes to two generations:
+the running one and the newest other. The older one is kept for a tab still running the
+previous build, whose not-yet-opened chunks can then still load. A file found only in the
+older generation is copied forward when it is served, so pruning that generation later
+cannot lose a file the current build still uses. The running version is never pruned, even
+when it sorts older than another — which is what a rollback looks like. `sw.js` itself is
+served `no-cache, no-store` with the headers from Next's PWA guide, and registered with
+`updateViaCache: 'none'`, so an update check is never answered from an HTTP cache.
+
+**`next dev` turns all of it off.** There the version is `dev`, and the worker answers no
+requests and deletes any build caches it finds on activation: hot reload and a cached chunk
+do not mix.
+
+**Registered for everyone.** The worker used to be registered only for signed-in users,
+because all it did was push. Opening offline matters at least as much without an account,
+so registration no longer waits for one. Push subscription sync still does.
+
+**Signing out drops the saved pages.** They were rendered for the signed-in session, so both
+sign-out buttons tell the worker to delete every `lv-shell-*` cache on the way out. The
+code caches stay; they are the same for everyone.
+
+**Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
+be asked once, at mount. An app opened with no connection then stayed signed out — and
+unsynced — until a reload. It now asks again on reconnect and on returning to the tab, until
+the server has answered once; a 401 counts as an answer.
+
+**If a device gets stuck.** Open any page with `?reset-offline=1`. It unregisters the
+worker, deletes every `lv-*` cache — `localStorage`, where the data is, is not touched — and
+reloads without the flag, which registers a fresh worker. Pages are network first, so this
+reaches a live page whenever there is a connection. If a broken worker ever stopped even that
+from loading, the fallback is to deploy a `public/sw.js` that removes itself. The browser
+checks the registered script for changes on navigation, and every `?v=` serves the same file,
+so devices pick it up on their next load. Remove the `registerServiceWorker()` call in the
+same deploy, or the next page load registers it again:
+
+```js
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name.startsWith('lv-')) await caches.delete(name)
+  await self.registration.unregister()
+  for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url)
+})()))
+```
+
 ### Publishing to Google Play
 
 To distribute through a Trusted Web Activity, using
@@ -2946,6 +3047,12 @@ next to it; component tests sit beside their component as `<Name>.test.jsx` and 
 jsdom with a `@vitest-environment jsdom` docblock, so the default environment stays `node`
 and the pure-logic suite does not pay for a DOM.
 
+The service worker is the exception, in `tests/sw.test.js`: `public/sw.js` is a plain
+script with nothing to import, so the test reads its text and runs it in a `node:vm`
+context whose `self`, `caches`, `fetch` and `clients` are fakes, then dispatches the events
+a browser would. Testing the real file rather than a copy of its logic is the point — a
+worker that is wrong fails on every device at once, and only on the next cold start.
+
 The suite runs with `TZ=America/New_York`, pinned in `vitest.config.js`, so
 timezone-sensitive logic is exercised deterministically rather than passing by accident on
 a UTC runner. That matters more than it sounds: a recurring theme in this codebase is
@@ -3088,7 +3195,9 @@ docs/
 ├── NOTIFICATIONS.md        # Push setup, cron wiring, troubleshooting
 └── TWA-ANDROID-WIDGET.md   # Play Store / TWA notes
 public/
-└── sw.js                   # Service worker — push events and notification clicks
+└── sw.js                   # Service worker — offline pages and code cache, push, notification clicks
+tests/
+└── sw.test.js              # Runs the real sw.js against fake caches and fetch
 
 src/
 ├── app/
