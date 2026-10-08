@@ -8,6 +8,7 @@ import {
 } from '@/lib/googlePrefs'
 import { connectGoogleAccount } from '@/lib/googleConnect'
 import { COLOR_PRESETS } from '@/lib/palette'
+import Dialog, { ConfirmDialog, useDialogExit } from '@/components/Dialog'
 
 /* ──────────────────────────────────────────────────────────
    Main modal
@@ -23,6 +24,9 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
   const [mirroring,  setMirroring]  = useState(false)
   const [mirrorMsg,  setMirrorMsg]  = useState('')
   const [mirrorErr,  setMirrorErr]  = useState(false)
+  // The account a "Disconnect?" question is open for, or null.
+  const [confirmDisconnect, setConfirmDisconnect] = useState(null)
+  const [closing, handleClose] = useDialogExit(onClose)
   const popupPollRef = useRef(null)
 
   /**
@@ -244,7 +248,6 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
 
   /* ── Disconnect account ── */
   async function handleDisconnect(accountId) {
-    if (!confirm('Disconnect this Google account?\nIts events will no longer appear in your calendar.')) return
     await fetch(`/api/google/accounts?id=${accountId}`, { method: 'DELETE' })
     setAccounts(prev => prev.filter(a => a.id !== accountId))
     setPrefs(p    => { const n = { ...p }; delete n[accountId]; return n })
@@ -262,17 +265,12 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
 
   /* ── Render ── */
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 500,
-               display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div style={{
-        background: 'var(--surface)', borderRadius: 18, width: '100%', maxWidth: 460,
-        boxShadow: 'var(--shadow-modal)', border: '1px solid var(--border)',
-        animation: 'modal-in .32s cubic-bezier(.22,1,.36,1)',
-        display: 'flex', flexDirection: 'column', maxHeight: '88vh',
-      }}>
+    <>
+    <Dialog label="Google Calendar" closing={closing} onClose={handleClose}
+            panelStyle={{
+              borderRadius: 18, width: '100%', maxWidth: 460,
+              display: 'flex', flexDirection: 'column', maxHeight: '88vh',
+            }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '18px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0, gap: 10 }}>
@@ -298,7 +296,7 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
           </button>
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', padding: 4, borderRadius: 6, display: 'flex' }}
           >
             <X size={18} />
@@ -371,7 +369,7 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
               calendarColor={cal => calendarColor(acc.id, cal)}
               onToggleCalendar={(calId, v) => toggleCalendar(acc.id, calId, v)}
               onCalendarColor={(calId, color) => setCalendarColor(acc.id, calId, color)}
-              onDisconnect={() => handleDisconnect(acc.id)}
+              onDisconnect={() => setConfirmDisconnect(acc.id)}
               onReconnect={() => handleReconnect(acc.email)}
               reconnecting={reconnecting === acc.email}
             />
@@ -421,8 +419,19 @@ export default function GoogleCalendarSettings({ onClose, onSync }) {
             </p>
           </div>
         )}
-      </div>
-    </div>
+    </Dialog>
+
+    {confirmDisconnect && (
+      <ConfirmDialog
+        title="Disconnect this Google account?"
+        message="Its events will no longer appear in your calendar."
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={() => { const id = confirmDisconnect; setConfirmDisconnect(null); handleDisconnect(id) }}
+        onCancel={() => setConfirmDisconnect(null)}
+      />
+    )}
+    </>
   )
 }
 

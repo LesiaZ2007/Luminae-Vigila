@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { X, Keyboard } from 'lucide-react'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 
 const SHORTCUTS = [
   { key: '/  or  ?', description: 'Show this shortcuts overlay' },
@@ -15,33 +16,21 @@ const SHORTCUTS = [
 ]
 
 export default function ShortcutsHelp({ onClose }) {
-  const [closing, setClosing] = useState(false)
-
-  function handleClose() {
-    setClosing(true)
-    setTimeout(onClose, 180)
-  }
+  const [closing, handleClose] = useDialogExit(onClose)
 
   useEffect(() => {
     function onKey(e) {
-      // Pressing the opening key again closes it, so / is a toggle.
-      if (e.key === 'Escape' || e.key === '?' || e.key === '/') handleClose()
+      // Pressing the opening key again closes it, so / is a toggle. Escape is the
+      // dialog's own; this is only the two opening keys.
+      if (e.key === '?' || e.key === '/') { e.preventDefault(); handleClose() }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [handleClose])
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-      onClick={handleClose}
-    >
-      <div
-        className={`modal-surface w-full overflow-hidden${closing ? ' modal-closing' : ''}`}
-        style={{ maxWidth: 420 }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog label="Keyboard shortcuts" closing={closing} onClose={handleClose}
+            className="overflow-hidden" maxWidth={420}>
         {/* Header */}
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -50,6 +39,7 @@ export default function ShortcutsHelp({ onClose }) {
           </div>
           <button
             onClick={handleClose}
+            aria-label="Close"
             style={{ padding: '6px', borderRadius: '8px', border: 'none', background: 'transparent', color: 'var(--text-3)', cursor: 'pointer' }}
           >
             <X size={16} />
@@ -106,7 +96,6 @@ export default function ShortcutsHelp({ onClose }) {
             </span>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

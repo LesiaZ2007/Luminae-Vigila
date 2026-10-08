@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, RefreshCw, ExternalLink, BookOpen } from 'lucide-react'
 import { COURSE_PALETTE, getCourseColor } from '@/lib/courseColors'
+import Dialog, { ConfirmDialog, useDialogExit } from '@/components/Dialog'
 
 // Inline Canvas "C" logo
 export function CanvasLogo({ size = 16 }) {
@@ -31,7 +32,8 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
   const [displayName,  setDisplayName]  = useState('')
   const [courses,      setCourses]      = useState([])
   const [coursesLoading, setCoursesLoading] = useState(false)
-  const [closing,      setClosing]      = useState(false)
+  const [closing, handleClose] = useDialogExit(onClose)
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [syncing,      setSyncing]      = useState(false)
   const [colorPickerFor, setColorPickerFor] = useState(null) // courseId with open color picker
   // ICS feed state — initialised directly from localStorage to avoid an effect
@@ -50,14 +52,6 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
     try { return JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}') }
     catch { return {} }
   })
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line
 
   // Persist prefs whenever they change
   useEffect(() => {
@@ -191,7 +185,6 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
   }
 
   async function handleDisconnect() {
-    if (!window.confirm('Disconnect Canvas? Your synced assignments will be removed from the app.')) return
     try {
       await fetch('/api/canvas/credential', { method: 'DELETE' })
       setConnected(false)
@@ -217,16 +210,9 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
   }
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
-      onClick={handleClose}
-    >
-      <div
-        className={`modal-surface w-full overflow-hidden${closing ? ' modal-closing' : ''}`}
-        style={{ maxWidth: 480, maxHeight: '85vh', overflowY: 'auto' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <>
+    <Dialog label="Canvas LMS" closing={closing} onClose={handleClose}
+            className="w-full overflow-hidden" panelStyle={{ maxWidth: 480, maxHeight: '85vh', overflowY: 'auto' }}>
         {/* Header */}
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -335,7 +321,7 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
 
               {/* Disconnect */}
               <button
-                type="button" onClick={handleDisconnect}
+                type="button" onClick={() => setConfirmDisconnect(true)}
                 style={{ width: '100%', padding: '9px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,.3)', background: 'rgba(239,68,68,.06)', color: 'var(--red)', fontFamily: 'inherit', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', transition: 'all .13s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,.12)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,.5)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,.06)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,.3)' }}
@@ -410,8 +396,19 @@ export default function CanvasSettingsModal({ onClose, onSync, onColorsChange, o
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
+
+    {confirmDisconnect && (
+      <ConfirmDialog
+        title="Disconnect Canvas?"
+        message="Your synced assignments will be removed from the app."
+        confirmLabel="Disconnect"
+        destructive
+        onConfirm={() => { setConfirmDisconnect(false); handleDisconnect() }}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
+    )}
+    </>
   )
 }
 

@@ -39,6 +39,7 @@ import {
   addListSubtask, patchSubtask, deleteListSubtask,
 } from '@/lib/customLists'
 import DatePicker from '@/components/DatePicker'
+import Dialog, { ConfirmDialog } from '@/components/Dialog'
 
 // ── Icon registry ──────────────────────────────────────────────────────────
 // Keys are stored in list.icon. Unknown values (legacy emojis) fall back gracefully.
@@ -215,34 +216,13 @@ function ListEditor({ initial, onSave, onCancel, saveLabel = 'Save' }) {
   )
 }
 
+// The list modals' own panel: narrower and more tightly padded than the form modals.
+const LIST_PANEL = { width: 'min(420px,100%)', borderRadius: 18, padding: '24px 24px 20px' }
+
 // ── New-list creation modal ────────────────────────────────────────────────
 export function NewListModal({ onClose, onCreate }) {
-  // Escape to close
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 2000,
-        background: 'rgba(0,0,0,.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-        animation: 'lv-backdrop-in .18s ease',
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 'min(420px,100%)', background: 'var(--surface)', borderRadius: 18,
-          border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)',
-          padding: '24px 24px 20px',
-          animation: 'modal-in .22s cubic-bezier(.22,1,.36,1)',
-        }}
-      >
+    <Dialog label="New custom list" onClose={onClose} panelStyle={LIST_PANEL}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' }}>New custom list</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 4, borderRadius: 6 }}>
@@ -254,39 +234,14 @@ export function NewListModal({ onClose, onCreate }) {
           onCancel={onClose}
           saveLabel="Create list"
         />
-      </div>
-    </div>
+    </Dialog>
   )
 }
 
 // ── Edit-list modal ────────────────────────────────────────────────────────
 function EditListModal({ list, onClose, onSave }) {
-  // Escape to close
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 2000,
-        background: 'rgba(0,0,0,.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-        animation: 'lv-backdrop-in .18s ease',
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 'min(420px,100%)', background: 'var(--surface)', borderRadius: 18,
-          border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)',
-          padding: '24px 24px 20px',
-          animation: 'modal-in .22s cubic-bezier(.22,1,.36,1)',
-        }}
-      >
+    <Dialog label="Edit list" onClose={onClose} panelStyle={LIST_PANEL}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <span style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)' }}>Edit list</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)', padding: 4, borderRadius: 6 }}>
@@ -299,8 +254,7 @@ function EditListModal({ list, onClose, onSave }) {
           onCancel={onClose}
           saveLabel="Save changes"
         />
-      </div>
-    </div>
+    </Dialog>
   )
 }
 
@@ -1077,26 +1031,14 @@ function CustomListBody({ list, isMobile, onUpdateList, onDeleteList, fullPage }
 
       {/* Delete confirm */}
       {showDeleteConfirm && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-          onClick={() => setShowDeleteConfirm(false)}
-        >
-          <div onClick={e => e.stopPropagation()}
-               style={{ width: 'min(320px,100%)', background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)', padding: '24px 20px 18px' }}>
-            <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete &ldquo;{list.name}&rdquo;?</p>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', margin: '0 0 20px' }}>All {totalCount} item{totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.</p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowDeleteConfirm(false)}
-                      style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button onClick={() => { onDeleteList(list.id); setShowDeleteConfirm(false) }}
-                      style={{ padding: '8px 14px', borderRadius: 9, border: 'none', background: '#ef4444', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}>
-                Delete list
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title={`Delete “${list.name}”?`}
+          message={`All ${totalCount} item${totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.`}
+          confirmLabel="Delete list"
+          destructive
+          onConfirm={() => { onDeleteList(list.id); setShowDeleteConfirm(false) }}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
       )}
 
       {/* Edit list modal */}
@@ -1283,32 +1225,22 @@ export default function CustomListPanel({
         )}
       </div>
 
-      {/* Tab × delete confirm dialog */}
+      {/* Tab × delete confirm dialog. A list that vanished meanwhile (deleted on
+          another device, say) simply has no confirm to show — this used to clear
+          deletingId during render, which React warns about and can loop on. */}
       {deletingId && (() => {
         const list = lists.find(l => l.id === deletingId)
-        if (!list) { setDeletingId(null); return null }
+        if (!list) return null
         const totalCount = visibleItems(list).length
         return (
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-            onClick={() => setDeletingId(null)}
-          >
-            <div onClick={e => e.stopPropagation()}
-                 style={{ width: 'min(320px,100%)', background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-modal)', padding: '24px 20px 18px' }}>
-              <p style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: '0 0 8px' }}>Delete &ldquo;{list.name}&rdquo;?</p>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', margin: '0 0 20px' }}>All {totalCount} item{totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.</p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button onClick={() => setDeletingId(null)}
-                        style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
-                  Cancel
-                </button>
-                <button onClick={() => { onDeleteList(deletingId); setDeletingId(null) }}
-                        style={{ padding: '8px 14px', borderRadius: 9, border: 'none', background: '#ef4444', color: '#fff', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer' }}>
-                  Delete list
-                </button>
-              </div>
-            </div>
-          </div>
+          <ConfirmDialog
+            title={`Delete “${list.name}”?`}
+            message={`All ${totalCount} item${totalCount !== 1 ? 's' : ''} will be removed. This cannot be undone.`}
+            confirmLabel="Delete list"
+            destructive
+            onConfirm={() => { onDeleteList(list.id); setDeletingId(null) }}
+            onCancel={() => setDeletingId(null)}
+          />
         )
       })()}
     </div>
