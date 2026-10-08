@@ -1,4 +1,4 @@
-import { google }           from 'googleapis'
+import { calendar }         from '@googleapis/calendar'
 import { getAccount, getMirrorCalendarId } from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
 import { getSession }       from '@/lib/session'
@@ -16,7 +16,7 @@ export async function GET(request) {
 
   try {
     const auth     = clientForAccount(account)
-    const calApi   = google.calendar({ version: 'v3', auth })
+    const calApi   = calendar({ version: 'v3', auth })
     const { data } = await calApi.calendarList.list({ showHidden: false })
 
     // The mirror calendar must never appear as an import source. It holds copies of

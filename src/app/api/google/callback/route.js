@@ -10,7 +10,6 @@
  *                        requires an existing session, stores tokens,
  *                        postMessages to the opener popup and closes
  */
-import { google }            from 'googleapis'
 import { makeOAuth2Client }  from '@/lib/googleAuth'
 import { upsertAccount, getAccounts } from '@/lib/googleTokenStore'
 import { findOrCreateUser }  from '@/lib/auth'
@@ -67,9 +66,10 @@ export async function GET(request) {
     const { tokens } = await oauth2.getToken(code)
     oauth2.setCredentials(tokens)
 
-    // Fetch the Google account email
-    const infoApi  = google.oauth2({ version: 'v2', auth: oauth2 })
-    const { data } = await infoApi.userinfo.get()
+    // Fetch the Google account email. A plain authorised GET on the OAuth client rather
+    // than a generated `oauth2` API client: this one endpoint is the app's only use of
+    // that API, and its client is not worth a package — see lib/googleAuth.
+    const { data } = await oauth2.request({ url: 'https://www.googleapis.com/oauth2/v2/userinfo' })
     const email    = data.email
 
     if (isLogin) {

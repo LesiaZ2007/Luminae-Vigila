@@ -9,7 +9,7 @@
  * already syncs, and re-sending the whole planner just to mirror it would double the
  * upload. See lib/googleMirror.js for why this cannot loop back into the importer.
  */
-import { google }           from 'googleapis'
+import { calendar }         from '@googleapis/calendar'
 import { getSession }       from '@/lib/session'
 import { getAccounts, getMirrorCalendarId, setMirrorCalendarId } from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
@@ -96,7 +96,7 @@ export async function GET() {
 
   try {
     const auth   = clientForAccount(account)
-    const calApi = google.calendar({ version: 'v3', auth })
+    const calApi = calendar({ version: 'v3', auth })
 
     // Ask what the grant actually covers, rather than inferring it from a call that
     // would succeed either way. Listing calendars needs only `calendar.readonly`, so
@@ -150,7 +150,7 @@ export async function POST() {
   ])
 
   try {
-    const calApi     = google.calendar({ version: 'v3', auth: clientForAccount(account) })
+    const calApi     = calendar({ version: 'v3', auth: clientForAccount(account) })
     const calendarId = await ensureMirrorCalendar(calApi, account)
 
     // The calendar's own zone is the right one for naive local datetimes: it is what
