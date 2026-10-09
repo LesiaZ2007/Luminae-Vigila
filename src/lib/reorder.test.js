@@ -187,6 +187,32 @@ describe('reassignSortOrderInGroups', () => {
     ])
   })
 
+  /* Never-ordered tasks sort after the ordered ones by date. The ones at the bottom
+     that the move did not touch stay where they are on screen, so they must not be
+     given a first sortOrder (and stamped as edited) just because their heading was
+     reordered. */
+  it('leaves the unmoved never-ordered tasks at the bottom of the heading unstamped', () => {
+    const a = { id: 'a', due: 'today', sortOrder: 0 }
+    const b = { id: 'b', due: 'today', sortOrder: 1 }
+    const u1 = { id: 'u1', due: 'today' }, u2 = { id: 'u2', due: 'today' }, u3 = { id: 'u3', due: 'today' }
+    const before = [a, b, u1, u2, u3]
+    expect(reassignSortOrderInGroups(before, [b, a, u1, u2, u3], group, before)).toEqual([
+      { id: 'b', due: 'today', sortOrder: 0 },
+      { id: 'a', due: 'today', sortOrder: 1 },
+    ])
+  })
+
+  it('still orders a never-ordered task that was itself moved, and those above it', () => {
+    const a = { id: 'a', due: 'today', sortOrder: 0 }
+    const u1 = { id: 'u1', due: 'today' }, u2 = { id: 'u2', due: 'today' }
+    const before = [a, u1, u2]
+    expect(reassignSortOrderInGroups(before, [u2, a, u1], group, before)).toEqual([
+      { id: 'u2', due: 'today', sortOrder: 0 },
+      { id: 'a',  due: 'today', sortOrder: 1 },
+      { id: 'u1', due: 'today', sortOrder: 2 },
+    ])
+  })
+
   it('still keeps clear of values held by hidden tasks', () => {
     const hidden = { id: 'h', due: 'today', sortOrder: 7, completed: true }
     const a = { id: 'a', due: 'today', sortOrder: 2 }, n = { id: 'n', due: 'today' }
