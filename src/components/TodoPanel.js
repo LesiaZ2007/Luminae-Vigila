@@ -12,7 +12,7 @@ import { todoBucketBounds, bucketForDate, UPCOMING_DAYS } from '@/lib/todoBucket
 import { todayStr as localTodayStr } from '@/lib/localDate'
 import { priorityMeta, comparePriority, PRIORITY_BARS } from '@/lib/priority'
 import useDragReorder from '@/lib/useDragReorder'
-import { reassignSortOrder } from '@/lib/reorder'
+import { reassignSortOrderInGroups } from '@/lib/reorder'
 import { TaskCheckbox, ReorderHandle, rowActionStyle } from '@/components/TaskRowParts'
 import { useSwipeActions, SwipeBackgrounds } from '@/components/SwipeActions'
 
@@ -533,20 +533,22 @@ export default function TodoPanel({
 function DraggableList({ todos, allTodos = todos, events, todoCategories, canvasClasses, todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                          canvasAssignments, onToggleCanvas, onToggleSubtask, onReorder, isMobile }) {
   const bounds = todoBucketBounds(todayStr)
+  /* The list is drawn under date headings but ordered as one array, so a move only
+     means something among the tasks under the same heading. */
+  const groupOf = t => bucketForDate(effectiveDate(t, events), bounds)
 
   const drag = useDragReorder({
     items: todos,
     // Touch reorders nothing — a horizontal drag there is a swipe.
     enabled: !!onReorder && !isMobile,
-    /* The list is drawn under date headings but ordered as one array, so a move only
-       means something among the tasks under the same heading. */
-    groupOf: t => bucketForDate(effectiveDate(t, events), bounds),
+    groupOf,
     /* `todos` is already filtered, so the visible rows trade the sortOrder values
        they hold rather than being renumbered 0..n-1 over the top of hidden ones —
-       see reassignSortOrder. Only what moved is sent, so an untouched task is not
-       stamped as edited. */
+       see reassignSortOrder. Only the heading the task moved under trades, and only
+       what changed there is sent, so a task under another heading is never stamped
+       as edited — see reassignSortOrderInGroups. */
     onCommit: ordered => {
-      const changed = reassignSortOrder(ordered, allTodos)
+      const changed = reassignSortOrderInGroups(todos, ordered, groupOf, allTodos)
       if (changed.length) onReorder(changed)
     },
   })

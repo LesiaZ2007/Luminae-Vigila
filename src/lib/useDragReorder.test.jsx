@@ -63,8 +63,20 @@ describe('useDragReorder — dragging', () => {
     render(<List items={[MILK, EGGS]} onCommit={vi.fn()} />)
     const data = dt()
     fireEvent.dragStart(row('milk'), { dataTransfer: data })
-    expect(data.setData).toHaveBeenCalledWith('text/plain', 'milk')
+    expect(data.setData).toHaveBeenCalledWith('application/x-lv-reorder', 'milk')
     expect(data.effectAllowed).toBe('move')
+  })
+
+  /* Text fields and other apps insert a drag's text/plain on drop, so carrying the id
+     that way typed it into the "Add an item…" box when a row overshot onto it. */
+  it('carries nothing a text field would insert', () => {
+    render(<List items={[MILK, EGGS]} onCommit={vi.fn()} />)
+    const data = dt()
+    fireEvent.dragStart(row('milk'), { dataTransfer: data })
+    const types = data.setData.mock.calls.map(([type]) => type)
+    expect(types).not.toContain('text/plain')
+    expect(types).not.toContain('text/html')
+    expect(types).not.toContain('text/uri-list')
   })
 
   it('dims the dragged row while the drag is live', () => {

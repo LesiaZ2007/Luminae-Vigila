@@ -642,7 +642,11 @@ cleared: the row stayed dimmed, and the list went on drawing the snapshot it too
 the drag began, so new tasks, ticks and anything synced in from another device stopped
 appearing until some later drag happened to finish on a row. Pressing the grip without
 dragging dimmed the row the same way, and Firefox would not start a drag at all, because
-the drag carried no data.
+the drag carried no data. It carries the row's id now, under a private type of its own
+rather than as plain text — Firefox only needs *some* data. Text fields, the notes editor
+and other apps insert a drag's plain text when it is let go over them, so a row dropped
+just past the top of a custom list, onto the *Add an item…* box above it, would have
+typed its internal id there.
 
 The list you drag is the filtered one — Upcoming hides finished tasks, the category chips
 hide whole categories — and a drop used to renumber only the visible tasks 0, 1, 2…, over
@@ -650,9 +654,14 @@ values the hidden ones were already using. Two tasks with the same `sortOrder` h
 order between them, so un-hiding a category put its tasks back in arbitrary places among
 the ones you had just arranged. A drop now deals the visible tasks the values they already
 held, in their new order, so a hidden task keeps its value and with it its place; a task
-that never had one gets a fresh value above everything in use. Only the tasks that
-actually moved are saved. Stamping one that stayed put would let a reorder overwrite an
-unrelated edit made to it on another device.
+that never had one gets a fresh value above everything in use. Only the heading the task
+moved under trades values, and only the tasks whose value changed there are saved.
+Stamping one that stayed put would let a reorder overwrite an unrelated edit made to it
+on another device. The deal used to run over every heading at once, so a task elsewhere
+that had never been ordered, or that the moved one passed on its way through the single
+list behind the headings, came back as changed though nothing on screen had moved. A
+heading only ever draws its own tasks, so where they stand against another heading's
+means nothing, and leaving the other headings alone keeps every one of them in order.
 
 The task rows and the custom-list rows were copies of each other, which is how the same
 drag bug came to live in both. They now share the mechanics — the drag and keyboard

@@ -345,6 +345,23 @@ describe('TodoPanel — reordering', () => {
     expect(onReorder).not.toHaveBeenCalled()
   })
 
+  /* The whole array used to be renumbered, so an unordered task under another heading
+     got a fresh slot on every reorder and was saved as edited — and an edit made to it
+     on another device could lose to that. */
+  it('saves nothing for tasks under other headings', () => {
+    const onReorder = vi.fn()
+    const OVERDUE = { id: 'o', title: 'Old reading', dueDate: '2020-01-06' } // never ordered
+    renderPanel({ todos: [READ, LAB, OVERDUE], onReorder })
+
+    act(() => grip('Read chapter 4').focus())
+    fireEvent.keyDown(grip('Read chapter 4'), { key: 'ArrowDown' })
+
+    expect(onReorder).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'b', sortOrder: 0 }),
+      expect.objectContaining({ id: 'a', sortOrder: 2 }),
+    ])
+  })
+
   it('does not open the editor from the grip', async () => {
     const user = userEvent.setup()
     const onEditClick = vi.fn()

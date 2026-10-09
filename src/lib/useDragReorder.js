@@ -5,6 +5,9 @@ import { moveId, neighbourId, applyOrder, sameOrder } from './reorder'
 
 const defaultGetId = item => item.id
 
+/** The drag's data type — private, so nothing outside the list knows what to do with it. */
+const DRAG_TYPE = 'application/x-lv-reorder'
+
 /**
  * Drag-to-reorder for a list of rows, by mouse and by keyboard.
  *
@@ -126,8 +129,11 @@ export default function useDragReorder({ items, onCommit, getId = defaultGetId, 
         if (e.target !== e.currentTarget) return
         if (e.dataTransfer) {
           e.dataTransfer.effectAllowed = 'move'
-          // Firefox will not start a drag that carries no data.
-          e.dataTransfer.setData('text/plain', String(id))
+          /* Firefox will not start a drag that carries no data, but any type will
+             do. Not text/plain: a text field, the notes editor or another app takes
+             that as text to insert, so a row let go over one — the "Add an item…"
+             box sits right above a custom list — typed its internal id into it. */
+          e.dataTransfer.setData(DRAG_TYPE, String(id))
         }
         dragRef.current = { id, order: ids, overId: null }
         setDrag({ id, order: ids })
