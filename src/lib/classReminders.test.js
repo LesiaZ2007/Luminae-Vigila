@@ -188,6 +188,44 @@ describe('fireTimeFor', () => {
     expect(fireTimeFor(null, '2026-03-04T00:00:00')).toBeNull()
     expect(fireTimeFor({ at: 'whenever' }, null)).toBeNull()
   })
+
+  /* The server runs in UTC; this suite runs in New York. A zone passed in has to beat
+     both — Tokyo's 9am is midnight UTC, and is 8pm the previous evening here. */
+  describe('read in a given zone, as the push cron does', () => {
+    const tokyo = { timeZone: 'Asia/Tokyo' }
+
+    it('counts back from the item time on the reader’s clock', () => {
+      expect(fireTimeFor({ ms: 0 }, '2026-10-08T09:00:00', tokyo)).toBe(Date.UTC(2026, 9, 8, 0))
+      expect(fireTimeFor({ ms: 15 * 60_000 }, '2026-10-08T09:00:00', tokyo)).toBe(Date.UTC(2026, 9, 7, 23, 45))
+    })
+
+    it('reads an absolute reminder on the reader’s clock too', () => {
+      expect(fireTimeFor({ at: '2026-10-08T08:30:00', ms: 0 }, null, tokyo)).toBe(Date.UTC(2026, 9, 7, 23, 30))
+    })
+
+    it('puts a task’s midnight at the reader’s midnight', () => {
+      const due = todoDueIso({ dueDate: '2026-10-08' })
+      expect(fireTimeFor({ ms: DAY }, due, { timeZone: 'America/Los_Angeles' })).toBe(Date.UTC(2026, 9, 7, 7))
+    })
+
+    it('reads a fixed-offset zone, for devices that never reported a zone name', () => {
+      expect(fireTimeFor({ ms: 0 }, '2026-10-08T09:00:00', { timeZone: { utcOffsetMinutes: -240 } }))
+        .toBe(Date.UTC(2026, 9, 8, 13))
+    })
+
+    it('leaves a Z-suffixed time alone — it is already an instant', () => {
+      expect(fireTimeFor({ ms: DAY }, '2026-03-04T23:59:00Z', tokyo)).toBe(Date.UTC(2026, 2, 4, 23, 59) - DAY)
+    })
+
+    it('is null for an unreadable time, as without a zone', () => {
+      expect(fireTimeFor({ at: 'whenever' }, null, tokyo)).toBeNull()
+      expect(fireTimeFor({ ms: DAY }, 'soon', tokyo)).toBeNull()
+    })
+
+    it('is unchanged when no zone is passed, so the browser keeps reading its own', () => {
+      expect(fireTimeFor({ ms: 0 }, '2026-10-08T09:00:00', {})).toBe(new Date('2026-10-08T09:00:00').getTime())
+    })
+  })
 })
 
 describe('todoDueIso', () => {
@@ -316,6 +354,24 @@ describe('classReminderCandidates', () => {
     expect(out).toHaveLength(1)
     expect(out[0].title).toBe('Physics 101 — Midterm')
     expect(out[0].at).toBe(new Date('2026-03-04T09:00:00').getTime() - WEEK)
+  })
+
+  it('reads task due dates and exam times on the reader’s clock when given a zone', () => {
+    const rich = makeClass({
+      reminders:  { tasks: [{ ms: DAY }], exams: [{ ms: WEEK }] },
+      exceptions: { exams: [{ date: '2026-03-04', title: 'Midterm' }] },
+    })
+    const out = classReminderCandidates({
+      classes:  [rich],
+      todos:    [{ id: 't1', title: 'Lab report', category: 'class:c1', dueDate: '2026-03-04' }],
+      timeZone: 'Asia/Tokyo',
+    })
+    const task = out.find(c => c.key.startsWith('td-'))
+    const exam = out.find(c => c.key.startsWith('ex-'))
+    expect(task.at).toBe(Date.UTC(2026, 2, 3, 15) - DAY)  // midnight in Tokyo
+    expect(exam.at).toBe(Date.UTC(2026, 2, 4, 0) - WEEK)  // 09:00 in Tokyo
+    // The key carries the corrected instant, so it is the one the cron dedups on.
+    expect(exam.key.endsWith(`-${Date.UTC(2026, 2, 4, 0) - WEEK}`)).toBe(true)
   })
 
   it('does not fire the task rule for an exam, or the exam rule for a task', () => {

@@ -26,7 +26,7 @@
  *   allNotes, onOpenNote        — linked notes, same contract as EventModal
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import {
   X, Pencil, Trash2, MapPin, ExternalLink, Clock, CalendarDays, Bell,
   Repeat, AlignLeft, EyeOff, Eye, Link2, Video, CalendarX, CalendarPlus, GraduationCap,
@@ -36,6 +36,7 @@ import { describeLocation } from '@/lib/maps'
 import { toYMDLocal }       from '@/lib/calendarView'
 import { EXAM_COLOR }       from '@/lib/classInstances'
 import ColorSwatches        from '@/components/ColorSwatches'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 
 const SOURCE_LABELS = {
   google:         'Google Calendar',
@@ -185,18 +186,10 @@ export default function EventDetailModal({
   // confuse once a popup is already open on top of an existing event.
   onNewEvent,
 }) {
-  const [closing, setClosing] = useState(false)
+  const [closing, handleClose] = useDialogExit(onClose)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const ev = useMemo(() => normalizeEvent(event), [event])
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!ev) return null
 
@@ -216,16 +209,8 @@ export default function EventDetailModal({
   const heading     = ev.courseName || cat?.label || (readOnly ? sourceLabel : 'Event')
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}
-      onClick={handleClose}
-    >
-      <div
-        className={`modal-surface${closing ? ' modal-closing' : ''}`}
-        style={{ width: '100%', maxWidth: 480, maxHeight: '85vh', overflowY: 'auto' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog label={ev.title || heading} closing={closing} onClose={handleClose}
+            panelStyle={{ width: '100%', maxWidth: 480, maxHeight: '85vh', overflowY: 'auto' }}>
         {/* Header — category or source, and the close button */}
         <div className="modal-header" style={{ gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
@@ -448,8 +433,7 @@ export default function EventDetailModal({
             )
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }
 

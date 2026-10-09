@@ -1,4 +1,4 @@
-import { google }           from 'googleapis'
+import { calendar }         from '@googleapis/calendar'
 import { getAccount }       from '@/lib/googleTokenStore'
 import { clientForAccount } from '@/lib/googleAuth'
 import { getSession }       from '@/lib/session'
@@ -49,7 +49,7 @@ export async function POST(request) {
       continue
     }
 
-    const calApi = google.calendar({ version: 'v3', auth })
+    const calApi = calendar({ version: 'v3', auth })
     let accountAuthFailed = false
 
     for (const calId of calendarIds) {

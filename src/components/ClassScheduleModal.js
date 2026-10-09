@@ -11,6 +11,7 @@ import { X, Trash2, MapPin, CalendarX, CalendarPlus, GraduationCap, Link2 } from
 import DatePicker from '@/components/DatePicker'
 import TimePicker from '@/components/TimePicker'
 import Select     from '@/components/Select'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 import { describeLocation } from '@/lib/maps'
 import { getExceptions, isDateStr, EXAM_COLOR } from '@/lib/classInstances'
 import { linkCandidates, linkedParentId, hasLinkedSections, classLinksFor } from '@/lib/classLinks'
@@ -92,7 +93,7 @@ export default function ClassScheduleModal({
   const [linkedTo,       setLinkedTo]       = useState(linkedParentId(editClass) ?? '')
   const [canvasCourses,  setCanvasCourses]  = useState([])   // [{id, name, courseCode}]
   const [error,          setError]          = useState('')
-  const [closing,        setClosing]        = useState(false)
+  const [closing, handleClose] = useDialogExit(onClose)
   const [showColorPick,  setShowColorPick]  = useState(false)
 
   // Fetch available Canvas courses (only if Canvas is connected)
@@ -123,14 +124,6 @@ export default function ClassScheduleModal({
     const ids = links.childrenOf.get(String(editClass.id)) ?? []
     return ids.map(id => classes.find(c => String(c?.id) === id)).filter(Boolean)
   }, [classes, editClass, isEdit])
-
-  function handleClose() { setClosing(true); setTimeout(onClose, 180) }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, []) // eslint-disable-line
 
   function toggleDay(i) {
     setDays(prev => prev.includes(i) ? prev.filter(d => d !== i) : [...prev, i].sort((a, b) => a - b))
@@ -177,15 +170,8 @@ export default function ClassScheduleModal({
     : 'No days selected'
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-      onClick={handleClose}
-    >
-      <div
-        className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog label={isEdit ? 'Edit class' : 'Add class'} closing={closing} onClose={handleClose}
+            className="w-full max-w-sm overflow-hidden">
         <div className="modal-header">
           <h2>{isEdit ? 'Edit Class' : 'Add Class'}</h2>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -482,7 +468,6 @@ export default function ClassScheduleModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Dialog>
   )
 }

@@ -16,6 +16,7 @@
 
 import { useState } from 'react'
 import { X, BookOpen, Sparkles } from 'lucide-react'
+import Dialog from '@/components/Dialog'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -171,15 +172,8 @@ export default function StudyPlanModal({
   const previewDates = examDate ? computeSessionDates(examDate, sessions) : []
 
   return (
-    <div
-      className={`fixed inset-0 flex items-end sm:items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-      style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-      onClick={dismiss}
-    >
-      <div
-        className={`modal-surface w-full max-w-sm overflow-hidden${closing ? ' modal-closing' : ''}`}
-        onClick={e => e.stopPropagation()}
-      >
+    <Dialog label="Generate study plan" closing={closing} onClose={dismiss}
+            align="bottom-on-mobile" className="w-full max-w-sm overflow-hidden">
         {/* Header */}
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -291,7 +285,6 @@ export default function StudyPlanModal({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

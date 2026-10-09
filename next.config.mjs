@@ -32,6 +32,23 @@ const nextConfig = {
     APP_COMMIT_SHA: commitSha(),
     APP_BUILT_AT:   new Date().toISOString(),
   },
+
+  // The service worker script must never come out of an HTTP cache: an update check
+  // that is answered from one keeps every device on the old worker, and with it the
+  // old cached code. These are the headers from Next's PWA guide; the CSP limits the
+  // worker itself to same-origin requests, which is all it ever makes.
+  async headers() {
+    return [
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type',            value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control',           value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Content-Security-Policy', value: "default-src 'self'; script-src 'self'" },
+        ],
+      },
+    ]
+  },
 };
 
 export default nextConfig;

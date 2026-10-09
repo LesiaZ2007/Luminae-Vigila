@@ -41,10 +41,14 @@ export async function POST(request) {
     UPDATE users
     SET digest_enabled = ${digest_enabled}
     WHERE id = ${session.userId}
+    RETURNING id
   `
 
   // The session carries a userId, so a miss means the account is gone underneath it.
-  if (result.count === 0) {
+  // Checked through RETURNING because the Neon driver resolves to the result *rows*
+  // (an array) unless `fullResults` is set — it has no `.count`, so testing that made
+  // this branch unreachable and a vanished account reported success.
+  if (result.length === 0) {
     return Response.json({ error: 'Account not found' }, { status: 404 })
   }
 

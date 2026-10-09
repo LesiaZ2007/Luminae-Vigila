@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic'
 import { useTheme } from 'next-themes'
 import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { useDialogOpen } from '@/lib/dialogStack'
+import Dialog from '@/components/Dialog'
 import { readStored, usePersist } from '@/lib/usePersist'
 import { useNow } from '@/lib/useNow'
 import { withThemeTransition } from '@/lib/themeTransition'
@@ -102,11 +104,12 @@ const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
   loading: () => <NotesPanelSkeleton />,
 })
 /* Corvus is 1,100 lines that most sessions never open, and it needs the network to do
-   anything, so unlike the task and event editors it never has to open offline. That
-   makes it safe to split out: the service worker caches no code, so a chunk that has
-   not been fetched yet cannot load once the connection drops. The editors stay in the
-   main bundle for exactly that reason. Corvus is also fetched in the background once
-   the planner is idle (see the effect in Home), so opening it is still instant. */
+   anything. All three split-out chunks are fetched in the background once the planner
+   is idle (see the effect in Home), so opening any of them is instant — and the service
+   worker keeps every chunk it serves, so after one online visit they all load offline
+   too. A chunk nobody has fetched yet still cannot load once the connection drops,
+   which is why the task and event editors stay in the main bundle: they have to open
+   offline even on a device that went offline before the idle fetch ran. */
 const Corvus = dynamic(() => import('@/components/Corvus'), {
   ssr: false,
   loading: () => <ListSkeleton rows={4} label="Loading Corvus" padding="20px" />,
@@ -348,14 +351,6 @@ export default function Home() {
     setTimeout(() => { setShowSearchPopup(false); setSearchClosing(false) }, 180)
   }, [])
 
-  // Escape to close search
-  useEffect(() => {
-    if (!showSearchPopup) return
-    const onKeyDown = (e) => { if (e.key === 'Escape') closeSearchPopup() }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [showSearchPopup, closeSearchPopup])
-
   // Ctrl+K / Cmd+K to open search from anywhere
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -437,6 +432,10 @@ export default function Home() {
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   // anyModalOpen suppresses non-Escape shortcuts while a blocking overlay is visible.
   const anyModalOpen = eventModal.open || showTodoModal || showGoogleSettings || showCanvasSettings || showClassModal || canvasTodoModal || showSearchPopup || showHelpOverlay
+  /* Every dialog, including the ones this list never named (the event detail view,
+     the exam and study-plan forms, the onboarding tour, a child panel's own modals) —
+     straight from the dialog stack, so a new dialog can't be forgotten here. */
+  const dialogOpen = useDialogOpen()
   useKeyboardShortcuts(
     {
       onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
@@ -444,14 +443,11 @@ export default function Home() {
       onNewNote:     () => quickCaptureNote(),
       onToggleFocus: () => setFocusOpen(v => !v),
       onShowHelp:    () => setShowHelpOverlay(true),
+      // Only reached when no dialog is open — dialogs, the search popup and the
+      // shortcuts overlay among them, take Escape from the dialog stack. What is
+      // left are the planner's own non-modal layers, one per press.
       onEscape:      () => {
-        // The shortcuts overlay handles its own Escape, and fades out before it
-        // calls onClose. Closing it here too unmounted it mid-fade, so Escape
-        // always hard-cut. Stopping here still keeps the key from also closing
-        // whatever is open underneath.
-        if (showHelpOverlay)   return
         if (focusOpen)         { setFocusOpen(false);       return }
-        if (showSearchPopup)   { closeSearchPopup();        return }
         if (corvusFloat)       { setCorvusFloat(false);     return }
       },
     },
@@ -464,11 +460,17 @@ export default function Home() {
     [events, googleEvents, eventPrefs],
   )
 
-  // Warm Corvus's chunk once the first render has settled — see the dynamic() above.
+  // Warm every split-out chunk once the first render has settled — see the dynamic()
+  // calls above. Fetching them is also what puts them in the service worker's cache,
+  // so this is the step that makes the calendar and notes open offline later.
   useEffect(() => {
     const whenIdle   = window.requestIdleCallback ?? (cb => setTimeout(cb, 2000))
     const cancelIdle = window.cancelIdleCallback  ?? clearTimeout
-    const id = whenIdle(() => { import('@/components/Corvus').catch(() => {}) })
+    const id = whenIdle(() => {
+      import('@/components/WeeklyCalendar').catch(() => {})
+      import('@/components/NotesPanel').catch(() => {})
+      import('@/components/Corvus').catch(() => {})
+    })
     return () => cancelIdle(id)
   }, [])
 
@@ -483,12 +485,33 @@ export default function Home() {
   // than in an effect, so the blank frame never paints.
   if (!isMobile && activeNav === 'settings') setActiveNav('calendar')
 
-  // Fetch current user for display / logout
+  // Fetch current user for display / logout. Retried on reconnect and on returning to
+  // the tab until the server has answered once: an app opened with no connection
+  // (which the service worker now makes possible) would otherwise stay signed out —
+  // and unsynced — until a reload. A 401 is an answer; a network error or 5xx is not.
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.user) setCurrentUser(d.user) })
-      .catch(() => {})
+    let answered = false
+    let inFlight = false
+    const load = () => {
+      if (answered || inFlight) return
+      inFlight = true
+      fetch('/api/auth/me')
+        .then(r => {
+          if (r.status >= 500) throw new Error(`auth/me ${r.status}`)
+          return r.ok ? r.json() : null
+        })
+        .then(d => { answered = true; if (d?.user) setCurrentUser(d.user) })
+        .catch(() => {})
+        .finally(() => { inFlight = false })
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    load()
+    window.addEventListener('online', load)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', load)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   /* ── Initial cloud merge ──────────────────────────────────────────────────
@@ -2995,7 +3018,10 @@ export default function Home() {
                       onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
                 <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
               </button>
-              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}>
+              {/* The worker's saved pages were rendered signed in; drop them on the way
+                  out (see public/sw.js). Fire-and-forget, so it never delays the POST. */}
+              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}
+                    onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
                 <button type="submit" title="Sign out"
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
                         onMouseEnter={e => e.currentTarget.style.color = '#fca5a5'}
@@ -3110,7 +3136,7 @@ export default function Home() {
                                 onEventDrop={handleEventDrop}
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}
-                                arrowNavEnabled={!anyModalOpen}
+                                arrowNavEnabled={!anyModalOpen && !dialogOpen}
                                 colorSwatches={eventCategories.map(c => c.color)} />
               </ErrorBoundary>
             </main>
@@ -3297,7 +3323,7 @@ export default function Home() {
                 onToggleTodo={toggleTodo}
                 onToggleSubtask={toggleSubtask}
                 onDeleteTodo={deleteTodo}
-                arrowNavEnabled={!anyModalOpen}
+                arrowNavEnabled={!anyModalOpen && !dialogOpen}
                 onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
                 onRescheduleTask={(todo, dueDate) => rescheduleTodo(todo.id, dueDate)}
                 onEventClick={ev => setDetailEvent(ev)}
@@ -3399,7 +3425,8 @@ export default function Home() {
                           style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
                   </button>
-                  <form action="/api/auth/logout" method="POST">
+                  <form action="/api/auth/logout" method="POST"
+                        onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
                     <button type="submit" title="Sign out"
                             style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
                       <LogOut size={12} /> Sign out
@@ -3704,19 +3731,11 @@ export default function Home() {
 
       {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
       {showSearchPopup && !isMobile && (
-        <div
-          onClick={closeSearchPopup}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 2000,
-            background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-            animation: searchClosing ? 'lv-backdrop-out .18s ease forwards' : 'lv-backdrop-in .18s ease',
-          }}>
-          <div onClick={e => e.stopPropagation()}
-               style={{
-                 width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
-                 background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
-                 animation: searchClosing ? 'lv-modal-out .18s ease forwards' : 'lv-modal-in .22s cubic-bezier(.22,1,.36,1)',
-               }}>
+        <Dialog label="Search everything" closing={searchClosing} onClose={closeSearchPopup}
+                panelStyle={{
+                  width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
+                  background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+                }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
               <div>
                 <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
@@ -3743,8 +3762,7 @@ export default function Home() {
                 />
               </ErrorBoundary>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {/* ── Search FAB (desktop only — mobile keeps search in bottom tab bar) ── */}

@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import { todayStr } from '@/lib/localDate'
 import useAnchoredPosition from '@/lib/useAnchoredPosition'
+import { usePopoverContainer } from './Dialog'
+import useReturnFocus from '@/lib/useReturnFocus'
 
 const DAYS   = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June',
@@ -52,6 +54,9 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
   const ref      = useRef(null)   // trigger wrapper
   const trigRef  = useRef(null)   // trigger button (for getBoundingClientRect)
   const popupRef = useRef(null)   // portal div — needed for outside-click detection
+  useReturnFocus(open, popupRef, trigRef)
+  // <body>, or the dialog this sits in, so the calendar is part of that dialog.
+  const container = usePopoverContainer()
 
   // Measures the calendar rather than assuming a height, flips only when that
   // helps, and clamps to the viewport on both axes. See lib/useAnchoredPosition.
@@ -95,7 +100,8 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
       const inPopup   = popupRef.current && popupRef.current.contains(e.target)
       if (!inTrigger && !inPopup) closePopover()
     }
-    function onKey(e) { if (e.key === 'Escape') closePopover() }
+    // preventDefault marks the key as used, so the dialog this sits in stays open.
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); closePopover() } }
     document.addEventListener('mousedown', onMouse)
     document.addEventListener('keydown',   onKey)
     return () => {
@@ -176,7 +182,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
       </button>
 
       {/* Calendar popover — rendered in a portal so it escapes any overflow:hidden parent */}
-      {open && typeof document !== 'undefined' && createPortal(
+      {open && container && createPortal(
         <div ref={popupRef} data-datepicker-popup style={{
           position: 'fixed',
           top:   popupPos.top,
@@ -295,7 +301,7 @@ export default function DatePicker({ value, onChange, min, placeholder = 'Select
             </button>
           </div>
         </div>,
-        document.body
+        container
       )}
     </div>
   )

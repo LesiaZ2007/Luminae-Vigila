@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect, useEffectEvent, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { X, Trash2, RefreshCw, EyeOff, AlertTriangle, Settings2, MapPin } from 'lucide-react'
 import TimePicker  from '@/components/TimePicker'
 import Select      from '@/components/Select'
 import DatePicker  from '@/components/DatePicker'
 import CategoryManager from '@/components/CategoryManager'
+import Dialog, { useDialogExit } from '@/components/Dialog'
 import LinkedNotes     from '@/components/LinkedNotes'
 import { describeLocation } from '@/lib/maps'
 import ColorSwatches, { sameColor } from '@/components/ColorSwatches'
@@ -229,7 +230,6 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
     _existingCustomAt ? toHHMM(_existingCustomAt) : '09:00'
   )
   const [error,         setError]         = useState('')
-  const [closing,       setClosing]       = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // For recurring events: null = scope not yet chosen, 'single' or 'all'
@@ -253,18 +253,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
   // What the event will actually be: the pick if there is one, else the category's.
   const effectiveColor = color ?? cat.color
 
-  function handleClose() {
-    setClosing(true)
-    setTimeout(onClose, 180)
-  }
-
-  // Registered once; the effect event always reaches the current handleClose.
-  const onEscape = useEffectEvent(() => handleClose())
-  useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onEscape() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  const [closing, handleClose] = useDialogExit(onClose)
 
   // Picking "Edit all in series" re-populates the form with series-level data. Done in
   // the click rather than in an effect on editScope, so the form never shows a frame of
@@ -391,11 +380,9 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
 
   return (
     <>
-    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 modal-backdrop${closing ? ' modal-closing' : ''}`}
-         style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(6px)' }}
-         onClick={handleBackdropClick}>
-      <div className={`modal-surface w-full max-w-md overflow-hidden${closing ? ' modal-closing' : ''}`}
-           onClick={e => e.stopPropagation()}>
+    <Dialog label={isEdit ? 'Edit event' : 'New event'} closing={closing}
+            onClose={handleClose} onBackdropClick={handleBackdropClick}
+            className="w-full max-w-md overflow-hidden">
 
         {/* Header */}
         <div className="modal-header">
@@ -789,8 +776,7 @@ export default function EventModal({ event, initialDate, initialEnd, initialAllD
             )}
           </form>
         )}
-      </div>
-    </div>
+    </Dialog>
 
     {showCatMgr && (
       <CategoryManager

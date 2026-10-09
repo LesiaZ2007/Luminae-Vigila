@@ -29,13 +29,22 @@ import { ddlOnce } from '@/lib/ddlOnce'
  *
  * `push_subscriptions.digest_enabled` is left in place but is no longer read.
  * Dropping a column is unrecoverable and buys nothing here.
+ *
+ * `time_zone` is the device's IANA zone name (`America/New_York`), sent on
+ * subscribe. `tz_offset` came first and is only a number of minutes: right for the
+ * season it was recorded in, an hour out for the other half of the year, and no
+ * help at all to a cron that has to turn "9am" into an instant. Nullable with no
+ * default, because "this device never said" is a real state — every subscription
+ * made before the column existed is in it — and lib/zonedTime falls back to
+ * `tz_offset` for exactly those rows.
  */
 export function ensurePushSchema() {
-  // Three round trips per request, on endpoints hit every minute, to re-prove
+  // Four round trips per request, on endpoints hit every minute, to re-prove
   // columns that cannot disappear. Memoized per process — see lib/ddlOnce.
   return ddlOnce('pushSchema', () => Promise.all([
     sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS daily_enabled BOOLEAN NOT NULL DEFAULT true`,
     sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tz_offset     INTEGER NOT NULL DEFAULT 0`,
+    sql`ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS time_zone     TEXT`,
     sql`ALTER TABLE users              ADD COLUMN IF NOT EXISTS digest_enabled BOOLEAN NOT NULL DEFAULT true`,
   ]))
 }

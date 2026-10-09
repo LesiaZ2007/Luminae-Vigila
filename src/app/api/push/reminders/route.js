@@ -15,6 +15,16 @@
  *
  * Each reminder is de-duplicated via the sent_reminders table so it fires once.
  *
+ * ## Whose 9am
+ *
+ * Every time the app stores is a floating wall-clock time — an event at
+ * `2026-10-08T09:00:00`, a task due on a date, an absolute reminder at `…T08:30:00` —
+ * and this process runs in UTC. Read with a bare `new Date()`, a New York student's
+ * 9:00 event with a 15-minute reminder was pushed at 08:45 UTC: 4:45 in the morning
+ * where they are. So each user's times are read on their own clock, from the zone their
+ * devices recorded on subscribe (see lib/zonedTime's `resolveUserZone`) — which is why
+ * the subscriptions are now read on every scan rather than only when something is due.
+ *
  * ## Most ticks do not touch the database at all
  *
  * Neon bills compute time and any query resets its idle-suspend timer, so a job
@@ -30,9 +40,11 @@ import webpush from 'web-push'
 import sql     from '@/lib/db'
 import { requireCron, requireVapid, stampCronPing } from '@/lib/cronAuth'
 import { ddlOnce }                         from '@/lib/ddlOnce'
+import { ensurePushSchema }                from '@/lib/pushSchema'
 import { sendToSubscription }              from '@/lib/pushSend'
 import { noteDisplayTitle, notePlainText, noteHasImage } from '@/lib/notes'
-import { classReminderCandidates, fireTimeFor } from '@/lib/classReminders'
+import { classReminderCandidates, fireTimeFor, todoDueIso } from '@/lib/classReminders'
+import { resolveUserZone }                 from '@/lib/zonedTime'
 import { shouldScan, recordScan, reminderWindowState, earliestFuture } from '@/lib/reminderWindow'
 
 // Only fire reminders whose scheduled time landed within this window before "now".
@@ -97,11 +109,13 @@ async function fetchReminderCandidates() {
 }
 
 /**
- * Everything every user's class-level reminder rules imply, grouped by user.
+ * Every user's class-level reminder rules, with the tasks they could apply to,
+ * grouped by user. Resolved into candidates by the caller once it knows each user's
+ * zone, because the rules count back from floating due dates and exam times.
  *
- * A rule lives on the class and is resolved here rather than stamped onto each task —
- * see lib/classReminders.js. That means the cron has to go and find the tasks, which
- * is two queries where the per-item path needs none:
+ * A rule lives on the class and is resolved at scan time rather than stamped onto each
+ * task — see lib/classReminders.js. That means the cron has to go and find the tasks,
+ * which is two queries where the per-item path needs none:
  *
  *   1. The classes carrying a rule. Cheap, and almost always empty — a deployment
  *      with no rules anywhere pays exactly this one query and nothing else.
@@ -117,9 +131,9 @@ async function fetchReminderCandidates() {
  * Canvas assignments are absent by construction — they are never persisted (see the
  * header of /api/sync), so class rules reach them only in the open tab.
  *
- * @returns {Promise<Map<string, Array>>} user_id → candidates
+ * @returns {Promise<Map<string, {classes: object[], todos: object[]}>>}
  */
-async function fetchClassCandidates() {
+async function fetchClassData() {
   let classRows
   try {
     classRows = await sql`
@@ -147,10 +161,30 @@ async function fetchClassCandidates() {
 
   const out = new Map()
   for (const [userId, classes] of classesByUser) {
-    out.set(userId, classReminderCandidates({
-      classes,
-      todos: todosByUser.get(userId) ?? [],
-    }))
+    out.set(userId, { classes, todos: todosByUser.get(userId) ?? [] })
+  }
+  return out
+}
+
+/**
+ * Every device that could receive a push, with the zone it recorded, by user.
+ *
+ * Unfiltered: one row per device that has ever subscribed, so the whole table is
+ * smaller than the round trip it would take to narrow it per user. The same rows
+ * serve twice — `time_zone`/`tz_offset` say whose clock each user's reminders are on,
+ * and the rest is what the sends need.
+ *
+ * @returns {Promise<Map<string, object[]>>} user_id → subscription rows
+ */
+async function fetchSubscriptions() {
+  const rows = await sql`
+    SELECT id, user_id, endpoint, p256dh, auth, time_zone, tz_offset FROM push_subscriptions
+  `
+  const out = new Map()
+  for (const sub of rows) {
+    const list = out.get(sub.user_id)
+    if (list) list.push(sub)
+    else out.set(sub.user_id, [sub])
   }
   return out
 }
@@ -166,27 +200,36 @@ function groupByUser(rows) {
   return out
 }
 
-/** Everything one user's own item-level reminders imply. */
-function itemCandidates({ events, todos, notes }) {
+/**
+ * Everything one user's own item-level reminders imply.
+ *
+ * `timeZone` is that user's, from `resolveUserZone` — see "Whose 9am" above.
+ *
+ * Deleted items are skipped. A delete is a tombstone that keeps syncing (see
+ * lib/tombstones), so the row — reminder and all — stays in the table for the whole
+ * retention window, and without this check a deleted event still pushed its reminder.
+ */
+function itemCandidates({ events, todos, notes }, timeZone) {
   const candidates = []
 
   for (const ev of events) {
-    if (!ev?.reminder || ev.completed) continue
-    const at = fireTimeFor(ev.reminder, ev.start)
+    if (!ev?.reminder || ev.completed || ev.deletedAt) continue
+    const at = fireTimeFor(ev.reminder, ev.start, { timeZone })
     if (at == null) continue
     candidates.push({ key: `ev-${ev.id}-${at}`, at, title: `Reminder: ${ev.title}`, body: ev.reminder.label ?? '' })
   }
   for (const td of todos) {
-    if (!td?.reminder || td.completed) continue
-    const dueIso = td.dueDate ? td.dueDate + 'T00:00:00' : null
-    const at = fireTimeFor(td.reminder, dueIso)
+    if (!td?.reminder || td.completed || td.deletedAt) continue
+    // Midnight on the due date: the one convention the class rules use too, rather
+    // than a second copy of the string concatenation that could drift from it.
+    const at = fireTimeFor(td.reminder, todoDueIso(td), { timeZone })
     if (at == null) continue
     candidates.push({ key: `td-${td.id}-${at}`, at, title: `Reminder: ${td.title}`, body: td.reminder.label ?? '' })
   }
   for (const nt of notes) {
     // Notes have no due date, so only absolute `reminder.at` values apply.
     if (!nt?.reminder || nt.trashedAt) continue
-    const at = fireTimeFor(nt.reminder, null)
+    const at = fireTimeFor(nt.reminder, null, { timeZone })
     if (at == null) continue
     // Lead with the note's own text — the reminder label is just the time,
     // which the notification already shows.
@@ -233,17 +276,26 @@ export async function GET(request) {
     process.env.VAPID_PRIVATE_KEY,
   )
 
-  // Dedup log — idempotent create, memoized so this costs a round trip once per
-  // process rather than once per scan. See lib/ddlOnce. Stamped together with the
-  // heartbeat: two independent round trips, so no reason to serialise them.
-  await Promise.all([ensureSentRemindersTable(), stampCronPing('reminders')])
+  // The dedup log and the `time_zone` column read below — idempotent DDL, memoized so
+  // each costs a round trip once per process rather than once per scan (see
+  // lib/ddlOnce). Stamped together with the heartbeat: independent round trips, so
+  // no reason to serialise them.
+  await Promise.all([ensureSentRemindersTable(), ensurePushSchema(), stampCronPing('reminders')])
 
   const windowLo = now - GRACE_MS
 
-  // Two queries for the whole deployment, not three per user.
-  const [rows, classCandidatesByUser] = await Promise.all([
+  /* Three reads for the whole deployment, not three per user, all in flight at once.
+
+     The subscriptions used to be read only when something was actually due. They are
+     now read on every scan, because a candidate's fire time depends on its user's zone
+     and cannot be computed without them. That is one more small query per *scan* — not
+     per tick, so the cheap exit above is untouched — and it runs alongside the other
+     two, so it adds no latency. The send loop reuses the same rows rather than reading
+     the table a second time. */
+  const [rows, classDataByUser, subsByUser] = await Promise.all([
     fetchReminderCandidates(),
-    fetchClassCandidates(),
+    fetchClassData(),
+    fetchSubscriptions(),
   ])
 
   const byUser = new Map()
@@ -258,18 +310,25 @@ export async function GET(request) {
     else if (row.kind === 'td') b.todos.push(row.data)
     else b.notes.push(row.data)
   }
-  for (const userId of classCandidatesByUser.keys()) bucket(userId)
+  for (const userId of classDataByUser.keys()) bucket(userId)
 
   // Build every user's candidate list first, so the next-scan time can be computed
   // across all of them before any sending happens.
   const candidatesByUser = new Map()
   const allCandidates    = []
   for (const [userId, items] of byUser) {
+    // No device means nowhere to send and no zone to read the times in. Only a
+    // subscription removed between the reads above can land here.
+    const subs = subsByUser.get(userId)
+    if (!subs?.length) continue
+    const timeZone  = resolveUserZone(subs)
+    const classData = classDataByUser.get(userId)
+
     // Reminders implied by a class rule rather than set on the item. Appended to the
     // same list, so they go through the identical grace window, claim and send path.
     const candidates = [
-      ...itemCandidates(items),
-      ...(classCandidatesByUser.get(userId) ?? []),
+      ...itemCandidates(items, timeZone),
+      ...(classData ? classReminderCandidates({ ...classData, timeZone }) : []),
     ]
     candidatesByUser.set(userId, candidates)
     allCandidates.push(...candidates)
@@ -291,42 +350,27 @@ export async function GET(request) {
     dueByUser.set(userId, dueNow)
   }
 
-  // Subscriptions are only needed if something is actually being sent, which on the
-  // overwhelming majority of scans is nothing — so this query is not paid for then.
-  if (dueByUser.size > 0) {
-    // Unfiltered: one row per device that has ever subscribed, so the whole table
-    // is smaller than the round trip it would take to narrow it per user.
-    const subRows = await sql`
-      SELECT id, user_id, endpoint, p256dh, auth FROM push_subscriptions
-    `
-    const subsByUser = new Map()
-    for (const sub of subRows) {
-      const list = subsByUser.get(sub.user_id)
-      if (list) list.push(sub)
-      else subsByUser.set(sub.user_id, [sub])
-    }
+  // Sent to the same subscription rows that supplied each user's zone — every user in
+  // dueByUser has at least one, by construction of the loop above.
+  for (const [userId, dueNow] of dueByUser) {
+    const subs = subsByUser.get(userId) ?? []
 
-    for (const [userId, dueNow] of dueByUser) {
-      const subs = subsByUser.get(userId) ?? []
-      if (subs.length === 0) continue
+    for (const c of dueNow) {
+      // Claim the reminder atomically — only the run that inserts the row sends it.
+      const claimed = await sql`
+        INSERT INTO sent_reminders (user_id, reminder_key)
+        VALUES (${userId}, ${c.key})
+        ON CONFLICT (user_id, reminder_key) DO NOTHING
+        RETURNING reminder_key
+      `
+      if (claimed.length === 0) continue // already sent by an earlier scan
 
-      for (const c of dueNow) {
-        // Claim the reminder atomically — only the run that inserts the row sends it.
-        const claimed = await sql`
-          INSERT INTO sent_reminders (user_id, reminder_key)
-          VALUES (${userId}, ${c.key})
-          ON CONFLICT (user_id, reminder_key) DO NOTHING
-          RETURNING reminder_key
-        `
-        if (claimed.length === 0) continue // already sent by an earlier scan
-
-        const payload = JSON.stringify({ title: c.title, body: c.body, tag: c.key })
-        await Promise.all(subs.map(async sub => {
-          const result = await sendToSubscription(sub, payload)
-          if (result.ok) sent++
-          else failed++
-        }))
-      }
+      const payload = JSON.stringify({ title: c.title, body: c.body, tag: c.key })
+      await Promise.all(subs.map(async sub => {
+        const result = await sendToSubscription(sub, payload)
+        if (result.ok) sent++
+        else failed++
+      }))
     }
   }
 

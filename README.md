@@ -618,11 +618,58 @@ same colours as everywhere else.
 
 Any task takes up to twenty subtasks, added in the Add/Edit modal and checked off
 individually. A progress chip on the row shows `2/5 steps`; clicking it expands the
-checklist inline.
+checklist inline. That works from every view now: the mobile layout's Done list draws
+its rows from a separate copy of the list, and that copy never wired the step
+checkboxes up, so they took the click and changed nothing.
 
 Grab the grip handle — it appears on hover, desktop only — to drag tasks into any
 order. Order persists in a `sortOrder` field and survives refreshes and sync; tasks
-without one fall back to date sorting.
+without one fall back to date sorting. A task moves among the tasks under its own
+heading: the order is one list drawn under the date headings, so a move across a
+heading would change the stored order and nothing you could see.
+
+The grip is a real button, so the keyboard reorders too: Tab to it and press `↑` or `↓`
+to move the task one place, saved straight away, with focus staying on the task you
+moved. It shows itself on keyboard focus the way it does on hover. The row itself takes
+focus as well, and Enter or Space opens the editor the way a click does — before, the
+only way into a task was the mouse.
+
+Letting go anywhere inside the list drops the task where the preview showed it, the gap
+between two rows and the headings included; letting go outside the list, or pressing
+Escape, puts it back. Both used to go wrong in the same way. Nothing listened for the end
+of a drag, only for a drop on another row, so a drag that finished anywhere else never
+cleared: the row stayed dimmed, and the list went on drawing the snapshot it took when
+the drag began, so new tasks, ticks and anything synced in from another device stopped
+appearing until some later drag happened to finish on a row. Pressing the grip without
+dragging dimmed the row the same way, and Firefox would not start a drag at all, because
+the drag carried no data. It carries the row's id now, under a private type of its own
+rather than as plain text — Firefox only needs *some* data. Text fields, the notes editor
+and other apps insert a drag's plain text when it is let go over them, so a row dropped
+just past the top of a custom list, onto the *Add an item…* box above it, would have
+typed its internal id there.
+
+The list you drag is the filtered one — Upcoming hides finished tasks, the category chips
+hide whole categories — and a drop used to renumber only the visible tasks 0, 1, 2…, over
+values the hidden ones were already using. Two tasks with the same `sortOrder` have no
+order between them, so un-hiding a category put its tasks back in arbitrary places among
+the ones you had just arranged. A drop now deals the visible tasks the values they already
+held, in their new order, so a hidden task keeps its value and with it its place; a task
+that never had one gets a fresh value above everything in use. Only the heading the task
+moved under trades values, and only the tasks whose value changed there are saved.
+Stamping one that stayed put would let a reorder overwrite an unrelated edit made to it
+on another device. The deal used to run over every heading at once, so a task elsewhere
+that had never been ordered, or that the moved one passed on its way through the single
+list behind the headings, came back as changed though nothing on screen had moved. A
+heading only ever draws its own tasks, so where they stand against another heading's
+means nothing, and leaving the other headings alone keeps every one of them in order.
+
+The task rows and the custom-list rows were copies of each other, which is how the same
+drag bug came to live in both. They now share the mechanics — the drag and keyboard
+reordering in [`lib/useDragReorder.js`](src/lib/useDragReorder.js) with its arithmetic in
+[`lib/reorder.js`](src/lib/reorder.js), the swipe in
+[`SwipeActions.js`](src/components/SwipeActions.js), and the checkbox, grip and action
+buttons in [`TaskRowParts.js`](src/components/TaskRowParts.js) — while each keeps its own
+look, so a fix to one is a fix to both.
 
 On touch, swipe right on a task to complete it and left to delete it, with a red trash
 background as feedback. The axis locks after 6px of movement so horizontal swipes do
@@ -648,7 +695,10 @@ draft; nothing stopped it reaching the modal's own Escape handler, so it closed 
 entire form, and a modal that closes without saving takes the title, the date, the
 category and every other unsaved edit with it. Escape in a half-typed step field now
 adds the step and stays put. An empty field still closes the modal, because there is
-nothing to lose and Escape means *close* everywhere else in the app.
+nothing to lose and Escape means *close* everywhere else in the app. (The first fix for
+this stopped the key's propagation, which kept the form open in tests and not in the app;
+the field now marks the key as used instead — see [Dialogs](#dialogs) for why only that
+works.)
 
 The asymmetry is deliberate. Escape-as-cancel is the usual convention, but the cost
 here is not symmetrical: a step added by accident is one click to delete, and a step
@@ -711,6 +761,14 @@ list's tab shows a faded strikethrough with a check mark. Both clear if anything
 unchecked again. There is also drag-to-reorder by grip handle on desktop, the same
 swipe gestures as the main task list on touch, a per-list *Clear checked*, and a `×` on
 each tab that opens the same confirm dialog as the in-list delete. My Tasks has no `×`.
+
+Reordering is the task list's own, shared rather than copied: the grip moves an item with
+`↑` / `↓` as well as by drag, and a drag let go off a row puts the list back instead of
+freezing it on its drag-time snapshot, which here used to hide every item added or ticked
+until the next drag landed. A new item goes one past the highest `sortOrder` in the list
+rather than at the item count, because after a reorder and a couple of deletions the count
+can be a value a live item still holds, and the new item used to sort into the middle of
+the list instead of landing at the bottom.
 
 ---
 
@@ -1400,6 +1458,16 @@ It is rate limited server-side to 20 requests a minute per user to protect the A
 returning 429 with a 30-second retry hint; the send button then shows a countdown and
 disables the input rather than letting you hammer it.
 
+**It sees your times as you wrote them.** The schedule Corvus is handed is built on the
+server, which runs in UTC, and it used to parse each event's floating start time there and
+then format it in your zone — shifting every event by your UTC offset. Asked about a 9am
+class in New York, it would confidently say 5am; an all-day event, read as UTC midnight,
+landed on the day before for anyone west of Greenwich. Floating times and all-day dates are
+now described from their own digits, with no conversion at all, and only values that are
+genuinely instants — a Google event's `-04:00`, a Canvas due date's `Z` — are converted
+into your zone. An unrecognised zone from the browser falls back to UTC rather than failing
+the whole message.
+
 ### Reminders, categories and steps
 
 **Reminders by asking.** "remind me 30 minutes before", "remind me the day before",
@@ -1495,10 +1563,14 @@ in the evening was filed under tomorrow and stayed hidden through most of the ne
 
 **Corvus loads on demand.** It is around 33 KB of the bundle that most sessions never
 open, so it is split out with `next/dynamic` like the calendar and the notes editor, and
-fetched in the background once the planner is idle so opening it is still instant. The
-task and event editors are deliberately *not* split the same way: the service worker
-caches no code, so a chunk that was never fetched cannot load once the connection drops,
-and those editors have to open offline. Corvus needs the network to do anything at all.
+fetched in the background once the planner is idle so opening it is still instant — and
+so the service worker has it cached, like every other chunk the planner has fetched (see
+[Working offline](#working-offline)). The task and event editors are deliberately *not*
+split the same way: a chunk that was never fetched still cannot load once the connection
+drops, and those editors have to open offline even on a device that lost its connection
+before the idle fetch ran. Corvus needs the network to do anything at all. Splitting the
+two editors out was measured, too: it takes about 36 KB off a 1.1 MB uncompressed first
+load, which does not pay for that window.
 
 Chat history persists to `localStorage`, capped at 50 messages and pruned oldest-first,
 and recent history is sent as context on every request so Corvus remembers the session.
@@ -1531,6 +1603,18 @@ Connect multiple Google accounts and toggle individual calendars on or off. Even
 auto-refresh every five minutes, and visibility toggles and custom colours are never
 reset by a background sync. Signing in to Luminae Vigila does not auto-connect Google
 Calendar — that is a separate, explicit step.
+
+The server talks to Google through
+[`@googleapis/calendar`](https://www.npmjs.com/package/@googleapis/calendar), not the
+`googleapis` umbrella package. The umbrella bundles a generated client for every Google
+API there is — about 197 MB installed — and every route that touched Google loaded about
+12 MB of it, for an app that calls exactly one API. The slim package's `auth.OAuth2` is
+the same google-auth-library client, so sign-in, token refresh and the health check are
+unchanged; the one call outside Calendar, reading your email after sign-in, is a plain
+authorised request to Google's userinfo endpoint. Each Google route now loads about
+0.55 MB, and the whole server build is about 65 MB smaller. Current releases of the
+package require Node.js 22 or newer, so the Vercel project has to build and run on 22.x
+or later.
 
 ### Reconnecting, and hidden calendars that stay hidden
 
@@ -1749,6 +1833,46 @@ overlapping pingers cannot double-send.
 a stray `_comment` fails the build. Explanations live in
 [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) instead.
 
+### Reminders fire on your clock, not the server's
+
+Every time the app stores is a *floating* wall-clock time: an event at
+`2026-10-08T09:00:00`, a task due on `2026-10-08`, a custom reminder at
+`2026-10-08T08:30:00`, none of them with a zone attached. In the browser that is exactly
+right — `new Date()` reads it as 9am wherever the browser is, which is what you meant when
+you typed it. The cron is not in your browser. Vercel runs it in UTC, where the same
+`new Date()` means 9am *UTC*, so a 9:00 class in New York with a 15-minute reminder was
+pushed at 08:45 UTC: **4:45 in the morning**. East of Greenwich it went the other way and
+arrived hours late. Task reminders and class-rule reminders had the same fault, counting
+back from a UTC midnight rather than yours.
+
+So each device now tells the server its **IANA time zone** when it subscribes
+(`America/New_York`, from `Intl.DateTimeFormat().resolvedOptions().timeZone`), stored in
+`push_subscriptions.time_zone`, and the cron reads your times on that clock
+([`lib/zonedTime.js`](src/lib/zonedTime.js)). A zone *name* rather than the offset the
+subscription already carried, because an offset is only right for the season it was
+recorded in: a reminder set in March would be an hour out by April. The name carries the
+zone's own daylight-saving rules, including the two awkward nights — a time in the hour
+the clocks skip is read as the moment they would have shown it (02:30 becomes 03:30), and
+a time in the hour that happens twice takes the first one, both exactly as the browser
+does, so the push and the in-tab notification agree.
+
+Devices that subscribed before this have no zone recorded. They fall back to the old
+offset as a fixed one — right half the year, an hour out the other half, and still far
+better than UTC — and pick up the name the next time the app re-subscribes them. A
+re-subscribe that sends no zone (an older copy of the app) never erases one already
+stored. If your devices disagree, say a phone abroad, the zone most of them report wins,
+ties broken alphabetically. The choice has to be *stable* more than it has to be clever:
+a reminder's de-duplication key includes its fire time, so a zone that flipped between two
+scans would make one reminder look like two.
+
+That same key is why **one reminder may arrive twice around the deploy of this fix**:
+anything the old code already pushed at the wrong time has a different fire time now, so
+it is a new key, and it is sent once more at the right time.
+
+Deleted items no longer remind you either. A delete is a tombstone that keeps syncing so
+your other devices hear about it (see [Sync](#sync)), which means the row — reminder and
+all — stays in the database for the retention window, and the cron used to keep firing it.
+
 ### The daily glance and the Sunday digest
 
 A morning push with the day's counts and the first thing on the calendar:
@@ -1758,14 +1882,30 @@ A morning push with the day's counts and the first thing on the calendar:
 Tapping it opens `/today`; the service worker honours a `url` in the push payload,
 same-origin only. It is **silent on an empty day**, because a push that says "nothing
 today" every morning trains you to ignore the app's notifications entirely, which then
-costs you the reminders that matter. It runs at `0 11 * * *` UTC. Vercel crons run in UTC
-with no per-user send time, but subscriptions store the device's `tz_offset`, so the
-*contents* are computed against the reader's calendar day even when the hour is not
-ideal.
+costs you the reminders that matter. It runs at `0 11 * * *` UTC. Vercel crons run once
+for everyone with no per-user send time, but each subscription records its device's time
+zone (see [above](#reminders-fire-on-your-clock-not-the-servers)), so the *contents* are
+computed against that device's own calendar day even when the hour is not ideal — and
+correctly on the morning after the clocks change, which the stored offset alone got wrong.
+It is decided per device rather than per account, so a phone that is travelling gets the
+phone's "today".
 
 Opted-in users also get a Sunday 6pm UTC digest previewing the coming week:
 
 > **Your week ahead** — 4 tasks, 2 events — busiest day: Wednesday
+
+"The coming week" is today through seven days from now **on the reader's calendar**, cut
+per device in its recorded zone the same way the glance picks its day. Each task is filed
+under its due date and each event under the date its start time falls on, as you wrote
+them. It used to compare those dates against the server's UTC clock instead, so the window
+was shifted by your offset at both ends: in Tokyo, where the Sunday run lands at 3am on
+Monday, the "week ahead" still began with Sunday's tasks, and in New York, where the run
+lands at 2pm (1pm in winter), an event at 3pm that Sunday — an hour or two away — was
+dropped because its digits, `15:00`, were compared against 18:00 UTC and read as already
+past. A timed event earlier today is left out, since it is behind
+you rather than ahead; deleted tasks and events are no longer counted; and the body no
+longer reads "2 events, — busiest day", which came from joining the busiest-day clause on
+with a comma.
 
 Toggle it in the focus timer's "Your week" section. It requires sign-in, and the cron is
 configured in `vercel.json` against `GET /api/push/digest`, protected by the same bearer
@@ -2449,17 +2589,137 @@ Single keys, anywhere outside a text field:
 
 The arrow keys use the same slide animation as swipe and trackpad paging, and stand down
 for modifier combos so browser-back and text selection still work. Every shortcut is
-suppressed while typing in an input, textarea or contenteditable, and while a blocking
-modal is open — except `Esc`, which always works.
+suppressed while typing in an input, textarea or contenteditable, and while any dialog is
+open — except `Esc`, which always works. "Any dialog" is asked of the dialog stack (see
+[Dialogs](#dialogs)) rather than of a hand-kept list of which modals were open. The list
+had missed the event detail view, the exam and study-plan forms, the onboarding tour and
+every modal a panel opened for itself, so `N` with the detail view open opened the event
+form over it, and `←` paged the calendar behind the tour.
 
-`Esc` closes **one layer at a time**, innermost first, because two layers used to answer
-the same keypress. The shortcuts overlay fades out before it closes, but the planner's own
-`Esc` handler unmounted it in the same keypress, so the fade never showed; the planner now
-stops at the overlay and lets it close itself. In the focus timer's zen mode, the timer's
-handler and the planner's both listened on `window`, and the planner's — which closes the
-whole timer — was registered first, so one `Esc` meant to leave full-screen shut the timer
+`Esc` closes **one layer at a time**, innermost first, because several layers used to
+answer the same keypress. Dialogs take it from the dialog stack; only when no dialog is
+open does the planner's own handler see it, and that closes the focus timer panel or the
+floating Corvus window, one per press. In the focus timer's zen mode, the timer's handler
+and the planner's both listened on `window`, and the planner's — which closes the whole
+timer — was registered first, so one `Esc` meant to leave full-screen shut the timer
 instead. Zen mode now takes the key first, on `document`, and stops it there: the settings
 card closes, then full-screen, and the timer stays open.
+
+### Dialogs
+
+Every modal — the event and task forms, the event detail view, the class, exam and
+study-plan forms, the category manager, Google and Canvas settings, the onboarding tour,
+the shortcuts overlay, the desktop search popup and the custom-list modals — is drawn by
+one component, [`Dialog`](src/components/Dialog.js). There were sixteen hand-built ones,
+and they had drifted: five different backdrops, Escape answered by some and ignored by
+others, and no focus handling anywhere. These are the rules they now share.
+
+**Escape closes the top dialog, and only that.** Each modal used to add its own Escape
+listener to `document`, and the planner had another on `window`; nothing chose between
+them, so one press reached them all. With the category manager open, Escape went past it
+— it ignored the key — and closed the event form underneath, taking the manager with it;
+a dialog closed together with the focus timer behind it; and
+the search popup — which had a listener of its own *and* a branch in the planner's — was
+told to close twice. Now the open dialogs sit in one ordered stack
+([`lib/dialogStack.js`](src/lib/dialogStack.js)) behind a single listener, and Escape goes
+to the topmost. The category manager closes, the next press closes the event form.
+
+Something *inside* a dialog that wants Escape for itself — a rename field, the step field
+in the task form, a date, time or select popover — marks the key as used with
+`preventDefault`, and the stack leaves it alone. So Escape in a category rename cancels
+the rename and the manager stays open; Escape with the time picker open closes the clock
+and not the form. It is `preventDefault` rather than `stopPropagation` on purpose. Next
+mounts React on `document`, the same node the old modal listeners sat on, and stopping
+propagation there does not reach other listeners on that node — so the task form's step
+field, which stopped the key to keep the form open, closed it anyway in the app. In tests
+React mounts into a `div`, where stopping *does* keep the event from `document`, which is
+how that passed its tests for as long as it was broken. A mark works the same in both.
+The stack listens on `window` because a keydown reaches `window` last: every React handler
+and every `document` listener has had its turn by then, and the stack can see whether any
+of them used the key.
+
+**Clicking the backdrop closes the dialog — except in the event and task forms, where it
+saves.** Those forms are where the typing is, and a stray click outside cost every unsaved
+field; saving instead is cheap to undo, and if the form does not validate it stays open
+with the message showing. The *this event or the whole series* question that opens first
+on a repeating event closes instead, since nothing has been chosen to save yet. Confirm
+questions treat the backdrop as Cancel.
+
+A click only counts as *on the backdrop* when the press started there too. Selecting text
+in the title by dragging and letting go a little past the edge of the panel is a drag, not
+a click outside — but the browser reports a `click` on the backdrop for it, and in the two
+forms that saved a half-typed event or task mid-edit. While a dialog fades out, further
+presses and clicks are ignored: a quick double-click on the task form's backdrop used to
+save it twice, the second time during the fade.
+
+**Focus.** Opening a dialog moves focus into it, unless a field inside already took it
+with `autoFocus`. Tab and Shift+Tab wrap around inside the top dialog instead of wandering
+off to the page behind it, and when the dialog closes, focus goes back to whatever had it
+before — usually the button that opened it — so the keyboard is not dropped at the top of
+the page. Focus is *not* held on the panel when you press on the backdrop, because the
+blur is what commits an inline rename, and the click outside that follows then saves the
+form with the rename in it. Each dialog is announced as a modal dialog under its title.
+
+**A menu opened from a dialog is part of it.** The selects, date picker and time picker
+render through a portal, so no scrolling panel can clip them — and they have always
+portaled onto `<body>`, which is outside the dialog they were opened from. Once dialogs
+trapped Tab, two things went wrong there. Tab wrapped from the panel's last field straight
+back to its first and never reached an open menu, and since opening one does not move
+focus into it, a keyboard user had no way to change a form's date, category, priority or
+reminder. And the dialog is marked `aria-modal`, which tells screen readers that nothing
+outside it is available — the menus included. Inside a dialog they now portal into the
+dialog itself, so Tab runs through the panel's fields and then through the open menu
+before wrapping, and a screen reader finds the menu inside the modal. Outside a dialog
+they still go to `<body>`. A press in a menu still never counts as a press on the
+backdrop, so picking a date in the event form does not save it, and Escape in an open
+menu closes the menu and leaves the dialog up.
+
+Being reachable meant focus could now be *inside* a menu when it closed — Enter on an
+option, Enter in the date field, Escape — and closing it removed the focused element.
+Focus fell to `<body>`, which the Tab trap reads as coming from outside, so the next Tab
+went back to the form's first field and every choice meant tabbing through the whole form
+again. A menu that closes from the keyboard now hands focus back to the field that opened
+it (`lib/useReturnFocus.js`). Not after a mouse pick: Chrome focuses a clicked option too,
+and moving focus to the trigger then would only light up its focus ring.
+
+They go in beside the backdrop rather than inside it or the panel. The panel's entrance
+animation leaves a transform on it, and a transform makes an element the box that
+`position: fixed` children are placed against, so a menu in the panel would be drawn
+offset by the panel's own position. The backdrop has a z-index and a `backdrop-filter`,
+and either one would confine a menu's z-index to the dialog's own tier — under the
+toasts. The element that carries the dialog's role is a plain wrapper around the backdrop
+and the menus, with no z-index, transform or filter, so a menu inside it is positioned
+and stacked exactly as it was on `<body>`. A dialog opened from inside another one has a
+wrapper of its own, and a menu opened from it goes there, not into the dialog underneath.
+
+**One backdrop.** The scrim had been anything from 35% to 55% black, blurred or not,
+depending on who wrote the modal. It is now a single token, `--backdrop`: 40% black with a
+6px blur, which is the middle of what most modals already used, and 50% in dark mode,
+because there it darkens a page that is already dark and at 40% the panel's faint border
+was most of what set it apart.
+
+**It sits above the page, below the toasts and the popovers.** Dialogs render into
+`<body>` through a portal, at one z-index. A modal opened from inside the floating Corvus
+window used to be trapped in that window's stacking context, under anything the page drew
+above it. The tiers, lowest first: page chrome (the Corvus window, menus) up to 500; the
+focus timer panel at 2001 and the offline pill at 3000; dialogs at 3500; toasts at 3600;
+the focus timer's full-screen mode at 4000, since it is meant to cover everything; and
+from 6000 up the popovers — selects, date and time pickers, task and day menus — which
+open from inside dialogs and have to clear every one of them.
+
+Toasts sit just above dialogs because so many are raised while one is open. Marking a
+class period as an exam announces it as the study-plan dialog opens; *Sync now* in the
+Canvas settings reports its result, or an expired token, with the settings still up; and
+a reminder can come due over any form. Left at the page-chrome tier, every one of those
+would be drawn under the blurred scrim, unreadable and out of reach of a click — and a
+reminder toast is only ever shown once, so anyone without OS notifications turned on would
+simply miss it.
+
+**Questions are dialogs too.** *Disconnect this Google account?*, *Disconnect Canvas?* and
+the custom-list delete confirms are a `ConfirmDialog` rather than `window.confirm`, which
+cannot be styled, freezes the whole tab while it waits, and looks like a different app.
+For a destructive question focus starts on Cancel, so an Enter pressed out of habit does
+not delete anything.
 
 ### Today at a glance
 
@@ -2510,6 +2770,129 @@ reopen the modal.
 
 Android reads `shortcuts` and `share_target` **at install time**, so remove and re-add the
 PWA after deploying to see new entries.
+
+### Working offline
+
+Every task, event and note already lived in `localStorage`, so the *data* was always there
+offline. The app itself was not. Every page is rendered per request — the root layout
+reads the session cookie — so the HTML is `no-store`, and the service worker cached
+nothing. Opened with no signal, a phone showed the browser's offline dinosaur in front of a
+perfectly good copy of everything. The worker in `public/sw.js` now keeps the app shell and
+its code, and the planner opens from a cold start with no connection at all.
+
+- **Pages are network first.** A page load goes to the network and waits up to four
+  seconds; when that fails or stalls, it gets the last copy saved on this device. Four
+  seconds is long enough for a slow connection that works to still get fresh HTML, and short
+  enough that one bar of signal does not mean a blank screen. If there is nothing saved, the
+  slow answer is waited for rather than replaced with an error. A 5xx is treated as the
+  server failing, so the saved copy wins over it.
+- **Only the page that was shown is saved, and only once its code is.** It replaces the
+  saved copy after every `/_next/static` file it names is in the cache; if any of them
+  cannot be fetched, the old copy stays, and all of its files are already there. A page
+  that arrives *after* the timeout has already answered with the saved copy is not saved at
+  all. It used to be, and a late arrival is usually a new deploy: the page on screen is the
+  older saved one, which only ever asks for its own code, so nothing fetched the new page's
+  files. The next launch with no signal then opened the new HTML with none of its scripts —
+  static markup with none of your data on it — in place of a copy that had worked. Saving
+  only once the files a page *names* are cached is not enough on its own for a late page:
+  the calendar and notes chunks are imported later and named in no HTML, so the default tab
+  could still fail to load. The page that is shown loads all of those itself (see *Build
+  files are cache first*), which is why it is the only one worth keeping.
+- **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
+  open from the saved `/`. Those flags are read on the client, and Next takes the URL from
+  the address bar rather than from the HTML, so one copy serves every query.
+- **`/`, `/today` and `/share` are saved at install**, with every `/_next/static` file they
+  name. The same rule applies: a page whose files did not all arrive is left out, and the
+  previous build's copy goes on serving. They are the three places the OS launches the app
+  into directly — the icon; the Today shortcut and the daily push; the share sheet and the
+  New note shortcut — so they open offline even on a device that has never visited them.
+  After a sign-out they are saved again (see below).
+- **A page never opened on this device** gets a small *You're offline* page with *Try
+  again*, and *Open the planner* when the planner is saved. Not the planner itself, served
+  at the wrong address: that would look like it worked while quietly dropping whatever the
+  page was for.
+- **Build files are cache first.** Everything under `/_next/static/` is content-hashed and
+  never changes, so once saved it is served without asking the network. The code-split
+  chunks — the calendar, the notes editor, Corvus — are named by no page; the planner
+  fetches all three in the background once it is idle, and that is what lands them in the
+  cache. After one online visit that stays open until the planner is idle, all of the
+  planner loads offline.
+- **A first visit hands its files over.** The page is not controlled until the worker has
+  installed, so on a first visit the initial load and usually the idle fetch go straight to
+  the network, past the worker. A real-browser check caught exactly that: the calendar
+  chunk was missing from the cache and only opened offline because the browser's HTTP cache
+  still held it, which on a phone is not something to count on. So the page watches its
+  resource timings and posts every `/_next/static` file that bypassed the worker (a
+  `workerStart` of 0), and the worker saves those too. The list waits until the controller
+  is a worker that caches, meaning one registered as `/sw.js?v=…`. On the first visit after
+  the deploy that added the cache, the controller is still the old push-only `/sw.js`. It
+  has no message handler, so a list posted to it was dropped and the new worker never got
+  it. The list is now held for the `controllerchange` to the new worker.
+- **Icons, the manifest and the favicon** come from the cache and are refreshed in the
+  background.
+- **Left alone:** `/api/*`, because it is live data and the app keeps its own copy;
+  RSC requests, because those are client-side navigations, and when one fails Next falls
+  back to a full page load, which the rules above then handle; anything that is not a GET;
+  and other origins.
+
+**Every deploy is a new worker.** `sw.js` is a static, hand-written file, so its bytes
+would be identical on every deploy and the browser would never install a new one — nor
+know the cached code was stale. So the page registers `/sw.js?v=<build time>-<commit>`,
+from the same `APP_BUILT_AT` and `APP_COMMIT_SHA` the build marker uses: a new script URL
+is a new worker. Every caller registers through one `registerServiceWorker()` in
+`src/lib/pushClient.js`, so two code paths can never register two URLs and swap the worker
+back and forth. The worker names its caches after its version (`lv-shell-…` for pages,
+`lv-static-…` for code), skips waiting, claims open tabs, and prunes to two generations:
+the running one and the newest other. The older one is kept for a tab still running the
+previous build, whose not-yet-opened chunks can then still load. A file found only in the
+older generation is copied forward when it is served, so pruning that generation later
+cannot lose a file the current build still uses. The running version is never pruned, even
+when it sorts older than another — which is what a rollback looks like. `sw.js` itself is
+served `no-cache, no-store` with the headers from Next's PWA guide, and registered with
+`updateViaCache: 'none'`, so an update check is never answered from an HTTP cache.
+
+**`next dev` turns all of it off.** There the version is `dev`, and the worker answers no
+requests and deletes any build caches it finds on activation: hot reload and a cached chunk
+do not mix.
+
+**Registered for everyone.** The worker used to be registered only for signed-in users,
+because all it did was push. Opening offline matters at least as much without an account,
+so registration no longer waits for one. Push subscription sync still does.
+
+**Signing out drops the saved pages.** They were rendered for the signed-in session, so both
+sign-out buttons tell the worker to delete every `lv-shell-*` cache on the way out. The
+code caches stay; they are the same for everyone. That also deletes `/today` and `/share`,
+which the share sheet, the Today shortcut and the daily push open directly. So the launch
+pages are saved again, signed out, along with the first page that loads after the
+sign-out, which is the `/login` it redirects to. They are not saved straight away. The
+message goes out just before the sign-out request, while the session cookie is still set,
+and pages fetched at that moment would come back signed in. For the same reason the job
+goes to the first page *requested* after the sign-out, not the first whose answer happens
+to arrive: on a slow connection a signed-in load can still be downloading when Sign out is
+tapped, and its request carried the cookie.
+
+**Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
+be asked once, at mount. An app opened with no connection then stayed signed out — and
+unsynced — until a reload. It now asks again on reconnect and on returning to the tab, until
+the server has answered once; a 401 counts as an answer.
+
+**If a device gets stuck.** Open any page with `?reset-offline=1`. It unregisters the
+worker, deletes every `lv-*` cache — `localStorage`, where the data is, is not touched — and
+reloads without the flag, which registers a fresh worker. Pages are network first, so this
+reaches a live page whenever there is a connection. If a broken worker ever stopped even that
+from loading, the fallback is to deploy a `public/sw.js` that removes itself. The browser
+checks the registered script for changes on navigation, and every `?v=` serves the same file,
+so devices pick it up on their next load. Remove the `registerServiceWorker()` call in the
+same deploy, or the next page load registers it again:
+
+```js
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name.startsWith('lv-')) await caches.delete(name)
+  await self.registration.unregister()
+  for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url)
+})()))
+```
 
 ### Publishing to Google Play
 
@@ -2681,6 +3064,13 @@ instead of the ping cadence.
 Cold starts always scan: module state dies with the process, and no information is never a
 reason to skip. See [`lib/reminderWindow.js`](src/lib/reminderWindow.js).
 
+A scan does read one table more than it used to. The subscriptions were fetched only when
+something was actually due; now that every fire time depends on its owner's time zone (see
+[Reminders fire on your clock](#reminders-fire-on-your-clock-not-the-servers)), they are
+read on every scan, in parallel with the reminder queries, and the same rows are reused for
+the sends. That is one small extra query per *scan*, not per ping — the skipped ticks
+above still open no connection at all — and it adds no latency.
+
 ### The rest of it
 
 - **DDL on every single request.** The self-healing-schema pattern is good — a fresh
@@ -2726,7 +3116,7 @@ reason to skip. See [`lib/reminderWindow.js`](src/lib/reminderWindow.js).
   the loop, so an account with notifications on three devices cost three identical reads.
   Both now group subscriptions by account and read once per account. The daily glance
   still builds each device's message on its own, because each device reports its own
-  timezone offset and "today" can differ between them.
+  time zone and "today" can differ between them.
 - **Four independent reads in a row.** The notification status check awaited its
   subscriptions, digest setting, cron pings and recent sends one after another; they now
   run concurrently.
@@ -2873,7 +3263,7 @@ caught rather than thrown out of an effect, so it cannot take the planner down w
 | Calendar | [FullCalendar 6](https://fullcalendar.io) — daygrid, timegrid, interaction |
 | Notes editor | [Tiptap 3](https://tiptap.dev) on ProseMirror |
 | Assistant | [Groq](https://groq.com) (`groq-sdk`), `openai/gpt-oss-120b` by default |
-| Integrations | Google Calendar (`googleapis`), Canvas LMS REST API and ICS feed |
+| Integrations | Google Calendar (`@googleapis/calendar`), Canvas LMS REST API and ICS feed |
 | Push | `web-push` with VAPID, driven by an external one-minute cron |
 | Auth | Google OAuth 2.0, [jose](https://github.com/panva/jose) JWT sessions in an httpOnly cookie |
 | Icons | [Lucide](https://lucide.dev) |
@@ -2900,6 +3290,12 @@ next to it; component tests sit beside their component as `<Name>.test.jsx` and 
 jsdom with a `@vitest-environment jsdom` docblock, so the default environment stays `node`
 and the pure-logic suite does not pay for a DOM.
 
+The service worker is the exception, in `tests/sw.test.js`: `public/sw.js` is a plain
+script with nothing to import, so the test reads its text and runs it in a `node:vm`
+context whose `self`, `caches`, `fetch` and `clients` are fakes, then dispatches the events
+a browser would. Testing the real file rather than a copy of its logic is the point — a
+worker that is wrong fails on every device at once, and only on the next cold start.
+
 The suite runs with `TZ=America/New_York`, pinned in `vitest.config.js`, so
 timezone-sensitive logic is exercised deterministically rather than passing by accident on
 a UTC runner. That matters more than it sounds: a recurring theme in this codebase is
@@ -2915,9 +3311,11 @@ The areas carrying the most test weight, because they are where a silent bug cos
   an untick beating a stale tick, legacy unstamped rows unioning, subtask tombstones
   surviving a round trip through the edit modal, and a restored backup winning the next
   merge.
-- **Dates** — `localDate`, `dateShift`, `eventSpan`, `todoBuckets`. Local-versus-UTC
-  derivation, whole-day arithmetic across DST and leap days, and the two opposite
-  end-date conventions for all-day and timed events.
+- **Dates** — `localDate`, `dateShift`, `eventSpan`, `todoBuckets`, `zonedTime`.
+  Local-versus-UTC derivation, whole-day arithmetic across DST and leap days, the two
+  opposite end-date conventions for all-day and timed events, and reading a floating time
+  in a *named* zone on the server — New York, Berlin and Tokyo, both DST nights, the hour
+  that does not exist and the one that happens twice.
 - **Import and export** — `backup`, `icsExport`, `ics`. Including a round trip: what
   `icsExport` writes is read back by `parseIcs`, the reader the ICS import uses, along with
   date-only, `Z`, floating and `TZID` values (one `TZID` case sits in the weeks when the US
@@ -2928,6 +3326,14 @@ The areas carrying the most test weight, because they are where a silent bug cos
 - **Storage and timing** — `usePersist` (a corrupt key sparing the others, no `[]` written
   over stored data on mount, an update queued during mount surviving) and `useNow` (ticks
   land on the boundary).
+- **The push routes** — every route under `src/app/api/push/` has a `route.test.js` that
+  drives the real handler, with the database, web-push and the session faked
+  (`src/test/fakeSql.js` answers queries by their text and records every call). Testing
+  the helpers alone was not enough: a change that let one account's failed read cancel
+  every other account's daily glance got as far as review, because nothing ran the route
+  itself. These pin that isolation in the daily glance and the digest, the
+  reminder cron's no-database skip, claim-once sending, and a Tokyo subscriber's 9am
+  reminder firing at midnight UTC while the suite itself runs in New York.
 - **Domain logic** — `recurrence`, `classInstances`, `classCalendar`, `classLinks`,
   `classReminders`, `classCategories`, `grades`, `priority`, `glance`, `maps`,
   `reminderWindow`, `dbErrors`, `googleMirror`, `googlePrefs`, `notes`, `noteImages`,
@@ -2994,12 +3400,14 @@ changes. It flips only when flipping helps, since opening upward into an equally
 space just moves the problem. It clamps on both axes, because neither picker clamped
 horizontally and a trigger near the right edge pushed a fixed-width popover past it; when
 neither side fits at all the popover is clamped into view and given a `maxHeight` so it
-scrolls instead of spilling. `TimePicker` is now portaled to `document.body` like
-`DatePicker` — it used to be `position: absolute` inside the trigger's wrapper, so any
-scrolling ancestor clipped it and it could only ever open downward. Outside-click
-detection tests the popover *and* the trigger, so tapping the clock face no longer counts
-as clicking away. Everything recalculates on scroll captured on any ancestor, on resize,
-and on `visualViewport` resize, which is what actually fires when a mobile keyboard opens.
+scrolls instead of spilling. `TimePicker` is now portaled out of its trigger like
+`DatePicker` — onto `document.body`, or into the dialog it was opened from, which counts
+it as part of that dialog. It used to be `position: absolute` inside the trigger's
+wrapper, so any scrolling ancestor clipped it and it could only ever open downward.
+Outside-click detection tests the popover *and* the trigger, so tapping the clock face no
+longer counts as clicking away. Everything recalculates on scroll captured on any
+ancestor, on resize, and on `visualViewport` resize, which is what actually fires when a
+mobile keyboard opens.
 
 `TimePicker` offers the same time two ways, a text field and a radial clock, and both were
 awkward in ways that pushed you to the other one.
@@ -3042,7 +3450,9 @@ docs/
 ├── NOTIFICATIONS.md        # Push setup, cron wiring, troubleshooting
 └── TWA-ANDROID-WIDGET.md   # Play Store / TWA notes
 public/
-└── sw.js                   # Service worker — push events and notification clicks
+└── sw.js                   # Service worker — offline pages and code cache, push, notification clicks
+tests/
+└── sw.test.js              # Runs the real sw.js against fake caches and fetch
 
 src/
 ├── app/
@@ -3096,6 +3506,7 @@ src/
     ├── googleMirror.js     # Writing out to the luminaeVigila Google calendar
     ├── maps.js             # Classifying a location string
     ├── palette.js          # The hand-picked colour presets shared by the pickers
+    ├── dialogStack.js      # Which open dialog an Escape belongs to (Dialog is in components/)
     ├── accent.js           # The app accent colour: apply, read, save
     └── dbErrors.js         # Naming a Neon 402 as spent allowance
 ```

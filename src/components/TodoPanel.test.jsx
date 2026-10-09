@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TodoPanel from './TodoPanel'
 
@@ -269,5 +269,215 @@ describe('TodoPanel — priority is legible on the row', () => {
       .toBeLessThan(titles.indexOf('Reading response'))
     expect(titles.indexOf('Reading response'))
       .toBeLessThan(titles.indexOf('Tidy notes'))
+  })
+})
+
+/* Drag-to-reorder had no tests at all, and carried three bugs nobody had seen: a drag
+   let go anywhere but on a row froze the list, the visible rows were renumbered
+   0..n-1 over the values hidden tasks already held, and there was no way to reorder
+   without a mouse. */
+describe('TodoPanel — reordering', () => {
+  /** Minimal DataTransfer — jsdom ships none. */
+  function dt() { return { effectAllowed: null, dropEffect: null, setData: vi.fn(), getData: vi.fn() } }
+
+  // No dates, so all of them sit under the one "No Date" heading.
+  const READ   = { id: 'a', title: 'Read chapter 4', sortOrder: 0 }
+  const QUIZ   = { id: 'h', title: 'Old quiz',       sortOrder: 1, completed: true } // hidden by Upcoming
+  const LAB    = { id: 'b', title: 'Lab write-up',   sortOrder: 2 }
+  const EMAIL  = { id: 'c', title: 'Email advisor' } // never ordered
+
+  /** The row itself — it is a button named for its task. */
+  function row(title) { return screen.getByRole('button', { name: title }) }
+  function grip(title) { return screen.getByRole('button', { name: `Reorder ${title}` }) }
+  function titles() { return [...document.querySelectorAll('li p')].map(p => p.textContent) }
+
+  it('sends the dragged order, without reusing a hidden task\'s sortOrder', () => {
+    const onReorder = vi.fn()
+    renderPanel({ todos: [READ, QUIZ, LAB, EMAIL], onReorder })
+
+    fireEvent.dragStart(row('Email advisor'), { dataTransfer: dt() })
+    fireEvent.dragOver(row('Read chapter 4'), { dataTransfer: dt() })
+    fireEvent.drop(row('Read chapter 4'), { dataTransfer: dt() })
+
+    const sent = onReorder.mock.calls[0][0]
+    // The visible rows trade their own slots (0 and 2); the unordered one gets a new
+    // slot above everything. 1 is the hidden quiz's, and stays the quiz's.
+    expect(sent.map(t => [t.id, t.sortOrder])).toEqual([['c', 0], ['a', 2], ['b', 3]])
+    expect(sent.map(t => t.sortOrder)).not.toContain(QUIZ.sortOrder)
+  })
+
+  it('puts the list back, and undims the row, when a drag ends without a drop', () => {
+    const onReorder = vi.fn()
+    renderPanel({ todos: [READ, LAB, EMAIL], onReorder })
+
+    fireEvent.dragStart(row('Email advisor'), { dataTransfer: dt() })
+    fireEvent.dragOver(row('Read chapter 4'), { dataTransfer: dt() })
+    expect(titles()).toEqual(['Email advisor', 'Read chapter 4', 'Lab write-up'])
+    fireEvent.dragEnd(row('Email advisor'), { dataTransfer: dt() })
+
+    expect(onReorder).not.toHaveBeenCalled()
+    expect(titles()).toEqual(['Read chapter 4', 'Lab write-up', 'Email advisor'])
+    expect(row('Email advisor').style.opacity).toBe('1')
+  })
+
+  it('moves a task with the arrow keys on its grip', () => {
+    const onReorder = vi.fn()
+    renderPanel({ todos: [READ, QUIZ, LAB], onReorder })
+
+    act(() => grip('Read chapter 4').focus())
+    fireEvent.keyDown(grip('Read chapter 4'), { key: 'ArrowDown' })
+
+    expect(onReorder).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'b', sortOrder: 0 }),
+      expect.objectContaining({ id: 'a', sortOrder: 2 }),
+    ])
+  })
+
+  // The order is one array under several headings; a step across one changes nothing
+  // you can see, so it must not change the stored order either.
+  it('does not step a task across a date heading', () => {
+    const onReorder = vi.fn()
+    const OVERDUE = { id: 'o', title: 'Old reading', dueDate: '2020-01-06', sortOrder: 0 }
+    renderPanel({ todos: [OVERDUE, { ...READ, sortOrder: 1 }], onReorder })
+
+    fireEvent.keyDown(grip('Read chapter 4'), { key: 'ArrowUp' })
+
+    expect(onReorder).not.toHaveBeenCalled()
+  })
+
+  /* The whole array used to be renumbered, so an unordered task under another heading
+     got a fresh slot on every reorder and was saved as edited — and an edit made to it
+     on another device could lose to that. */
+  it('saves nothing for tasks under other headings', () => {
+    const onReorder = vi.fn()
+    const OVERDUE = { id: 'o', title: 'Old reading', dueDate: '2020-01-06' } // never ordered
+    renderPanel({ todos: [READ, LAB, OVERDUE], onReorder })
+
+    act(() => grip('Read chapter 4').focus())
+    fireEvent.keyDown(grip('Read chapter 4'), { key: 'ArrowDown' })
+
+    expect(onReorder).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'b', sortOrder: 0 }),
+      expect.objectContaining({ id: 'a', sortOrder: 2 }),
+    ])
+  })
+
+  it('does not open the editor from the grip', async () => {
+    const user = userEvent.setup()
+    const onEditClick = vi.fn()
+    renderPanel({ todos: [READ, LAB], onReorder: vi.fn(), onEditClick })
+
+    act(() => grip('Read chapter 4').focus())
+    await user.keyboard('{Enter}')
+    await user.click(grip('Lab write-up'))
+
+    expect(onEditClick).not.toHaveBeenCalled()
+  })
+
+  it('offers no grip when there is nothing to save the order to', () => {
+    renderPanel({ todos: [READ, LAB] })
+    expect(screen.queryByRole('button', { name: /^Reorder/ })).toBeNull()
+    expect(row('Read chapter 4')).not.toHaveAttribute('draggable')
+  })
+})
+
+/* The row opened its editor on click and on nothing else, so without a mouse there
+   was no way into a task at all. */
+describe('TodoPanel — a row opens from the keyboard', () => {
+  const TASK = { id: 't1', title: 'Essay', dueDate: '2026-09-10' }
+
+  it('opens the editor on Enter', async () => {
+    const user = userEvent.setup()
+    const onEditClick = vi.fn()
+    renderPanel({ todos: [TASK], onEditClick })
+
+    act(() => screen.getByRole('button', { name: 'Essay' }).focus())
+    await user.keyboard('{Enter}')
+
+    expect(onEditClick).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }))
+  })
+
+  it('opens it on Space too', async () => {
+    const user = userEvent.setup()
+    const onEditClick = vi.fn()
+    renderPanel({ todos: [TASK], onEditClick })
+
+    act(() => screen.getByRole('button', { name: 'Essay' }).focus())
+    await user.keyboard(' ')
+
+    expect(onEditClick).toHaveBeenCalledTimes(1)
+  })
+
+  // The controls inside the row have keys of their own.
+  it('leaves Enter on the row\'s own buttons to them', async () => {
+    const user = userEvent.setup()
+    const onEditClick = vi.fn()
+    const onToggle = vi.fn()
+    renderPanel({ todos: [TASK], onEditClick, onToggle })
+
+    act(() => screen.getByRole('button', { name: 'Mark done' }).focus())
+    await user.keyboard('{Enter}')
+
+    expect(onToggle).toHaveBeenCalledWith('t1')
+    expect(onEditClick).not.toHaveBeenCalled()
+  })
+})
+
+describe('TodoPanel — swiping on touch', () => {
+  const TASK = { id: 't1', title: 'Essay', dueDate: '2026-09-10' }
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  function swipe(el, dx) {
+    fireEvent.touchStart(el, { touches: [{ clientX: 100, clientY: 100 }] })
+    fireEvent.touchMove(el,  { touches: [{ clientX: 100 + dx / 2, clientY: 101 }] })
+    fireEvent.touchMove(el,  { touches: [{ clientX: 100 + dx, clientY: 102 }] })
+    fireEvent.touchEnd(el)
+    act(() => { vi.advanceTimersByTime(260) })
+  }
+
+  it('completes on a swipe right and deletes on a swipe left', () => {
+    const onToggle = vi.fn()
+    const onDelete = vi.fn()
+    renderPanel({ todos: [TASK], onToggle, onDelete, isMobile: true })
+
+    swipe(screen.getByRole('button', { name: 'Essay' }), 90)
+    expect(onToggle).toHaveBeenCalledWith('t1')
+
+    swipe(screen.getByRole('button', { name: 'Essay' }), -90)
+    expect(onDelete).toHaveBeenCalledWith('t1')
+  })
+
+  it('snaps back from a swipe that falls short', () => {
+    const onToggle = vi.fn()
+    renderPanel({ todos: [TASK], onToggle, isMobile: true })
+    swipe(screen.getByRole('button', { name: 'Essay' }), 50)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+})
+
+/* The mobile layout draws its Done list from a separate copy of the row list, and
+   that copy never passed the subtask handler down — the step checkboxes there took
+   the click and changed nothing. */
+describe('TodoPanel — mobile Done list', () => {
+  it('ticks a step', async () => {
+    const user = userEvent.setup()
+    const onToggleSubtask = vi.fn()
+    renderPanel({
+      todos: [{
+        id: 't1', title: 'Essay', completed: true,
+        subtasks: [{ id: 's1', title: 'Outline', completed: false }],
+      }],
+      // The stacked mobile layout only exists when there is Canvas work beside it.
+      canvasAssignments: [{ id: 'a1', title: 'Problem set', courseName: 'Physics', dueAt: '2026-09-10T23:59:00' }],
+      isMobile: true, fullPage: true, onToggleSubtask,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    await user.click(screen.getByRole('button', { name: /0\/1 step/ }))
+    await user.click(screen.getByText('Outline').parentElement.querySelector('button'))
+
+    expect(onToggleSubtask).toHaveBeenCalledWith('t1', 's1')
   })
 })

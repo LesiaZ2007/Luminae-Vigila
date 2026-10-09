@@ -11,8 +11,11 @@ const COLOR_PRESETS = [
 export default function Toast({ toasts, onDismiss }) {
   if (toasts.length === 0) return null
 
+  // Above dialogs (--z-toast in globals.css). Many toasts are raised while one is
+  // open — a Canvas sync result, "Marked as an exam" as the study plan opens, a
+  // reminder — and under the scrim they could be neither read nor dismissed.
   return (
-    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none" style={{ width: 'min(360px, calc(100vw - 32px))' }}>
+    <div className="fixed top-4 right-4 flex flex-col gap-2 pointer-events-none" style={{ zIndex: 'var(--z-toast)', width: 'min(360px, calc(100vw - 32px))' }}>
       {toasts.map(toast => (
         <div
           key={toast.id}

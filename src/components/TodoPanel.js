@@ -1,7 +1,7 @@
 'use client'
 
-import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye, GripVertical } from 'lucide-react'
+import { Fragment, useState, useMemo } from 'react'
+import { Plus, Settings2, Bell, Link2, BookOpen, RefreshCw, ExternalLink, MoreHorizontal, EyeOff, Eye } from 'lucide-react'
 import CategoryManager from '@/components/CategoryManager'
 import { mergeCategories, classCategories as deriveClassCategories, classIdFromCategoryId, isClassCategoryId as isClassCategory, findCategoryForClasses } from '@/lib/classCategories'
 import { classLinksFor, canonicalCategoryId, canonicalClassId } from '@/lib/classLinks'
@@ -11,21 +11,10 @@ import { visibleSubtasks } from '@/lib/todoMerge'
 import { todoBucketBounds, bucketForDate, UPCOMING_DAYS } from '@/lib/todoBuckets'
 import { todayStr as localTodayStr } from '@/lib/localDate'
 import { priorityMeta, comparePriority, PRIORITY_BARS } from '@/lib/priority'
-
-/**
- * Shared style for the per-row task actions (+ / trash).
- *
- * Touch gets full opacity — there is no hover to reveal them — while desktop
- * keeps them at 0.4 until the row is hovered so a long list stays calm.
- */
-function todoRowAction(hovered, isMobile) {
-  return {
-    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)',
-    padding: 2, borderRadius: 4, flexShrink: 0, display: 'flex',
-    opacity: isMobile ? 0.7 : hovered ? 1 : 0.4,
-    transition: 'opacity .13s, color .13s',
-  }
-}
+import useDragReorder from '@/lib/useDragReorder'
+import { reassignSortOrderInGroups } from '@/lib/reorder'
+import { TaskCheckbox, ReorderHandle, rowActionStyle } from '@/components/TaskRowParts'
+import { useSwipeActions, SwipeBackgrounds } from '@/components/SwipeActions'
 
 /**
  * The priority indicator: a signal-strength meter, three bars, filled by level.
@@ -256,7 +245,7 @@ export default function TodoPanel({
             ) : (
               /* In sidebar mode (!fullPage, !twoColumn): merge Canvas inline chronologically */
               <DraggableList
-                todos={filtered} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
+                todos={filtered} allTodos={todos} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
                 todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                 canvasAssignments={!twoColumn && !fullPage ? canvasAssignments.filter(a => !a.hidden && !a.done) : []}
                 onToggleCanvas={onToggleCanvas}
@@ -403,12 +392,13 @@ export default function TodoPanel({
                       <TodoItem key={todo.id} todo={todo} events={events} canvasClasses={canvasClasses}
                                 todoCategories={allCategories} todayStr={todayStr}
                                 onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
+                                onToggleSubtask={onToggleSubtask}
                                 isMobile={isMobile} />
                     ))}
                   </ul>
                 ) : (
                   <DraggableList
-                    todos={filtered} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
+                    todos={filtered} allTodos={todos} events={events} todoCategories={allCategories} canvasClasses={canvasClasses}
                     todayStr={todayStr} onToggle={handleToggle} onDelete={onDelete} onEdit={onEditClick} onAddSubtask={onAddSubtask}
                     canvasAssignments={[]}
                     onToggleCanvas={onToggleCanvas}
@@ -540,62 +530,32 @@ export default function TodoPanel({
 
 // ── Drag-and-drop reorderable list (wraps GroupedList rows) ──────────────────
 
-function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr, onToggle, onDelete, onEdit, onAddSubtask,
+function DraggableList({ todos, allTodos = todos, events, todoCategories, canvasClasses, todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                          canvasAssignments, onToggleCanvas, onToggleSubtask, onReorder, isMobile }) {
-  // We keep an internal order for smooth visual feedback; commit to parent on drop.
-  const [localOrder, setLocalOrder] = useState(null) // null = use prop order
-  const orderedTodos = localOrder || todos
+  const bounds = todoBucketBounds(todayStr)
+  /* The list is drawn under date headings but ordered as one array, so a move only
+     means something among the tasks under the same heading. */
+  const groupOf = t => bucketForDate(effectiveDate(t, events), bounds)
 
-  // Dragging state.
-  //
-  // The id lives in BOTH a ref and state, deliberately. The ref is what the drag
-  // handlers read — they fire rapidly during a drag and need the current value
-  // synchronously, not next render. The state is what the row reads to style
-  // itself: `draggingId={dragIdRef.current}` was passed down before, and since
-  // writing a ref doesn't re-render, the dragged row never actually picked up
-  // its dragging style until some unrelated update happened to flush.
-  const dragIdRef    = useRef(null)
-  const dragOverIdRef = useRef(null)
-  const [draggingId, setDraggingId] = useState(null)
-
-  function handleDragStart(id) {
-    dragIdRef.current = id
-    setDraggingId(id)
-  }
-
-  function handleDragOver(id) {
-    if (!dragIdRef.current || id === dragIdRef.current) return
-    if (dragOverIdRef.current === id) return
-    dragOverIdRef.current = id
-
-    const fromIdx = orderedTodos.findIndex(t => t.id === dragIdRef.current)
-    const toIdx   = orderedTodos.findIndex(t => t.id === id)
-    if (fromIdx === -1 || toIdx === -1) return
-
-    const next = [...orderedTodos]
-    const [item] = next.splice(fromIdx, 1)
-    next.splice(toIdx, 0, item)
-    setLocalOrder(next)
-  }
-
-  function handleDrop() {
-    if (!dragIdRef.current || !localOrder) { reset(); return }
-    // Assign sortOrder values and notify parent
-    const withOrder = localOrder.map((t, i) => ({ ...t, sortOrder: i }))
-    onReorder?.(withOrder)
-    setLocalOrder(null)
-    reset()
-  }
-
-  function reset() {
-    dragIdRef.current    = null
-    dragOverIdRef.current = null
-    setDraggingId(null)
-  }
+  const drag = useDragReorder({
+    items: todos,
+    // Touch reorders nothing — a horizontal drag there is a swipe.
+    enabled: !!onReorder && !isMobile,
+    groupOf,
+    /* `todos` is already filtered, so the visible rows trade the sortOrder values
+       they hold rather than being renumbered 0..n-1 over the top of hidden ones —
+       see reassignSortOrder. Only the heading the task moved under trades, and only
+       what changed there is sent, so a task under another heading is never stamped
+       as edited — see reassignSortOrderInGroups. */
+    onCommit: ordered => {
+      const changed = reassignSortOrderInGroups(todos, ordered, groupOf, allTodos)
+      if (changed.length) onReorder(changed)
+    },
+  })
 
   return (
     <GroupedList
-      todos={orderedTodos}
+      todos={drag.orderedItems}
       events={events}
       todoCategories={todoCategories}
       canvasClasses={canvasClasses}
@@ -607,11 +567,7 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
       onToggleCanvas={onToggleCanvas}
       onToggleSubtask={onToggleSubtask}
       onAddSubtask={onAddSubtask}
-      // drag callbacks
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-      draggingId={draggingId}
+      drag={drag}
       isMobile={isMobile}
     />
   )
@@ -620,7 +576,7 @@ function DraggableList({ todos, events, todoCategories, canvasClasses, todayStr,
 // ── TodoItem with swipe (mobile) + drag handle (desktop) ────────────────────
 
 function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, onToggle, onDelete, onEdit,
-                   onToggleSubtask, onAddSubtask, onDragStart, onDragOver, onDrop, isDragging, isMobile }) {
+                   onToggleSubtask, onAddSubtask, dragRow, dragHandle, isDragging, isMobile }) {
   const [hovered,          setHovered]          = useState(false)
   const [justDone,         setJustDone]         = useState(false)
   const [subtasksExpanded, setSubtasksExpanded] = useState(false)
@@ -639,13 +595,14 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
     setAddingSubtask(false)
   }
 
-  // Swipe state (touch-only)
-  const swipeRef    = useRef({ startX: 0, startY: 0, dx: 0, locked: null, active: false })
-  const [swipeDx,   setSwipeDx]   = useState(0)   // current translate px
-  const [swipeDone, setSwipeDone] = useState(false) // committed
-
-  const SWIPE_THRESHOLD = 72   // px to trigger action
-  const SWIPE_MAX       = 100  // clamp visual travel
+  /* Touch only: right completes, left deletes. A swipe has no click to aim confetti
+     from, hence the null event. Swiping right on a finished task just snaps back. */
+  const swipe = useSwipeActions({
+    enabled:       isMobile,
+    canSwipeRight: !todo.completed,
+    onSwipeRight:  () => onToggle(todo.id, null),
+    onSwipeLeft:   () => onDelete(todo.id),
+  })
 
   /* Resolved through the class links, so a task filed under a lab before it was linked
      into its lecture still shows a chip — the lecture's — rather than losing its
@@ -672,138 +629,50 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
      one: a rail on every row is a striped list, not an emphasis. */
   const isHighPriority = todo.priority === 'high' && !todo.completed
 
-  // ── Touch handlers ──────────────────────────────────────────────────────
-  function onTouchStart(e) {
-    const t = e.touches[0]
-    swipeRef.current = { startX: t.clientX, startY: t.clientY, dx: 0, locked: null, active: true }
-  }
-
-  function onTouchMove(e) {
-    const s = swipeRef.current
-    if (!s.active) return
-    const t   = e.touches[0]
-    const dx  = t.clientX - s.startX
-    const dy  = t.clientY - s.startY
-
-    // Lock axis after 6px of motion
-    if (s.locked === null) {
-      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return
-      s.locked = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y'
-    }
-
-    if (s.locked === 'y') return // vertical scroll — do nothing
-
-    // Horizontal swipe — prevent scroll
-    e.preventDefault()
-    s.dx = dx
-    const clamped = Math.max(-SWIPE_MAX, Math.min(SWIPE_MAX, dx))
-    setSwipeDx(clamped)
-  }
-
-  function onTouchEnd() {
-    const s = swipeRef.current
-    s.active = false
-    const dx = s.dx
-    if (s.locked !== 'x') { setSwipeDx(0); return }
-
-    if (dx >= SWIPE_THRESHOLD && !todo.completed) {
-      // Swipe right → complete (with confetti from center of item)
-      setSwipeDone(true)
-      setTimeout(() => {
-        setSwipeDx(0)
-        setSwipeDone(false)
-        onToggle(todo.id, null)
-      }, 260)
-    } else if (dx <= -SWIPE_THRESHOLD) {
-      // Swipe left → delete
-      setSwipeDone(true)
-      setTimeout(() => {
-        setSwipeDx(0)
-        setSwipeDone(false)
-        onDelete(todo.id)
-      }, 260)
-    } else {
-      // Snap back
-      setSwipeDx(0)
-    }
-  }
-
-  // ── Pointer drag handlers (desktop) ────────────────────────────────────
-  function handlePointerDown(e) {
-    // Only the drag handle triggers drag
-    e.stopPropagation()
-    onDragStart?.(todo.id)
-  }
-
-  const swipeLeft  = swipeDx < -8
-  const swipeRight = swipeDx > 8
+  /* Not draggable while a step is being typed: a drag started inside the field would
+     pick up the whole row instead of selecting the text. */
+  const rowDrag = addingSubtask ? undefined : dragRow
 
   return (
     <li
+      {...rowDrag}
+      {...swipe.handlers}
       onMouseEnter={() => !isMobile && setHovered(true)}
       onMouseLeave={() => !isMobile && setHovered(false)}
       onClick={() => onEdit?.(todo)}
-      draggable={!!onDragStart && !isMobile}
-      onDragStart={() => onDragStart?.(todo.id)}
-      onDragOver={e => { e.preventDefault(); onDragOver?.(todo.id) }}
-      onDrop={e => { e.preventDefault(); onDrop?.() }}
-      onTouchStart={isMobile ? onTouchStart : undefined}
-      onTouchMove={isMobile ? onTouchMove : undefined}
-      onTouchEnd={isMobile ? onTouchEnd : undefined}
+      /* A row that opens on click has to open on Enter and Space too, or the editor is
+         out of reach without a mouse. Same pattern as the class cards' task rows. */
+      role={onEdit ? 'button' : undefined}
+      tabIndex={onEdit ? 0 : undefined}
+      aria-label={onEdit ? todo.title : undefined}
+      className={onEdit ? 'lv-focusable' : undefined}
+      onKeyDown={onEdit ? e => {
+        // The checkbox, the steps chip, the grip and the actions are controls of their
+        // own; this keeps their Enter and Space from also opening the editor.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(todo) }
+      } : undefined}
       style={{
         position: 'relative',
         overflow: 'hidden',
         borderRadius: 12,
-        transition: swipeDone ? 'opacity 0.22s, transform 0.22s' : undefined,
+        transition: swipe.committing ? 'opacity 0.22s, transform 0.22s' : undefined,
         opacity: isDragging ? 0.45 : 1,
         cursor: onEdit ? 'pointer' : 'default',
       }}
     >
       {/* Swipe action backgrounds (mobile only) */}
-      {isMobile && (
-        <>
-          {/* Right swipe: complete — green */}
-          <div style={{
-            position: 'absolute', inset: 0, borderRadius: 12,
-            background: '#10b981',
-            display: 'flex', alignItems: 'center', paddingLeft: 16,
-            opacity: swipeRight ? Math.min(1, swipeDx / SWIPE_THRESHOLD) : 0,
-            transition: 'opacity .1s',
-            pointerEvents: 'none',
-          }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-          </div>
-          {/* Left swipe: delete — red */}
-          <div style={{
-            position: 'absolute', inset: 0, borderRadius: 12,
-            background: '#ef4444',
-            display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 16,
-            opacity: swipeLeft ? Math.min(1, -swipeDx / SWIPE_THRESHOLD) : 0,
-            transition: 'opacity .1s',
-            pointerEvents: 'none',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-            </svg>
-          </div>
-        </>
-      )}
+      {isMobile && <SwipeBackgrounds dx={swipe.dx} look="todo" />}
 
       {/* Main row — translated by swipe */}
       <div
         style={{
           position: 'relative',
           display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 8px',
-          borderRadius: 12, transition: swipeDone ? 'transform 0.22s' : 'background .15s, box-shadow .15s, transform .15s',
+          borderRadius: 12, transition: swipe.committing ? 'transform 0.22s' : 'background .15s, box-shadow .15s, transform .15s',
           background: hovered ? 'var(--surface2)' : 'transparent',
           boxShadow: hovered ? 'var(--shadow-md)' : 'none',
-          transform: isMobile
-            ? (swipeDone
-                ? `translateX(${swipeDx >= 0 ? '100%' : '-100%'})`
-                : `translateX(${swipeDx}px)`)
-            : (hovered ? 'translateY(-1px)' : 'none'),
+          transform: isMobile ? swipe.transform : (hovered ? 'translateY(-1px)' : 'none'),
         }}
       >
         {/* High-priority rail. Absolutely positioned rather than a flex child so it
@@ -815,29 +684,20 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
           }} />
         )}
 
-        {/* Drag handle (desktop only) */}
-        {!isMobile && onDragStart && (
-          <div
-            onPointerDown={handlePointerDown}
-            style={{
-              marginTop: 4, color: 'var(--text-3)', cursor: 'grab', flexShrink: 0,
-              opacity: hovered ? 0.6 : 0, transition: 'opacity .13s', touchAction: 'none',
-            }}
-            title="Drag to reorder"
-          >
-            <GripVertical size={13} />
-          </div>
+        {/* Drag handle (desktop only — touch swipes instead) */}
+        {dragHandle && (
+          <ReorderHandle handle={dragHandle} label={todo.title} hovered={hovered} look="todo" />
         )}
 
-        {/* Checkbox */}
-        <button onClick={e => { e.stopPropagation(); if (!todo.completed) setJustDone(true); onToggle(todo.id, e) }}
-                style={{ marginTop: 2, width: 18, height: 18, borderRadius: '50%', border: `2px solid ${todo.completed ? 'var(--blue)' : cat?.color || 'var(--border)'}`, background: todo.completed ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'all .2s', animation: justDone ? 'check-bounce 0.32s ease forwards' : 'none' }}>
-          {todo.completed && (
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-              <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          )}
-        </button>
+        <TaskCheckbox
+          checked={todo.completed}
+          label={todo.completed ? 'Mark not done' : 'Mark done'}
+          color={cat?.color || 'var(--border)'}
+          checkedColor="var(--blue)"
+          marginTop={2}
+          bounce={justDone}
+          onClick={e => { e.stopPropagation(); if (!todo.completed) setJustDone(true); onToggle(todo.id, e) }}
+        />
 
         {/* Content */}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -993,7 +853,7 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
             <button onClick={e => { e.stopPropagation(); setSubtasksExpanded(true); setAddingSubtask(true) }}
                     title="Add subtask"
                     aria-label="Add subtask"
-                    style={todoRowAction(hovered, isMobile)}
+                    style={rowActionStyle(hovered, isMobile, 'todo')}
                     onMouseEnter={e => e.currentTarget.style.color = 'var(--blue)'}
                     onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -1004,7 +864,7 @@ function TodoItem({ todo, events, canvasClasses = [], todoCategories, todayStr, 
           <button onClick={e => { e.stopPropagation(); onDelete(todo.id) }}
                   title="Delete task"
                   aria-label="Delete task"
-                  style={todoRowAction(hovered, isMobile)}
+                  style={rowActionStyle(hovered, isMobile, 'todo')}
                   onMouseEnter={e => e.currentTarget.style.color = 'var(--red)'}
                   onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -1077,8 +937,8 @@ const BUCKET_META = [
 function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayStr, onToggle, onDelete, onEdit, onAddSubtask,
                        // optional: merge Canvas assignments inline
                        canvasAssignments = [], onToggleCanvas, onToggleSubtask,
-                       // drag callbacks passed through
-                       onDragStart, onDragOver, onDrop, draggingId, isMobile }) {
+                       // optional: useDragReorder's result, from DraggableList
+                       drag, isMobile }) {
   const [showFuture, setShowFuture] = useState(false)
 
   const bounds = todoBucketBounds(todayStr)
@@ -1105,8 +965,12 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
     .map(meta => ({ ...meta, ...grouped[meta.id] }))
     .filter(b => b.todos.length + b.canvas.length > 0)
 
+  const dragOn = !!drag?.enabled
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+    /* The whole list takes the drop, not only the rows: letting go in the gap between
+       two rows or over a heading lands the task where the preview showed it. */
+    <div {...drag?.listProps} style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {buckets.map((bucket, bi) => {
         const isFuture = bucket.id === 'future'
         const isVisible = !isFuture || showFuture
@@ -1142,10 +1006,9 @@ function GroupedList({ todos, events, todoCategories, canvasClasses = [], todayS
                             todoCategories={todoCategories} todayStr={todayStr}
                             onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} onAddSubtask={onAddSubtask}
                             onToggleSubtask={onToggleSubtask}
-                            onDragStart={onDragStart}
-                            onDragOver={onDragOver}
-                            onDrop={onDrop}
-                            isDragging={draggingId === todo.id}
+                            dragRow={dragOn ? drag.rowProps(todo.id) : undefined}
+                            dragHandle={dragOn ? drag.handleProps(todo.id) : undefined}
+                            isDragging={dragOn && drag.draggingId === todo.id}
                             isMobile={isMobile} />
                 ))}
                 {bucket.canvas.map(a => (
