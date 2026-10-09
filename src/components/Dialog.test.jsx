@@ -1,14 +1,21 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { useState } from 'react'
-import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import Dialog, { ConfirmDialog, EXIT_MS, useDialogExit } from './Dialog'
+import Select from './Select'
+import DatePicker from './DatePicker'
+import TimePicker from './TimePicker'
 import { isDialogOpen } from '@/lib/dialogStack'
 
 afterEach(cleanup)
 
-const backdropOf = name => screen.getByRole('dialog', { name }).parentElement
+// The role sits on the dialog's root, which holds the backdrop (and the panel inside
+// it) and any popover opened from the panel.
+const dialogOf   = name => screen.getByRole('dialog', name === undefined ? {} : { name })
+const backdropOf = name => dialogOf(name).querySelector(':scope > .dialog-backdrop')
+const panelOf    = name => backdropOf(name).querySelector(':scope > .dialog-panel')
 
 /** A parent that unmounts its dialog on close, the way every caller in the app does. */
 function Closable({ name = 'Outer', onClosed, children, ...props }) {
@@ -24,12 +31,19 @@ function Closable({ name = 'Outer', onClosed, children, ...props }) {
 describe('Dialog — markup', () => {
   it('portals a labelled modal dialog onto <body>', () => {
     const { container } = render(<Dialog label="Settings" onClose={() => {}}><p>hi</p></Dialog>)
-    const panel = screen.getByRole('dialog', { name: 'Settings' })
-    expect(panel.getAttribute('aria-modal')).toBe('true')
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.classList.contains('dialog-root')).toBe(true)
+    expect(container.contains(dialog)).toBe(false)
+    expect(dialog.parentElement).toBe(document.body)
+  })
+
+  it('draws the panel inside the backdrop, inside the dialog', () => {
+    render(<Dialog label="Settings" onClose={() => {}}><p>hi</p></Dialog>)
+    const panel = panelOf('Settings')
     expect(panel.getAttribute('tabindex')).toBe('-1')
     expect(panel.classList.contains('modal-surface')).toBe(true)
-    expect(container.contains(panel)).toBe(false)
-    expect(document.body.contains(panel)).toBe(true)
+    expect(panel.textContent).toBe('hi')
   })
 
   it('prefers aria-labelledby when given one', () => {
@@ -205,7 +219,7 @@ describe('Dialog — exit fade', () => {
 
       fireEvent.keyDown(document.body, { key: 'Escape' })
 
-      expect(screen.getByRole('dialog').classList.contains('modal-closing')).toBe(true)
+      expect(panelOf('X').classList.contains('modal-closing')).toBe(true)
       expect(backdropOf('X').classList.contains('modal-closing')).toBe(true)
       expect(onClose).not.toHaveBeenCalled()
 
@@ -262,7 +276,7 @@ describe('Dialog — exit fade', () => {
 
       fireEvent.click(screen.getByText('Cancel'))
       fireEvent.click(screen.getByText('Cancel'))
-      expect(screen.getByRole('dialog').classList.contains('modal-closing')).toBe(true)
+      expect(panelOf('X').classList.contains('modal-closing')).toBe(true)
       act(() => { vi.advanceTimersByTime(EXIT_MS) })
 
       expect(onClose).toHaveBeenCalledTimes(1)
@@ -275,7 +289,7 @@ describe('Dialog — exit fade', () => {
 describe('Dialog — focus', () => {
   it('moves focus into the dialog when it opens', () => {
     render(<Dialog label="X" onClose={() => {}}><button>ok</button></Dialog>)
-    expect(document.activeElement).toBe(screen.getByRole('dialog'))
+    expect(document.activeElement).toBe(panelOf('X'))
   })
 
   it('leaves an autoFocus field focused', () => {
@@ -342,6 +356,245 @@ describe('Dialog — focus', () => {
   })
 })
 
+/* A popover opened from a dialog used to be portaled onto <body>, outside it. The Tab
+   trap then wrapped from the panel's last field to its first without ever reaching an
+   open menu or calendar, and aria-modal hid them from screen readers. They now portal
+   into the dialog's root: inside the dialog, but outside the animated panel. */
+describe('Dialog — popovers opened from it', () => {
+  const OPTIONS = [{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }]
+
+  function Form({ onClose = () => {}, onChange = () => {} }) {
+    const [value, setValue] = useState('a')
+    return (
+      <>
+        <button>behind</button>
+        <Dialog label="Form" onClose={onClose}>
+          <button>first</button>
+          <Select value={value} options={OPTIONS}
+                  onChange={v => { onChange(v); setValue(v) }} />
+        </Dialog>
+      </>
+    )
+  }
+
+  it('portals a Select menu into the dialog, beside the backdrop rather than in the panel', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+
+    await user.click(screen.getByRole('button', { name: 'Alpha' }))
+    const option = screen.getByRole('button', { name: 'Beta' })
+
+    expect(dialogOf('Form').contains(option)).toBe(true)
+    expect(backdropOf('Form').contains(option)).toBe(false)
+  })
+
+  it('portals the date and time pickers into the dialog too', async () => {
+    const user = userEvent.setup()
+    render(
+      <Dialog label="Form" onClose={() => {}}>
+        <DatePicker value="2026-10-08" onChange={() => {}} />
+        <TimePicker value="09:30" onChange={() => {}} />
+      </Dialog>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Oct 8, 2026/ }))
+    const calendar = document.querySelector('[data-datepicker-popup]')
+    expect(dialogOf('Form').contains(calendar)).toBe(true)
+    expect(backdropOf('Form').contains(calendar)).toBe(false)
+
+    await user.click(screen.getByTitle('Open clock picker'))
+    const ok = screen.getByRole('button', { name: 'OK' })
+    expect(dialogOf('Form').contains(ok)).toBe(true)
+    expect(backdropOf('Form').contains(ok)).toBe(false)
+  })
+
+  it('still portals onto <body> outside a dialog', async () => {
+    const user = userEvent.setup()
+    render(<Select value="a" options={OPTIONS} onChange={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: 'Alpha' }))
+
+    expect(screen.getByRole('button', { name: 'Beta' }).parentElement.parentElement).toBe(document.body)
+  })
+
+  // The category manager over the event form: its own menus belong to it, not the form.
+  it('does not hand its root to a dialog opened inside it', async () => {
+    const user = userEvent.setup()
+    render(
+      <Dialog label="Outer" onClose={() => {}}>
+        <Dialog label="Inner" onClose={() => {}}>
+          <Select value="a" options={OPTIONS} onChange={() => {}} />
+        </Dialog>
+      </Dialog>,
+    )
+    expect(dialogOf('Inner').parentElement).toBe(document.body)
+
+    await user.click(screen.getByRole('button', { name: 'Alpha' }))
+    const option = screen.getByRole('button', { name: 'Beta' })
+    expect(dialogOf('Inner').contains(option)).toBe(true)
+    expect(dialogOf('Outer').contains(option)).toBe(false)
+  })
+
+  /* A choice made from the keyboard unmounts the focused option. Focus used to drop to
+     <body>, and the next Tab was sent to the dialog's first field. */
+  it('gives focus back to the trigger after Enter on an option, so Tab carries on', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <Dialog label="Form" onClose={() => {}}>
+        <button>first</button>
+        <Select value="a" options={OPTIONS} onChange={onChange} />
+        <button>after</button>
+      </Dialog>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    await user.tab() // after
+    await user.tab() // into the menu: Alpha
+    await user.tab() // Beta
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Beta' }))
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('b')
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'after' }))
+  })
+
+  it('gives focus back to the trigger after Escape inside the menu', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    await user.click(trigger)
+    await user.tab()
+    expect(document.activeElement.textContent).toBe('Alpha')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('button', { name: 'Beta' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('leaves focus alone after a mouse pick', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    await user.click(trigger)
+    trigger.blur()
+    await user.click(screen.getByRole('button', { name: 'Beta' }))
+    await new Promise(r => requestAnimationFrame(r))
+    expect(document.activeElement).not.toBe(trigger)
+  })
+
+  // The keyboard path that did not exist: on past the panel's last field, into the menu.
+  it('Tab goes on from the panel’s last field into the open menu, then wraps', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+
+    const trigger = screen.getByRole('button', { name: 'Alpha' })   // last in the panel
+    await user.click(trigger)
+    const menu = within(screen.getByRole('button', { name: 'Beta' }).parentElement)
+    expect(document.activeElement).toBe(trigger)
+
+    await user.tab()
+    expect(document.activeElement).toBe(menu.getByRole('button', { name: 'Alpha' }))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Beta' }))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByText('first'))
+    await user.tab({ shift: true })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Beta' }))
+  })
+
+  it('reaches the date picker’s type-in field from the keyboard', async () => {
+    const user = userEvent.setup()
+    render(
+      <Dialog label="Form" onClose={() => {}}>
+        <button>first</button>
+        <DatePicker value="2026-10-08" onChange={() => {}} />
+      </Dialog>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Oct 8, 2026/ }))
+    await user.tab()
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('MM/DD/YYYY or YYYY-MM-DD'))
+  })
+
+  it('does not take a click in the menu for a click on the backdrop', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn(), onChange = vi.fn()
+    render(<Form onClose={onClose} onChange={onChange} />)
+
+    await user.click(screen.getByRole('button', { name: 'Alpha' }))
+    await user.click(screen.getByRole('button', { name: 'Beta' }))
+    await act(() => new Promise(r => setTimeout(r, EXIT_MS + 20)))
+
+    expect(onChange).toHaveBeenCalledWith('b')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(dialogOf('Form')).toBeTruthy()
+  })
+
+  // The event and task forms save on a click outside, so this one would save mid-edit.
+  it('does not take a click in the calendar for a click outside a form that saves on one', async () => {
+    const user = userEvent.setup()
+    const onBackdropClick = vi.fn(), onChange = vi.fn()
+    render(
+      <Dialog label="Form" onClose={() => {}} onBackdropClick={onBackdropClick}>
+        <DatePicker value="2026-10-08" onChange={onChange} />
+      </Dialog>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Oct 8, 2026/ }))
+    await user.click(screen.getByRole('button', { name: '15' }))
+
+    expect(onChange).toHaveBeenCalledWith('2026-10-15')
+    expect(onBackdropClick).not.toHaveBeenCalled()
+  })
+
+  // Focus can be in the menu now, which it never was before; the menu still has the
+  // first claim on Escape, and the dialog the next one.
+  it('Escape in the open menu closes the menu alone, and the next one the dialog', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Form onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: 'Alpha' }))
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Beta' }).parentElement.contains(document.activeElement)).toBe(true)
+
+    await user.keyboard('{Escape}')
+    await act(() => new Promise(r => setTimeout(r, EXIT_MS + 20)))
+
+    expect(screen.queryByRole('button', { name: 'Beta' })).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(panelOf('Form').classList.contains('modal-closing')).toBe(false)
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+
+  it('Escape in the date picker’s field closes the calendar, not the dialog', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(
+      <Dialog label="Form" onClose={onClose}>
+        <DatePicker value="2026-10-08" onChange={() => {}} />
+      </Dialog>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Oct 8, 2026/ }))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('MM/DD/YYYY or YYYY-MM-DD'))
+
+    await user.keyboard('{Escape}')
+    // Past both fades: the calendar's (160 ms) and the dialog's, had it started one.
+    await act(() => new Promise(r => setTimeout(r, EXIT_MS + 20)))
+
+    expect(document.querySelector('[data-datepicker-popup]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(panelOf('Form').classList.contains('modal-closing')).toBe(false)
+  })
+})
+
 describe('ConfirmDialog', () => {
   function renderConfirm(props = {}) {
     const onConfirm = vi.fn(), onCancel = vi.fn()
@@ -382,7 +635,7 @@ describe('ConfirmDialog', () => {
   it('cancels on the backdrop', async () => {
     const user = userEvent.setup()
     const { onCancel } = renderConfirm()
-    await user.click(screen.getByRole('alertdialog').parentElement)
+    await user.click(screen.getByRole('alertdialog').querySelector('.dialog-backdrop'))
     await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1))
   })
 })

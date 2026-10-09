@@ -44,6 +44,7 @@
   --backdrop:      rgba(0, 0, 0, 0.4);
   --backdrop-blur: 6px;
   --z-dialog:      3500;
+  --z-toast:       3600;
 }
 
 /* ── Accent themes — light mode ── */
@@ -302,13 +303,27 @@ select option {
    separated it from what was behind.
 
    Stacking, lowest first:
-     ≤ 500  page chrome (toasts, floating Corvus, menus)
+     ≤ 500  page chrome (floating Corvus, menus)
      2001   focus timer panel · 3000 offline pill
      3500   dialogs (--z-dialog)
+     3600   toasts (--z-toast) — a toast raised while a dialog is open
+            (a Canvas sync result, a reminder) has to be seen over it
      4000   focus timer full-screen
      6000+  popovers — selects, date/time pickers, task and day menus. They
             open from inside dialogs, so they have to clear every one.
 ══════════════════════════════════════════════ */
+/* Carries the dialog's role and label, and holds the backdrop and any popover
+   opened from the panel (see Dialog.js). It must stay a plain box. A z-index
+   here would make it the stacking context of those popovers and cap them at the
+   dialog's tier, under the toasts; a transform, filter or backdrop-filter would
+   do that and also become the box they are positioned against. Positioned only
+   so that it has the viewport's size for assistive tech rather than none — with
+   z-index left at auto that creates neither. The backdrop covers it, so it never
+   takes a click. */
+.dialog-root {
+  position: absolute;
+  inset: 0;
+}
 .dialog-backdrop {
   position: fixed;
   inset: 0;

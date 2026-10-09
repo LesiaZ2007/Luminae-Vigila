@@ -27,10 +27,34 @@
  *    goes away focus returns to whatever had it before — the button that opened it,
  *    usually — so a keyboard user is not dropped at the top of the page.
  *
+ *  • A popover opened from the dialog is part of it. Select, DatePicker and
+ *    TimePicker portal into the dialog's root (usePopoverContainer) rather than onto
+ *    <body>. On <body> they are outside the dialog: the Tab trap wraps from the
+ *    panel's last field back to its first without ever reaching an open menu — so a
+ *    form's date, category or priority cannot be changed from the keyboard — and
+ *    `aria-modal` tells screen readers the menus are not there at all.
+ *
+ *    The DOM, and why it is shaped like this:
+ *
+ *      .dialog-root   role, aria-modal, the label; no z-index, transform or filter
+ *        .dialog-backdrop   the scrim (fixed, z-index, backdrop-filter)
+ *          .dialog-panel    the panel (animated with a transform)
+ *        …popovers          appended here, after the backdrop
+ *
+ *    The popovers are siblings of the backdrop, not inside it, and nowhere near the
+ *    panel. The panel's entrance animation leaves a transform on it, which makes it
+ *    the containing block for `position: fixed` children — a menu in it would be
+ *    placed against the panel, not the viewport. The backdrop has a z-index and a
+ *    backdrop-filter, and either would confine a menu's z-index to the dialog's own
+ *    tier, under the toasts. The root sets none of that, so a popover in it is placed
+ *    against the viewport and stacked against the whole page exactly as it was on
+ *    <body> — above the toasts too.
+ *
  * Stacking tiers (z-index, see globals.css `--z-dialog`):
- *    ≤ 500   page chrome — toasts, the floating Corvus panel, menus
+ *    ≤ 500   page chrome — the floating Corvus panel, menus
  *    2001    focus timer panel ·  3000  offline / sync pill
  *    3500    dialogs (this)
+ *    3600    toasts — above dialogs, so one raised while a dialog is open is seen
  *    4000    focus timer full-screen — it covers everything, dialogs included
  *    6000+   popovers: selects, date and time pickers, task and day menus. These are
  *            opened *from* dialogs, so they must sit above every one of them.
@@ -50,12 +74,26 @@
  *   label | labelledBy, describedBy, role ('dialog' | 'alertdialog')
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useDialogLayer, isTopLayer } from '@/lib/dialogStack'
 
 /** The exit fade, matching `.modal-closing` in globals.css. */
 export const EXIT_MS = 180
+
+/** The root element of the dialog a component is rendered in, or null outside one. */
+const DialogRoot = createContext(null)
+
+/**
+ * Where a popover should portal to: the root of the dialog it was opened from, or
+ * <body> when it is not in one — see "A popover opened from the dialog" above.
+ * Null during the server render, when there is nowhere to portal to.
+ */
+export function usePopoverContainer() {
+  const root = useContext(DialogRoot)
+  if (root) return root
+  return typeof document === 'undefined' ? null : document.body
+}
 
 const TABBABLE = [
   'a[href]', 'area[href]', 'button:not([disabled])', 'select:not([disabled])',
@@ -123,6 +161,11 @@ export default function Dialog({
   const closing  = controlled ? !!closingProp : fading
   const isClient = useIsClient()
   const panelRef = useRef(null)
+  const rootRef  = useRef(null)
+  // The root again, as state: popovers inside read it through context while
+  // rendering, which a ref cannot be read during.
+  const [rootEl, setRootEl] = useState(null)
+  const setRoot = useCallback(el => { rootRef.current = el; setRootEl(el) }, [])
   const mounted  = useRef(false)
   const pressedOnBackdrop = useRef(false)
   // Read during the first render, before an autoFocus inside the dialog moves focus.
@@ -148,7 +191,8 @@ export default function Dialog({
   useLayoutEffect(() => {
     if (!isClient) return
     const panel = panelRef.current
-    if (!panel) return
+    const root  = rootRef.current
+    if (!panel || !root) return
     mounted.current = true
     if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true })
     return () => {
@@ -158,9 +202,10 @@ export default function Dialog({
       queueMicrotask(() => {
         if (mounted.current) return
         const active = document.activeElement
-        // Only if focus went down with the dialog. If closing it opened something
-        // else that took focus (a note, another dialog), leave that alone.
-        const lost = !active || active === document.body || panel.contains(active)
+        // Only if focus went down with the dialog (or one of its popovers). If
+        // closing it opened something else that took focus (a note, another
+        // dialog), leave that alone.
+        const lost = !active || active === document.body || root.contains(active)
         if (lost && returnTo?.isConnected && typeof returnTo.focus === 'function') {
           returnTo.focus({ preventScroll: true })
         }
@@ -174,16 +219,20 @@ export default function Dialog({
     function onKeyDown(e) {
       if (e.key !== 'Tab' || e.defaultPrevented || !isTopLayer(layer.current)) return
       const panel = panelRef.current
-      if (!panel) return
+      const root  = rootRef.current
+      if (!panel || !root) return
       const active = document.activeElement
-      const inside = panel.contains(active)
-      // A popover opened from the dialog lives in its own portal, outside the panel;
-      // while it has focus, Tab is its business. Focus on <body> — after a press on
-      // the backdrop, or once the focused field was removed — is brought back in.
-      // (The backdrop deliberately doesn't hold focus on press: the blur is what
-      // commits an inline rename before a click outside saves the form.)
+      // The root holds the panel and the popovers opened from it, so focus in an
+      // open menu or calendar is inside too, and the cycle runs through them: the
+      // panel's fields first, then each open popover's, in the order they opened.
+      const inside = root.contains(active)
+      // Focus somewhere else that wants it — a toast's Undo, say — is left alone.
+      // Focus on <body> — after a press on the backdrop, or once the focused field
+      // was removed — is brought back in. (The backdrop deliberately doesn't hold
+      // focus on press: the blur is what commits an inline rename before a click
+      // outside saves the form.)
       if (!inside && active && active !== document.body) return
-      const items = tabbablesIn(panel)
+      const items = tabbablesIn(root)
       if (items.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return }
       const first = items[0]
       const last  = items[items.length - 1]
@@ -208,32 +257,43 @@ export default function Dialog({
 
   return createPortal(
     <div
-      className={`dialog-backdrop modal-backdrop${closing ? ' modal-closing' : ''}`}
-      data-align={align}
-      onPointerDown={e => { pressedOnBackdrop.current = e.target === e.currentTarget }}
-      onClick={e => {
-        // A click inside a dialog is not a click on whatever the dialog was opened from.
-        // Portals bubble React events up the component tree, not the DOM, so without
-        // this a click in, say, a task's detail dialog also reached the task row.
-        e.stopPropagation()
-        const onBackdrop = pressedOnBackdrop.current && e.target === e.currentTarget
-        pressedOnBackdrop.current = false
-        if (onBackdrop) dismiss('backdrop')
-      }}
+      ref={setRoot}
+      className="dialog-root"
+      role={role}
+      aria-modal="true"
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
     >
       <div
-        ref={panelRef}
-        role={role}
-        aria-modal="true"
-        aria-label={labelledBy ? undefined : label}
-        aria-labelledby={labelledBy}
-        aria-describedby={describedBy}
-        tabIndex={-1}
-        className={`modal-surface dialog-panel${className ? ` ${className}` : ''}${closing ? ' modal-closing' : ''}`}
-        style={style}
+        className={`dialog-backdrop modal-backdrop${closing ? ' modal-closing' : ''}`}
+        data-align={align}
+        onPointerDown={e => {
+          // A popover is not inside the backdrop in the DOM, but its React events
+          // still bubble here, through the panel it was opened from — with a target
+          // that is not the backdrop, so a press in a menu never counts as outside.
+          pressedOnBackdrop.current = e.target === e.currentTarget
+        }}
+        onClick={e => {
+          // A click inside a dialog is not a click on whatever the dialog was opened from.
+          // Portals bubble React events up the component tree, not the DOM, so without
+          // this a click in, say, a task's detail dialog also reached the task row.
+          e.stopPropagation()
+          const onBackdrop = pressedOnBackdrop.current && e.target === e.currentTarget
+          pressedOnBackdrop.current = false
+          if (onBackdrop) dismiss('backdrop')
+        }}
       >
-        {children}
+        <div
+          ref={panelRef}
+          tabIndex={-1}
+          className={`modal-surface dialog-panel${className ? ` ${className}` : ''}${closing ? ' modal-closing' : ''}`}
+          style={style}
+        >
+          <DialogRoot value={rootEl}>{children}</DialogRoot>
+        </div>
       </div>
+      {/* Popovers opened from the panel are portaled in here (usePopoverContainer). */}
     </div>,
     document.body,
   )
