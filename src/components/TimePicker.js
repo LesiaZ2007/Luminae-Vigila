@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useEffectEvent } from 'react'
 import { createPortal } from 'react-dom'
 import useAnchoredPosition from '@/lib/useAnchoredPosition'
 import { usePopoverContainer } from './Dialog'
+import useReturnFocus from '@/lib/useReturnFocus'
 
 function pad(n) { return String(n).padStart(2, '0') }
 
@@ -136,6 +137,8 @@ export default function TimePicker({ value, onChange }) {
 
   const wrapRef   = useRef(null)
   const popupRef  = useRef(null)
+  const clockRef  = useRef(null)   // the clock button, which focus returns to
+  useReturnFocus(open, popupRef, clockRef)
   const svgRef    = useRef(null)
   const timerRef  = useRef(null)
   const inputRef  = useRef(null)
@@ -480,6 +483,7 @@ export default function TimePicker({ value, onChange }) {
 
         {/* Clock icon opens the popup */}
         <button
+          ref={clockRef}
           type="button"
           onClick={() => {
             // Opening used to discard whatever was half-typed in the field.

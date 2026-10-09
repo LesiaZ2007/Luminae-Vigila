@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { usePopoverContainer } from './Dialog'
+import useReturnFocus from '@/lib/useReturnFocus'
 
 /**
  * Branded dropdown.
@@ -23,6 +24,7 @@ export default function Select({ value, onChange, options, placeholder = 'Select
   const triggerRef = useRef(null)
   const menuRef    = useRef(null)
   const container  = usePopoverContainer()
+  useReturnFocus(open, menuRef, triggerRef)
 
   function computePos() {
     const el = triggerRef.current

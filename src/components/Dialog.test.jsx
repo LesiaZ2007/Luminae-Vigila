@@ -435,6 +435,55 @@ describe('Dialog — popovers opened from it', () => {
     expect(dialogOf('Outer').contains(option)).toBe(false)
   })
 
+  /* A choice made from the keyboard unmounts the focused option. Focus used to drop to
+     <body>, and the next Tab was sent to the dialog's first field. */
+  it('gives focus back to the trigger after Enter on an option, so Tab carries on', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <Dialog label="Form" onClose={() => {}}>
+        <button>first</button>
+        <Select value="a" options={OPTIONS} onChange={onChange} />
+        <button>after</button>
+      </Dialog>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    await user.tab() // after
+    await user.tab() // into the menu: Alpha
+    await user.tab() // Beta
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Beta' }))
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledWith('b')
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'after' }))
+  })
+
+  it('gives focus back to the trigger after Escape inside the menu', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    await user.click(trigger)
+    await user.tab()
+    expect(document.activeElement.textContent).toBe('Alpha')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('button', { name: 'Beta' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('leaves focus alone after a mouse pick', async () => {
+    const user = userEvent.setup()
+    render(<Form />)
+    const trigger = screen.getByRole('button', { name: 'Alpha' })
+    await user.click(trigger)
+    trigger.blur()
+    await user.click(screen.getByRole('button', { name: 'Beta' }))
+    await new Promise(r => requestAnimationFrame(r))
+    expect(document.activeElement).not.toBe(trigger)
+  })
+
   // The keyboard path that did not exist: on past the panel's last field, into the menu.
   it('Tab goes on from the panel’s last field into the open menu, then wraps', async () => {
     const user = userEvent.setup()

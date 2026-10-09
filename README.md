@@ -2587,6 +2587,14 @@ they still go to `<body>`. A press in a menu still never counts as a press on th
 backdrop, so picking a date in the event form does not save it, and Escape in an open
 menu closes the menu and leaves the dialog up.
 
+Being reachable meant focus could now be *inside* a menu when it closed — Enter on an
+option, Enter in the date field, Escape — and closing it removed the focused element.
+Focus fell to `<body>`, which the Tab trap reads as coming from outside, so the next Tab
+went back to the form's first field and every choice meant tabbing through the whole form
+again. A menu that closes from the keyboard now hands focus back to the field that opened
+it (`lib/useReturnFocus.js`). Not after a mouse pick: Chrome focuses a clicked option too,
+and moving focus to the trigger then would only light up its focus ring.
+
 They go in beside the backdrop rather than inside it or the panel. The panel's entrance
 animation leaves a transform on it, and a transform makes an element the box that
 `position: fixed` children are placed against, so a menu in the panel would be drawn
