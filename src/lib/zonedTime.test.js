@@ -1,11 +1,11 @@
 // Runs with TZ=America/New_York (see vitest.config.js). That is the point of several
 // cases below: the answer for Tokyo or Berlin must not depend on the process's own
 // zone, which on Vercel is UTC and here is deliberately something else again.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   isValidTimeZone, zoneFromTzOffset, resolveUserZone, offsetMinutesAt, zonedWallToMs,
   floatingToMs, dateStrInZone, localDateOf, addDaysToDateStr, formatWallTime,
-  MAX_ZONE_LENGTH, MAX_CACHED_ZONES, cachedZoneCount,
+  MAX_ZONE_LENGTH, MAX_CACHED_ZONES, cachedZoneCount, cachedZoneKeys,
 } from './zonedTime'
 
 const utc = (...args) => Date.UTC(...args)
@@ -46,6 +46,21 @@ describe('the zone formatter cache', () => {
     expect(cachedZoneCount()).toBe(before)
   })
 
+  /* V8 resolves the current IANA names Safari and Firefox send to older aliases
+     ('Asia/Kolkata' → 'Asia/Calcutta'). A cache keyed only on V8's spelling missed on
+     every lookup for those users and built a throwaway formatter each time. */
+  it('builds nothing on a repeat lookup of a name V8 spells differently', () => {
+    expect(isValidTimeZone('Asia/Kolkata')).toBe(true)
+    const spy = vi.spyOn(Intl, 'DateTimeFormat')
+    try {
+      expect(isValidTimeZone('Asia/Kolkata')).toBe(true)
+      expect(offsetMinutesAt('Asia/Kolkata', utc(2026, 0, 1))).toBe(330)
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('reads a misspelt zone exactly as the real one', () => {
     const t = utc(2026, 6, 1, 12)
     expect(offsetMinutesAt('asia/tokyo', t)).toBe(540)
@@ -57,7 +72,7 @@ describe('the zone formatter cache', () => {
     expect(zones.length).toBeGreaterThan(MAX_CACHED_ZONES) // otherwise this proves nothing
     for (const zone of zones) {
       expect(isValidTimeZone(zone)).toBe(true)
-      expect(cachedZoneCount()).toBeLessThanOrEqual(MAX_CACHED_ZONES)
+      expect(cachedZoneKeys()).toBeLessThanOrEqual(MAX_CACHED_ZONES)
     }
     // And it still answers once it has started over.
     expect(offsetMinutesAt('Asia/Tokyo', utc(2026, 0, 1))).toBe(540)
