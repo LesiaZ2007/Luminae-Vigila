@@ -6,7 +6,9 @@
 // phone opened with no signal showed the browser's dinosaur — even though every task,
 // event and note was sitting in localStorage the whole time. So:
 //
-//   • page loads go to the network first and fall back to the last copy saved here;
+//   • page loads go to the network first and fall back to the last copy saved here —
+//     and only the page actually shown is saved, once the build files it names are
+//     (see respondToNavigation and savePage);
 //   • `/_next/static/*` files are content-hashed and never change, so they are served
 //     straight from the cache once saved — including the ones a first visit loaded
 //     before this worker took over, which the page hands over in a message;
@@ -40,15 +42,20 @@ const GENERATIONS_KEPT = 2
 // screen blank.
 const NAVIGATION_TIMEOUT_MS = 4000
 
-// Saved at install so they open offline even if they were never visited: the planner,
-// plus the two other places the OS can launch the app into directly — the Today
-// shortcut and push, and the share target / New note shortcut.
+// Saved at install, and again after a sign-out clears the saved pages, so they open
+// offline even if they were never visited: the planner, plus the two other places the
+// OS can launch the app into directly — the Today shortcut and push, and the share
+// target / New note shortcut.
 const PRECACHE_PAGES = ['/', '/today', '/share']
 // Install waits on the precache, and a stalled request must not hold the new worker
 // (and with it every fix in the deploy) hostage. Whatever finished by then is kept.
 const PRECACHE_BUDGET_MS = 30000
 
 const PUBLIC_ASSET = /\.(?:png|jpe?g|gif|webp|avif|svg|ico|webmanifest|woff2?|ttf|otf)$/i
+
+// Set by clear-shell to the clearing in progress, and taken by the first page that
+// loads after it, which saves the launch pages again (see respondToNavigation).
+let resaveAfterSignOut = null
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -76,8 +83,16 @@ self.addEventListener('message', event => {
   const data = event.data || {}
   // Sent by the sign-out buttons: a saved page has the signed-in state rendered into
   // it, and it should not outlive the session it was rendered for.
+  //
+  // That takes /today and /share with it, which the OS opens directly and which must
+  // work offline, so they are saved again — but not yet. The message goes out just
+  // before the sign-out request, while the session cookie is still there, and pages
+  // fetched now would come back signed in. The first page that loads after this is
+  // the /login the sign-out redirects to, and by then the cookie is gone.
   if (data.type === 'clear-shell') {
-    event.waitUntil(clearShell().catch(() => {}))
+    const cleared = clearShell().catch(() => {})
+    resaveAfterSignOut = cleared
+    event.waitUntil(cleared)
   }
   // Sent by the page with the build files it loaded before this worker controlled it.
   // On a first visit that is the whole initial load and usually the idle prefetch too —
@@ -136,14 +151,38 @@ function isPublicAsset(url) {
  */
 async function respondToNavigation(event, url) {
   const key = shellKey(url.pathname)
+
+  /* Taken now, while the request is being made, not when its answer arrives: only a
+     page *requested* after a sign-out can be the one that saves the launch pages
+     again. A signed-in load still downloading when Sign out was tapped would
+     otherwise take the flag and re-save signed-in copies straight after the clear. */
+  const cleared = resaveAfterSignOut
+  resaveAfterSignOut = null
+
   const network = fetch(event.request)
-  // Registered before anything else awaits the response, so the copy is taken
-  // before the browser starts reading the body — and kept even when the timeout
-  // has already answered with the saved page.
-  event.waitUntil(network.then(response => {
-    if (!isCacheablePage(response)) return
-    const copy = response.clone()
-    return caches.open(SHELL_CACHE).then(cache => cache.put(key, copy))
+  // The copy is taken the moment the response arrives, before the browser starts
+  // reading the body.
+  const copied = network.then(r => (isCacheablePage(r) ? r.clone() : null), () => null)
+
+  /* Only the page actually served is saved — never one that turned up after the
+     timeout had already answered with the saved copy. The running page is then the
+     old one: it only ever requests the old build's chunks, so the calendar and notes
+     chunks the late page needs (lazy-loaded, so named nowhere in its HTML) would
+     never be fetched, and a working offline copy would be swapped for one whose
+     default tab cannot load. The served page loads its own chunks, so they are saved
+     as it runs. */
+  let settle
+  const served = new Promise(resolve => { settle = resolve })
+  event.waitUntil(Promise.all([copied, served]).then(([copy, wasServed]) => {
+    if (!wasServed || !copy) {
+      // Not used — leave it for the next page that does load.
+      if (cleared && !resaveAfterSignOut) resaveAfterSignOut = cleared
+      return
+    }
+    if (!cleared) return savePage(key, copy)
+    // The first page to load since a sign-out: the session cookie is gone now, so
+    // the launch pages clear-shell dropped can be saved again, signed out.
+    return cleared.then(() => Promise.all([savePage(key, copy), precache()]))
   }).catch(() => {}))
 
   const timer = delay(NAVIGATION_TIMEOUT_MS)
@@ -155,15 +194,16 @@ async function respondToNavigation(event, url) {
 
   // A 5xx is the server failing rather than the page not existing; the saved copy
   // is the better answer if there is one.
-  if (first.response && first.response.status < 500) return first.response
+  if (first.response && first.response.status < 500) { settle(true); return first.response }
 
   const saved = await matchShell(key)
-  if (saved) return saved
-  if (first.response) return first.response
+  if (saved) { settle(false); return saved }
+  if (first.response) { settle(true); return first.response }
   if (first.timedOut) {
     // Nothing saved to fall back on, so a slow answer is still better than none.
-    try { return await network } catch {}
+    try { const response = await network; settle(true); return response } catch {}
   }
+  settle(false)
   const plannerSaved = url.pathname !== '/' && Boolean(await matchShell(shellKey('/')))
   return offlinePage(plannerSaved)
 }
@@ -197,26 +237,44 @@ async function staleWhileRevalidate(event, request) {
 // ── Caches ───────────────────────────────────────────────────────────────────
 
 async function precache() {
-  const shell = await caches.open(SHELL_CACHE)
-  const store = await caches.open(STATIC_CACHE)
-  const claimed = new Set()
+  // Shared between the pages, so a file two of them name is fetched once.
+  const assets = new Map()
   // Each page carries on to its own files as soon as it arrives, so one page that
-  // stalls does not keep the others' code out of the cache.
+  // stalls does not keep the others out of the cache.
   await Promise.all(PRECACHE_PAGES.map(async path => {
-    let html
     try {
       const response = await fetch(absolute(path), { credentials: 'same-origin' })
-      if (!isCacheablePage(response)) return
-      html = await response.clone().text()
-      await shell.put(shellKey(path), response)
-    } catch { return }
-    // Everything the page loads up front. Chunks that are only imported later (the
-    // calendar, the notes editor, Corvus) are fetched by the planner itself once it
-    // is idle, which lands them here through cacheFirst.
-    const mine = [...staticAssetsIn(html)].filter(href => !claimed.has(href))
-    for (const href of mine) claimed.add(href)
-    await Promise.all(mine.map(href => precacheAsset(store, href)))
+      await savePage(shellKey(path), response, assets)
+    } catch {}
   }))
+}
+
+/**
+ * Save a page, but only once every `/_next/static` file it names is in the cache.
+ *
+ * A saved page is what the next offline launch runs, and HTML whose scripts are not
+ * saved runs as static markup with none of the user's data on it. Nothing else is
+ * sure to save a new page's files: when the timeout has already answered with the
+ * saved copy, the page on screen is the old one and only ever asks for its own code,
+ * and even a page that was served can lose the signal before it has loaded its
+ * chunks. So the files come first, and if any of them cannot be saved the page is
+ * not either — the copy already here, whose files are all here too, stays.
+ *
+ * "Names" is what the page loads up front. Chunks that are only imported later (the
+ * calendar, the notes editor, Corvus) appear in no HTML; the planner fetches them
+ * itself once it is idle, which lands them here through cacheFirst.
+ */
+async function savePage(key, response, assets = new Map()) {
+  if (!isCacheablePage(response)) return false
+  const html = await response.clone().text()
+  const store = await caches.open(STATIC_CACHE)
+  const saved = await Promise.all([...staticAssetsIn(html)].map(href => {
+    if (!assets.has(href)) assets.set(href, precacheAsset(store, href))
+    return assets.get(href)
+  }))
+  if (!saved.every(Boolean)) return false
+  await (await caches.open(SHELL_CACHE)).put(key, response)
+  return true
 }
 
 async function saveLoadedAssets(urls) {
@@ -233,16 +291,21 @@ async function saveLoadedAssets(urls) {
   await Promise.all([...wanted].map(href => precacheAsset(store, href)))
 }
 
+/** Put one build file in the current generation. True once it is there. */
 async function precacheAsset(store, href) {
   try {
     const hit = await findStatic(href)
     if (hit) {
       if (hit.cacheName !== STATIC_CACHE) await store.put(href, hit.response)
-      return
+      return true
     }
     const response = await fetch(href, { credentials: 'same-origin' })
-    if (isCacheableAsset(response)) await store.put(href, response)
-  } catch {}
+    if (!isCacheableAsset(response)) return false
+    await store.put(href, response)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** `/_next/static/...` URLs named in a page: script and stylesheet tags, preloads, fonts. */

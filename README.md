@@ -2734,17 +2734,30 @@ its code, and the planner opens from a cold start with no connection at all.
 - **Pages are network first.** A page load goes to the network and waits up to four
   seconds; when that fails or stalls, it gets the last copy saved on this device. Four
   seconds is long enough for a slow connection that works to still get fresh HTML, and short
-  enough that one bar of signal does not mean a blank screen. If the timeout answered, the
-  late response is still saved for next time; if there is nothing saved, the slow answer is
-  waited for rather than replaced with an error. A 5xx is treated as the server failing, so
-  the saved copy wins over it.
+  enough that one bar of signal does not mean a blank screen. If there is nothing saved, the
+  slow answer is waited for rather than replaced with an error. A 5xx is treated as the
+  server failing, so the saved copy wins over it.
+- **Only the page that was shown is saved, and only once its code is.** It replaces the
+  saved copy after every `/_next/static` file it names is in the cache; if any of them
+  cannot be fetched, the old copy stays, and all of its files are already there. A page
+  that arrives *after* the timeout has already answered with the saved copy is not saved at
+  all. It used to be, and a late arrival is usually a new deploy: the page on screen is the
+  older saved one, which only ever asks for its own code, so nothing fetched the new page's
+  files. The next launch with no signal then opened the new HTML with none of its scripts —
+  static markup with none of your data on it — in place of a copy that had worked. Saving
+  only once the files a page *names* are cached is not enough on its own for a late page:
+  the calendar and notes chunks are imported later and named in no HTML, so the default tab
+  could still fail to load. The page that is shown loads all of those itself (see *Build
+  files are cache first*), which is why it is the only one worth keeping.
 - **Saved by path, not by query.** `/?new=task` and `/?focus=1` — the home-screen shortcuts —
   open from the saved `/`. Those flags are read on the client, and Next takes the URL from
   the address bar rather than from the HTML, so one copy serves every query.
 - **`/`, `/today` and `/share` are saved at install**, with every `/_next/static` file they
-  name. They are the three places the OS launches the app into directly — the icon; the
-  Today shortcut and the daily push; the share sheet and the New note shortcut — so they
-  open offline even on a device that has never visited them.
+  name. The same rule applies: a page whose files did not all arrive is left out, and the
+  previous build's copy goes on serving. They are the three places the OS launches the app
+  into directly — the icon; the Today shortcut and the daily push; the share sheet and the
+  New note shortcut — so they open offline even on a device that has never visited them.
+  After a sign-out they are saved again (see below).
 - **A page never opened on this device** gets a small *You're offline* page with *Try
   again*, and *Open the planner* when the planner is saved. Not the planner itself, served
   at the wrong address: that would look like it worked while quietly dropping whatever the
@@ -2753,14 +2766,19 @@ its code, and the planner opens from a cold start with no connection at all.
   never changes, so once saved it is served without asking the network. The code-split
   chunks — the calendar, the notes editor, Corvus — are named by no page; the planner
   fetches all three in the background once it is idle, and that is what lands them in the
-  cache. After one online visit, all of the planner loads offline.
+  cache. After one online visit that stays open until the planner is idle, all of the
+  planner loads offline.
 - **A first visit hands its files over.** The page is not controlled until the worker has
   installed, so on a first visit the initial load and usually the idle fetch go straight to
   the network, past the worker. A real-browser check caught exactly that: the calendar
   chunk was missing from the cache and only opened offline because the browser's HTTP cache
   still held it, which on a phone is not something to count on. So the page watches its
   resource timings and posts every `/_next/static` file that bypassed the worker (a
-  `workerStart` of 0) once there is a controller, and the worker saves those too.
+  `workerStart` of 0), and the worker saves those too. The list waits until the controller
+  is a worker that caches, meaning one registered as `/sw.js?v=…`. On the first visit after
+  the deploy that added the cache, the controller is still the old push-only `/sw.js`. It
+  has no message handler, so a list posted to it was dropped and the new worker never got
+  it. The list is now held for the `controllerchange` to the new worker.
 - **Icons, the manifest and the favicon** come from the cache and are refreshed in the
   background.
 - **Left alone:** `/api/*`, because it is live data and the app keeps its own copy;
@@ -2794,7 +2812,15 @@ so registration no longer waits for one. Push subscription sync still does.
 
 **Signing out drops the saved pages.** They were rendered for the signed-in session, so both
 sign-out buttons tell the worker to delete every `lv-shell-*` cache on the way out. The
-code caches stay; they are the same for everyone.
+code caches stay; they are the same for everyone. That also deletes `/today` and `/share`,
+which the share sheet, the Today shortcut and the daily push open directly. So the launch
+pages are saved again, signed out, along with the first page that loads after the
+sign-out, which is the `/login` it redirects to. They are not saved straight away. The
+message goes out just before the sign-out request, while the session cookie is still set,
+and pages fetched at that moment would come back signed in. For the same reason the job
+goes to the first page *requested* after the sign-out, not the first whose answer happens
+to arrive: on a slow connection a signed-in load can still be downloading when Sign out is
+tapped, and its request carried the cookie.
 
 **Opened offline while signed in.** The current user comes from `/api/auth/me`, which used to
 be asked once, at mount. An app opened with no connection then stayed signed out — and

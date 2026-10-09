@@ -86,13 +86,18 @@ class FakeCacheStorage {
 
 /**
  * A response as a same-origin fetch produces it. `type` and `redirected` are
- * read-only on a constructed Response, so they are set on the instance.
+ * read-only on a constructed Response, so they are set on the instance — and on its
+ * clones, which a real clone keeps and a constructed one's would not.
  */
 function respond(body, { status = 200, type = 'basic', redirected = false, contentType } = {}) {
   const headers = contentType ? { 'Content-Type': contentType } : {}
-  const response = new Response(body, { status, headers })
-  Object.defineProperty(response, 'type', { value: type })
-  Object.defineProperty(response, 'redirected', { value: redirected })
+  return asFetched(new Response(body, { status, headers }), { type, redirected })
+}
+function asFetched(response, props) {
+  const clone = response.clone.bind(response)
+  Object.defineProperty(response, 'type', { value: props.type })
+  Object.defineProperty(response, 'redirected', { value: props.redirected })
+  Object.defineProperty(response, 'clone', { value: () => asFetched(clone(), props) })
   return response
 }
 const page  = (body, opts = {}) => () => respond(body, { contentType: 'text/html; charset=utf-8', ...opts })
@@ -275,11 +280,7 @@ describe('navigations: network first, saved page as the fallback', () => {
     expect(answered).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     expect(await (await event.responded).text()).toBe('saved planner')
-
-    // The late response still lands in the cache for next time.
-    slow.resolve(respond('fresh planner', { contentType: 'text/html' }))
-    await event.settled()
-    expect(await sw.caches.text(`lv-shell-${V3}`, '/')).toBe('fresh planner')
+    // What the late response does to the saved copy is covered below.
   })
 
   it('keeps waiting on a slow network when there is nothing saved to show', async () => {
@@ -324,6 +325,111 @@ describe('navigations: network first, saved page as the fallback', () => {
     await event.responded
     await event.settled()
     expect(await sw.caches.text(`lv-shell-${V3}`, '/')).toBeUndefined()
+  })
+})
+
+// ── Saving a page ────────────────────────────────────────────────────────────
+
+describe('a page copy replaces the saved one only once its build files are saved', () => {
+  const OLD_CHUNK = '/_next/static/chunks/app-old.js'
+  const NEW_CHUNK = '/_next/static/chunks/app-new.js'
+  const OLD_HTML  = `<html><script src="${OLD_CHUNK}"></script>old planner</html>`
+  const NEW_HTML  = `<html><script src="${NEW_CHUNK}"></script>new planner</html>`
+  const shell = `lv-shell-${V3}`
+
+  /** A device whose saved planner works offline: the page, and the code it names. */
+  async function workingDevice() {
+    const sw = loadWorker()
+    await sw.caches.seed(shell, '/', OLD_HTML)
+    await sw.caches.seed(`lv-static-${V3}`, OLD_CHUNK, 'old code')
+    return sw
+  }
+
+  /** A load of `/` that the timeout answers; a new build's HTML arrives after it. */
+  async function lateNavigation(sw) {
+    vi.useFakeTimers()
+    const slow = deferred()
+    sw.fetch.route('/', () => slow.promise)
+    const event = sw.navigate('/')
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(await (await event.responded).text()).toBe(OLD_HTML)
+    return { event, arrive: () => slow.resolve(respond(NEW_HTML, { contentType: 'text/html' })) }
+  }
+
+  const chunkRequested = sw => vi.waitFor(() => {
+    expect(sw.fetch).toHaveBeenCalledWith(abs(NEW_CHUNK), { credentials: 'same-origin' })
+  })
+
+  it('keeps the working copy when a late page’s files cannot be fetched', async () => {
+    const sw = await workingDevice()
+    const late = await lateNavigation(sw)
+    // One bar of signal, then none: the new HTML makes it, its code does not.
+    sw.fetch.offline()
+    late.arrive()
+    await late.event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(OLD_HTML)
+
+    // So the next launch with no signal still opens a page whose code is saved.
+    expect(await (await sw.navigate('/').responded).text()).toBe(OLD_HTML)
+    expect(await (await sw.get(OLD_CHUNK).responded).text()).toBe('old code')
+  })
+
+  // Even when everything the late page *names* could be fetched: its lazy chunks (the
+  // calendar, notes) are named nowhere in the HTML, and the old page that is running
+  // never asks for them, so swapping copies would leave the default tab unable to
+  // load offline.
+  it('never replaces it with a page that arrived after the timeout', async () => {
+    const sw = await workingDevice()
+    sw.fetch.route(NEW_CHUNK, asset('new code'))
+    const late = await lateNavigation(sw)
+    late.arrive()
+    await late.event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(OLD_HTML)
+    expect(sw.fetch).not.toHaveBeenCalledWith(abs(NEW_CHUNK), { credentials: 'same-origin' })
+
+    sw.fetch.offline()
+    expect(await (await sw.navigate('/').responded).text()).toBe(OLD_HTML)
+  })
+
+  it('saves a slow page when it was the one served, because nothing was saved', async () => {
+    vi.useFakeTimers()
+    const sw = loadWorker()
+    const slow = deferred()
+    sw.fetch.route('/', () => slow.promise).route(NEW_CHUNK, asset('new code'))
+    const event = sw.navigate('/')
+    await vi.advanceTimersByTimeAsync(4000)
+    slow.resolve(respond(NEW_HTML, { contentType: 'text/html' }))
+    expect(await (await event.responded).text()).toBe(NEW_HTML)
+    await event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(NEW_HTML)
+  })
+
+  it('saves a page it served only once the page’s files are in the cache', async () => {
+    const sw = await workingDevice()
+    const chunk = deferred()
+    sw.fetch.route('/', page(NEW_HTML)).route(NEW_CHUNK, () => chunk.promise)
+    const event = sw.navigate('/')
+    expect(await (await event.responded).text()).toBe(NEW_HTML)
+
+    // On screen, its code still downloading: the saved copy is untouched so far.
+    await chunkRequested(sw)
+    expect(await sw.caches.text(shell, '/')).toBe(OLD_HTML)
+
+    chunk.resolve(respond('new code', { contentType: 'application/javascript' }))
+    await event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(NEW_HTML)
+  })
+
+  it('keeps the working copy when the signal goes while a served page is still loading', async () => {
+    const sw = await workingDevice()
+    const chunk = deferred()
+    sw.fetch.route('/', page(NEW_HTML)).route(NEW_CHUNK, () => chunk.promise)
+    const event = sw.navigate('/')
+    await event.responded
+    await chunkRequested(sw)
+    chunk.reject(new TypeError('Failed to fetch'))
+    await event.settled()
+    expect(await sw.caches.text(shell, '/')).toBe(OLD_HTML)
   })
 })
 
@@ -532,15 +638,20 @@ describe('install', () => {
     expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual([])
   })
 
-  it('keeps whatever succeeded when some of it fails', async () => {
+  it('keeps whatever succeeded when some of it fails — but no page without its code', async () => {
     const sw = loadWorker()
     onlineSite(sw)
     sw.fetch.route('/today', page('down', { status: 500 }))
     sw.fetch.route('/_next/static/chunks/page-5c5c.js', () => { throw new TypeError('reset') })
+    await sw.caches.seed(`lv-shell-${V2}`, '/', 'previous planner')
     await expect(sw.dispatch('install').settled()).resolves.toBeDefined()
-    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/share'])
+    // The planner's own chunk failed, so the new planner is not saved…
+    expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual(['/share'])
     expect(sw.caches.paths(`lv-static-${V3}`)).toContain('/_next/static/chunks/main-app-31ff.js')
     expect(sw.caches.paths(`lv-static-${V3}`)).not.toContain('/_next/static/chunks/page-5c5c.js')
+    // …and the previous build's copy is still what opens offline.
+    sw.fetch.offline()
+    expect(await (await sw.navigate('/').responded).text()).toBe('previous planner')
   })
 
   it('does not let a stalled request hold the install hostage', async () => {
@@ -618,6 +729,65 @@ describe('clear-shell', () => {
     const sw = loadWorker({ caches })
     await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
     expect(await caches.keys()).toEqual([`lv-static-${V3}`])
+  })
+
+  // The share sheet, the Today shortcut and the daily push open these directly, so a
+  // sign-out must not leave them unsaved until the next deploy.
+  it('saves the launch pages again with the first page that loads after it', async () => {
+    const caches = new FakeCacheStorage()
+    for (const path of ['/', '/today', '/share']) await caches.seed(`lv-shell-${V3}`, path, `signed in ${path}`)
+    const sw = loadWorker({ caches })
+    onlineSite(sw)
+    sw.fetch.route('/login', page('sign in'))
+
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    // Not straight away: the message goes out before the sign-out request, so the
+    // session cookie is still there and the pages would come back signed in.
+    expect(sw.fetch).not.toHaveBeenCalled()
+    expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual([])
+
+    // The /login the sign-out redirects to; the cookie is gone by then.
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
+    expect(await sw.caches.text(`lv-shell-${V3}`, '/today')).toBe(TODAY_HTML)
+    expect(sw.caches.paths(`lv-static-${V3}`)).toEqual(expect.arrayContaining(PLANNER_ASSETS))
+
+    // Once: the load after that is an ordinary one.
+    sw.fetch.mockClear()
+    await sw.navigate('/login').settled()
+    expect(sw.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  // A signed-in load still downloading when Sign out was tapped must not be the one
+  // that saves the launch pages again: its request carried the session cookie.
+  it('is not taken by a page that was requested before the sign-out', async () => {
+    const sw = loadWorker()
+    onlineSite(sw)
+    const slow = deferred()
+    sw.fetch.route('/', () => slow.promise)
+    const before = sw.navigate('/')
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    slow.resolve(respond('signed in', { contentType: 'text/html' }))
+    await before.settled()
+    expect(sw.fetch).not.toHaveBeenCalledWith(abs('/today'), { credentials: 'same-origin' })
+
+    // The /login the sign-out redirects to takes it, and saves signed-out copies.
+    sw.fetch.route('/', page(PLANNER_HTML)).route('/login', page('sign in'))
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
+    expect(await sw.caches.text(`lv-shell-${V3}`, '/')).toBe(PLANNER_HTML)
+  })
+
+  it('waits for a page that actually loads before saving them again', async () => {
+    const sw = loadWorker()
+    await sw.dispatch('message', { data: { type: 'clear-shell' } }).settled()
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`)).toEqual([])
+
+    onlineSite(sw)
+    sw.fetch.route('/login', page('sign in'))
+    await sw.navigate('/login').settled()
+    expect(sw.caches.paths(`lv-shell-${V3}`).sort()).toEqual(['/', '/login', '/share', '/today'])
   })
 
   it('ignores other messages', async () => {
