@@ -57,22 +57,65 @@ const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\
 
 const pad = n => String(n).padStart(2, '0')
 
+/**
+ * Most zones the formatter cache holds before it starts again from empty. Far more than
+ * the handful real devices report, so honest traffic never notices it.
+ */
+export const MAX_CACHED_ZONES = 200
+
 // Constructing an Intl.DateTimeFormat is far slower than using one, and the cron asks
 // the same handful of zones the same question for every candidate it looks at.
+//
+// One formatter per *canonical* name, and bounded, because the names come from clients.
+// `Intl` accepts any casing of a zone ('america/new_york', 'AMERICA/NEW_YORK', …) and
+// any spelling of an offset ('+0530', '+05:30'), so keying on the string as sent let
+// one signed-in client mint a new ~23 KB formatter per request until the instance ran
+// out of memory. Every spelling of a zone now shares one formatter, and the keys —
+// zones and the spellings seen for them — cannot pile up past the cap.
 const formatters = new Map()
 
+/** `Intl`'s own spelling of a zone name — throws a RangeError for one it does not know. */
+function canonicalName(timeZone) {
+  return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone
+}
+
 function partsFormatter(timeZone) {
+  // Any spelling seen before hits without building anything.
   let f = formatters.get(timeZone)
+  if (f) return f
+  const canonical = canonicalName(timeZone)
+  f = formatters.get(canonical)
+  // Clearing outright rather than evicting one at a time: a full cache only happens
+  // under a flood of made-up spellings, and rebuilding a few real zones is cheap.
+  if (formatters.size >= MAX_CACHED_ZONES - 1) formatters.clear()
   if (!f) {
     f = new Intl.DateTimeFormat('en-US', {
-      timeZone,
+      timeZone: canonical,
       hourCycle: 'h23', // avoids a `hour12: false` quirk that formats midnight as "24"
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
-    formatters.set(timeZone, f)
+    formatters.set(canonical, f)
   }
+  /* The as-sent spelling too, pointing at the same formatter. V8's canonical name is
+     not always the one devices send: Safari and Firefox report the current IANA names
+     ('Asia/Kolkata', 'Europe/Kyiv'), which V8 resolves to the older aliases
+     ('Asia/Calcutta', 'Europe/Kiev'). Keyed on the canonical name alone, every lookup
+     for those users missed and paid for a throwaway formatter to find out the
+     canonical name again — about 18 times the cost, on every cron run. An alias is a
+     Map slot, not a formatter, and counts toward the cap like any other key. */
+  if (timeZone !== canonical) formatters.set(timeZone, f)
   return f
+}
+
+/** How many distinct formatters are cached. Only the tests that bound the cache need it. */
+export function cachedZoneCount() {
+  return new Set(formatters.values()).size
+}
+
+/** How many keys (zones and spellings of them) the cache holds. Tests only. */
+export function cachedZoneKeys() {
+  return formatters.size
 }
 
 /**

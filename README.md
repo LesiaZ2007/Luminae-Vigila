@@ -1890,9 +1890,10 @@ per device in its recorded zone the same way the glance picks its day. Each task
 under its due date and each event under the date its start time falls on, as you wrote
 them. It used to compare those dates against the server's UTC clock instead, so the window
 was shifted by your offset at both ends: in Tokyo, where the Sunday run lands at 3am on
-Monday, the "week ahead" still began with Sunday's tasks, and in New York an event at 3pm
-that Sunday, four hours away, was dropped because its digits were compared against 18:00
-UTC. A timed event earlier today is left out, since it is behind
+Monday, the "week ahead" still began with Sunday's tasks, and in New York, where the run
+lands at 2pm (1pm in winter), an event at 3pm that Sunday — an hour or two away — was
+dropped because its digits, `15:00`, were compared against 18:00 UTC and read as already
+past. A timed event earlier today is left out, since it is behind
 you rather than ahead; deleted tasks and events are no longer counted; and the body no
 longer reads "2 events, — busiest day", which came from joining the busiest-day clause on
 with a comma.
