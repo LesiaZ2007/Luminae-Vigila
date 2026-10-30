@@ -42,6 +42,13 @@ describe('classCategories', () => {
     ])
   })
 
+  it('leaves out a class whose semester has ended', () => {
+    const old = { id: 'old', courseName: 'Old', semesterStart: '2026-01-12', semesterEnd: '2026-05-08' }
+    const cur = { id: 'cur', courseName: 'Cur', semesterStart: '2026-08-24', semesterEnd: '2026-12-11' }
+    expect(classCategories([old, cur], '2026-10-30').map(c => c.classId)).toEqual(['cur'])
+    expect(classCategories([old, cur], '2026-05-08').map(c => c.classId)).toEqual(['old', 'cur'])
+  })
+
   it('leaves out disabled and deleted classes', () => {
     const mixed = [
       ...CLASSES,

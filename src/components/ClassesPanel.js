@@ -37,7 +37,7 @@
  * the work is all filed on the class. See lib/classLinks.js.
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { Fragment, useState, useMemo, useEffect } from 'react'
 import {
   GraduationCap, ChevronDown, ChevronRight, Plus, Pencil, MapPin, Clock,
   CalendarDays, AlertCircle, User, Timer, TrendingUp, BookOpen, CircleCheck, Circle,
@@ -61,6 +61,7 @@ import { describeLocation }  from '@/lib/maps'
 import { buildCourseworkItems } from '@/lib/classCalendar'
 import { visibleSubtasks }    from '@/lib/todoMerge'
 import { toYMDLocal }        from '@/lib/calendarView'
+import { isSemesterOver, semesterOf } from '@/lib/semesters'
 
 /** One icon per `describeLocation` kind — a Zoom class is not a place on a map. */
 const LOCATION_ICONS = { place: MapPin, online: Video, link: Link2 }
@@ -615,7 +616,7 @@ function ClassCard({
                 </MetaChip>
               )}
               {cls.semesterStart && cls.semesterEnd && (
-                <MetaChip icon={CalendarDays}>{shortDate(cls.semesterStart)} – {shortDate(cls.semesterEnd)}</MetaChip>
+                <MetaChip icon={CalendarDays}>{semesterOf(cls).name} · {shortDate(cls.semesterStart)} – {shortDate(cls.semesterEnd)}</MetaChip>
               )}
               {canvasCourseIds.length > 0 && (
                 <MetaChip icon={BookOpen} title="Linked to a Canvas course">Canvas linked</MetaChip>
@@ -1005,10 +1006,17 @@ export default function ClassesPanel({
    * A linked section gets no entry of its own. It rides along on its parent's, in
    * `sections`, which is what makes one class one card.
    */
-  const entries = useMemo(() => {
+  const todayStr = useMemo(() => toYMDLocal(new Date(now)), [now])
+
+  /* Classes whose semester has ended go to their own collapsed list at the bottom,
+     so last term's schedule stops crowding this one's — but keeps its notes and work. */
+  const [showPast, setShowPast] = useState(false)
+
+  const [entries, pastEntries] = useMemo(() => {
     const claimed = new Set()
     const active  = []
     const off     = []
+    const past    = []
     const byId    = new Map(canvasClasses.filter(c => c?.id != null).map(c => [String(c.id), c]))
 
     for (const cls of [...canvasClasses].sort((a, b) => (a.courseName ?? '').localeCompare(b.courseName ?? ''))) {
@@ -1018,7 +1026,8 @@ export default function ClassesPanel({
       if (isLinkedSection(links, cls.id)) continue
       const sections = [cls, ...linkedSectionIds(links, cls.id).map(id => byId.get(id)).filter(Boolean)]
       const entry = { kind: 'class', key: String(cls.id), cls, sections }
-      if (cls.enabled === false) off.push(entry)
+      if (isSemesterOver(cls, todayStr)) past.push(entry)
+      else if (cls.enabled === false) off.push(entry)
       else active.push(entry)
     }
 
@@ -1036,8 +1045,10 @@ export default function ClassesPanel({
     }
     fromCanvas.sort((a, b) => a.courseName.localeCompare(b.courseName))
 
-    return [...active, ...fromCanvas, ...off]
-  }, [canvasClasses, canvasAssignments, courseColors, links])
+    // Newest finished semester first.
+    past.sort((a, b) => (b.cls.semesterEnd ?? '').localeCompare(a.cls.semesterEnd ?? ''))
+    return [[...active, ...fromCanvas, ...off], past]
+  }, [canvasClasses, canvasAssignments, courseColors, links, todayStr])
 
   /* Everything dated, from every class, for the month grid. Built from the same
      `todos` / `canvasAssignments` / `canvasClassEvents` the cards read, so the two
@@ -1049,8 +1060,6 @@ export default function ClassesPanel({
     classEvents: canvasClassEvents,
     courseColors,
   }), [canvasClasses, todos, canvasAssignments, canvasClassEvents, courseColors])
-
-  const todayStr = useMemo(() => toYMDLocal(new Date(now)), [now])
 
   /* The calendar's colour key. Built from the items actually on the grid rather than
      from the class list, so it never explains a colour that does not appear — a key to
@@ -1185,13 +1194,13 @@ export default function ClassesPanel({
           {canvasConnected && onOpenCanvasSettings && (
             <IconButton icon={Settings2} label="Canvas settings" onClick={onOpenCanvasSettings} />
           )}
-          {entries.length > 0 && addButton}
+          {entries.length + pastEntries.length > 0 && addButton}
         </div>
 
 
         {/* ── Body ── */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '8px 14px 28px' : '10px 20px 28px' }}>
-          {entries.length === 0 ? (
+          {entries.length + pastEntries.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 14, padding: 32, textAlign: 'center' }}>
               <GraduationCap size={38} style={{ color: 'var(--text-3)', opacity: 0.35 }} />
               <div>
@@ -1287,9 +1296,26 @@ export default function ClassesPanel({
                 </>
               )}
 
-              {entries.map(entry => (
+              {[...entries, ...pastEntries].map(entry => (
+                <Fragment key={entry.key}>
+                {entry === pastEntries[0] && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPast(v => !v)}
+                    aria-expanded={showPast}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                      margin: '14px 0 6px', padding: '4px 0', background: 'none', border: 'none',
+                      cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 700,
+                      color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em',
+                    }}
+                  >
+                    {showPast ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    Past semesters ({pastEntries.length})
+                  </button>
+                )}
+                {(!pastEntries.includes(entry) || showPast) && (
                 <ClassCard
-                  key={entry.key}
                   entry={entry}
                   /* All shut. When the cards were the tab, opening the first one was
                      what stopped it reading as a wall of closed rows — but they now sit
@@ -1320,6 +1346,8 @@ export default function ClassesPanel({
                   onToggleSelect={toggleSelect}
                   isMobile={isMobile}
                 />
+                )}
+                </Fragment>
               ))}
               </section>
             </>

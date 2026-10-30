@@ -789,6 +789,23 @@ bar is `flex: 1` and gets around 45px, and the full name would wrap onto its ico
 The tab is one scrolling page: a coursework month at the top, every deadline from every
 class on one grid, with the detail of each class below it.
 
+### Semesters
+
+A class is added to a **semester** picked from a dropdown, rather than typing a start
+and end date for every class. The dropdown lists the semesters your classes already
+use, plus **+ New semester…** (a name and two dates). A new class defaults to the
+semester running today, or the next one to start. **Edit** beside the dropdown changes
+a semester's name or dates for every class in it at once.
+
+There is no semester table: [`lib/semesters.js`](src/lib/semesters.js) reads them off
+the classes, which still carry `semesterStart` / `semesterEnd` (plus `semesterName`), so
+the calendar and reminders needed no changes. Classes from before semesters had names
+are named from their start month ("Fall 2026").
+
+Once a semester's last day has passed, its classes move into a collapsed **Past
+semesters** list at the bottom of the tab and drop out of the task-category picker. They
+keep their notes, tasks and history; nothing is deleted.
+
 ### The coursework month
 
 The cards answer *what is the state of Physics?*. They cannot answer the question that

@@ -15,6 +15,10 @@ import Dialog, { useDialogExit } from '@/components/Dialog'
 import { describeLocation } from '@/lib/maps'
 import { getExceptions, isDateStr, EXAM_COLOR } from '@/lib/classInstances'
 import { linkCandidates, linkedParentId, hasLinkedSections, classLinksFor } from '@/lib/classLinks'
+import { semestersFrom, semesterOf, defaultSemester, defaultSemesterName, semesterRangeLabel, semesterKey, moveSemester } from '@/lib/semesters'
+import { todayStr } from '@/lib/localDate'
+
+const NEW_SEMESTER = '__new'
 
 const DAY_LABELS  = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -86,8 +90,35 @@ export default function ClassScheduleModal({
   const [days,           setDays]           = useState(editClass?.days            || [1, 3, 5]) // MWF default
   const [startTime,      setStartTime]      = useState(editClass?.startTime       || '09:00')
   const [endTime,        setEndTime]        = useState(editClass?.endTime         || '09:50')
-  const [semesterStart,  setSemesterStart]  = useState(editClass?.semesterStart   || '')
-  const [semesterEnd,    setSemesterEnd]    = useState(editClass?.semesterEnd     || '')
+  /* The semester is picked from the ones your other classes already use, so a new
+     class is one choice rather than two dates retyped. Picking "New semester…" or
+     "Edit" opens the name and dates; editing an existing one moves every class in it. */
+  const semesters = useMemo(() => semestersFrom(classes), [classes])
+  const [initialSemester] = useState(() =>
+    semesterOf(editClass) ?? (isEdit ? null : defaultSemester(semesters, todayStr())))
+  const [semesterChoice,  setSemesterChoice]  = useState(initialSemester?.key ?? NEW_SEMESTER)
+  const [editingSemester, setEditingSemester] = useState(!initialSemester)
+  const [semesterName,   setSemesterName]   = useState(initialSemester?.name  ?? '')
+  const [semesterStart,  setSemesterStart]  = useState(initialSemester?.start ?? '')
+  const [semesterEnd,    setSemesterEnd]    = useState(initialSemester?.end   ?? '')
+
+  function chooseSemester(key) {
+    setSemesterChoice(key)
+    const sem = semesters.find(s => s.key === key)
+    setEditingSemester(!sem)
+    setSemesterName(sem?.name   ?? '')
+    setSemesterStart(sem?.start ?? '')
+    setSemesterEnd(sem?.end     ?? '')
+  }
+
+  const today = todayStr()
+  const semesterOptions = [
+    ...semesters.map(s => ({
+      value: s.key,
+      label: `${s.name} (${semesterRangeLabel(s)})${s.end < today ? ' · ended' : ''}`,
+    })),
+    { value: NEW_SEMESTER, label: '+ New semester…' },
+  ]
   const [color,          setColor]          = useState(editClass?.color           || '#3a6fa8')
   const [canvasCourseId, setCanvasCourseId] = useState(editClass?.canvasCourseId  ?? null)
   const [linkedTo,       setLinkedTo]       = useState(linkedParentId(editClass) ?? '')
@@ -138,6 +169,7 @@ export default function ClassScheduleModal({
     if (!semesterStart)       { setError('Semester start date is required.'); return }
     if (!semesterEnd)         { setError('Semester end date is required.'); return }
     if (semesterEnd <= semesterStart) { setError('Semester end must be after start.'); return }
+    const semName = semesterName.trim() || defaultSemesterName(semesterStart)
 
     const entry = {
       id:             editClass?.id || `cls_${Date.now()}`,
@@ -148,6 +180,7 @@ export default function ClassScheduleModal({
       days,
       startTime,
       endTime,
+      semesterName:   semName,
       semesterStart,
       semesterEnd,
       color,
@@ -159,6 +192,12 @@ export default function ClassScheduleModal({
       linkedToClassId: parentOptions.length > 0 ? (linkedTo || null) : (editClass?.linkedToClassId ?? null),
     }
     onSave(entry)
+    // Editing an existing semester edits it for every class in it, not just this one.
+    const from = semesters.find(s => s.key === semesterChoice)
+    if (from) {
+      const to = { name: semName, start: semesterStart, end: semesterEnd }
+      if (semesterKey(to) !== from.key) moveSemester(classes, from, to, entry.id).forEach(onSave)
+    }
     handleClose()
   }
 
@@ -351,17 +390,40 @@ export default function ClassScheduleModal({
             </div>
           </div>
 
-          {/* Semester dates */}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <label className="field-label">Semester Start</label>
-              <DatePicker value={semesterStart} onChange={setSemesterStart} />
+          {/* Semester */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <label className="field-label">Semester</label>
+              {semesterChoice !== NEW_SEMESTER && !editingSemester && (
+                <button type="button" style={linkBtn} onClick={() => setEditingSemester(true)}>Edit</button>
+              )}
             </div>
-            <div style={{ flex: 1 }}>
-              <label className="field-label">Semester End</label>
-              <DatePicker value={semesterEnd} onChange={setSemesterEnd} min={semesterStart} />
-            </div>
+            <Select value={semesterChoice} onChange={chooseSemester} options={semesterOptions} />
           </div>
+          {editingSemester && (
+            <>
+              <div>
+                <label className="field-label">Semester Name</label>
+                <input type="text" value={semesterName} onChange={e => setSemesterName(e.target.value)}
+                       placeholder={defaultSemesterName(semesterStart) || 'e.g. Spring 2027'} className="field" />
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label className="field-label">Semester Start</label>
+                  <DatePicker value={semesterStart} onChange={setSemesterStart} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label className="field-label">Semester End</label>
+                  <DatePicker value={semesterEnd} onChange={setSemesterEnd} min={semesterStart} />
+                </div>
+              </div>
+              {semesterChoice !== NEW_SEMESTER && (
+                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-3)' }}>
+                  Changes apply to every class in this semester.
+                </p>
+              )}
+            </>
+          )}
 
 
           {/* One-off exceptions — only for a class that already exists, since they are
