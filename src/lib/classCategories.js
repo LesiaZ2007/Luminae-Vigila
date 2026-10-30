@@ -25,6 +25,8 @@
 import {
   classLinksFor, isLinkedSection, hasLinkedSections, linkedSectionIds, canonicalCategoryId,
 } from '@/lib/classLinks'
+import { isSemesterOver } from '@/lib/semesters'
+import { todayStr } from '@/lib/localDate'
 
 /** Namespaced so a class id can never collide with a user-made category id. */
 export const CLASS_PREFIX = 'class:'
@@ -48,7 +50,8 @@ export function classIdFromCategoryId(categoryId) {
  * Derive a category per class currently on the schedule.
  *
  * Disabled classes are left out: they are already hidden from the calendar, and
- * offering to file new work under a class you have switched off is noise. Tasks
+ * offering to file new work under a class you have switched off is noise. So are
+ * classes whose semester has ended. Tasks
  * already filed under one keep their category — see `findCategory`.
  *
  * A linked section is left out for a different reason: it is not a class of its own any
@@ -56,10 +59,10 @@ export function classIdFromCategoryId(categoryId) {
  * redundancy linking removes, and its `sectionIds` are carried on the surviving option
  * so callers that need to match a stored `class:<section>` category have them.
  */
-export function classCategories(canvasClasses = []) {
+export function classCategories(canvasClasses = [], today = todayStr()) {
   const links = classLinksFor(canvasClasses)
   return (canvasClasses ?? [])
-    .filter(c => c?.id && c.enabled !== false && !c.deletedAt)
+    .filter(c => c?.id && c.enabled !== false && !c.deletedAt && !isSemesterOver(c, today))
     .filter(c => !isLinkedSection(links, c.id))
     .map(c => ({
       id:         classCategoryId(c.id),
