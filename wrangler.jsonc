@@ -1,7 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "luminae",
-  "main": ".open-next/worker.js",
+  // OpenNext's worker plus the scheduled pushes (cf-worker.js).
+  "main": "cf-worker.js",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
@@ -22,11 +23,15 @@
       "service": "luminae"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // The scheduled pushes run only here (not on Vercel any more, so nothing is sent twice).
+  // cf-worker.js maps each expression to its route; keep the two lists identical.
+  // Weekdays count from 1 = Sunday on Cloudflare, hence SUN.
+  "triggers": { "crons": ["0 11 * * *", "0 18 * * SUN"] }
   // Secrets (`npx wrangler secret put NAME --name luminae`): DATABASE_URL, SESSION_SECRET,
   // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GROQ_API_KEY, VAPID_PRIVATE_KEY, CRON_SECRET
   // (optional: VAPID_SUBJECT, CORVUS_MODEL). Leave GOOGLE_REDIRECT_URI unset so the Google
   // callback follows the address the request came in on.
-  // No cron triggers: the scheduled pushes run from Vercel (vercel.json), and running them
-  // here as well would send every notification twice.
+  // /api/push/reminders is deliberately not scheduled: it needs a ping every few minutes,
+  // which would keep the database awake around the clock.
 }
