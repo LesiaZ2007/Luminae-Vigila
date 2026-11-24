@@ -1,0 +1,6 @@
+# Cloudflare Workers static assets (Vercel ignores this file and uses the headers in next.config.mjs).
+# The service worker script must never come out of an HTTP cache, or devices stay on old code.
+/sw.js
+  Content-Type: application/javascript; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
+  Content-Security-Policy: default-src 'self'; script-src 'self'

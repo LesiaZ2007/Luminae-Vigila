@@ -3,7 +3,12 @@ import { categoriesContext, describeCategories, resolveCategory } from '@/lib/co
 import { formatWallTime, isValidTimeZone } from '@/lib/zonedTime'
 import Groq from 'groq-sdk'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+// Made on first use, not at import: the SDK throws when the key is missing, and a throw at
+// import fails `next build` (page-data collection loads every route) on a machine without it.
+let _groq = null
+function groqClient() {
+  return (_groq ??= new Groq({ apiKey: process.env.GROQ_API_KEY }))
+}
 
 /**
  * Groq model backing Corvus.
@@ -475,7 +480,7 @@ BEHAVIOR RULES:
   try {
     const groqMessages = toGroqMessages(messages)
 
-    const response = await groq.chat.completions.create({
+    const response = await groqClient().chat.completions.create({
       model:       CORVUS_MODEL,
       messages:    [{ role: 'system', content: systemPrompt }, ...groqMessages],
       tools:       buildTools(todoCategories),
@@ -520,7 +525,7 @@ export async function GET() {
   }
 
   try {
-    const list      = await groq.models.list()
+    const list      = await groqClient().models.list()
     const available = (list.data ?? []).map(m => m.id)
     const healthy   = available.includes(CORVUS_MODEL)
 

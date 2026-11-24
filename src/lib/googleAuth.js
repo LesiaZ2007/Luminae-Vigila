@@ -36,11 +36,16 @@ function getRedirectUri(origin) {
 }
 
 export function makeOAuth2Client(origin) {
-  return new auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    getRedirectUri(origin),
-  )
+  return new auth.OAuth2({
+    clientId:     process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri:  getRedirectUri(origin),
+    // Every Google request (token exchange, refresh, userinfo, Calendar) goes through this
+    // client's transporter. Left alone, gaxios loads `node-fetch` whenever there is no
+    // `window`, which runs over Node's http/https modules; the platform's own fetch works
+    // the same on Node and on Cloudflare Workers, where those modules are only emulated.
+    transporterOptions: { fetchImplementation: (url, init) => fetch(url, init) },
+  })
 }
 
 /**
