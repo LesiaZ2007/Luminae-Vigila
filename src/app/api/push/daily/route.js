@@ -8,8 +8,8 @@
  * Protected by Bearer token:
  *   Authorization: Bearer $CRON_SECRET
  *
- * Scheduled once a day in vercel.json (11:00 UTC — early morning in US Eastern).
- * One Vercel cron runs once for everyone, so the send time is fixed rather than
+ * Scheduled once a day as a Cloudflare cron trigger (wrangler.jsonc, 11:00 UTC —
+ * early morning in US Eastern). One cron runs once for everyone, so the send time is fixed rather than
  * local-morning-for-everyone. Each device's recorded zone decides which calendar
  * day to summarise, so at least the *contents* are right for the reader even when
  * the hour isn't ideal.

@@ -25,15 +25,15 @@ wrong. Everything below is the detail behind that button.
 **Symptom: the daily glance arrives, reminders don't.**
 
 The instinct is to suspect the device — notifications clearly work, so it must be the
-reminder logic. It almost never is. Vercel **injects `CRON_SECRET` into its own cron
-requests automatically**, but the reminder job is driven from *outside* Vercel with a
-secret you pasted by hand. So rotating `CRON_SECRET` in Vercel breaks exactly one of
-the three jobs:
+reminder logic. It almost never is. The Cloudflare worker's cron handler
+(`cf-worker.js`) **sends the worker's own `CRON_SECRET` with each scheduled call**, but
+the reminder job is driven from *outside* with a secret you pasted by hand. So
+rotating `CRON_SECRET` breaks exactly one of the three jobs:
 
 | Job | Called by | Survives a secret rotation? |
 |-----|-----------|------------------------------|
-| `/api/push/daily` | Vercel cron | ✅ Vercel supplies the new value |
-| `/api/push/digest` | Vercel cron | ✅ same |
+| `/api/push/daily` | Cloudflare cron trigger | ✅ the worker sends its own value |
+| `/api/push/digest` | Cloudflare cron trigger | ✅ same |
 | `/api/push/reminders` | external pinger | ❌ **401 on every tick** |
 
 If your pinger has failure notifications on, this shows up as "your cron isn't
@@ -96,6 +96,13 @@ comments; a stray `_comment` will fail the build). A reminder that can only fire
 once a day is not a reminder, so the two genuinely-daily jobs
 (`/api/push/daily`, `/api/push/digest`) take the Hobby allowance and the
 frequent job is driven from outside Vercel.
+
+The two daily/weekly jobs have since moved to Cloudflare cron triggers. Those could
+ping the reminder job every few minutes at no charge, but it is still left off there
+on purpose: a scan every few minutes keeps the Neon database awake around the clock
+(the free compute hours would not last the month), and the scan only looks back 30
+minutes, so anything sparser than that (say hourly) would silently skip most
+reminders rather than deliver them late.
 
 ### Setup: cron-job.org
 
@@ -164,9 +171,13 @@ invalidates every existing subscription — devices must re-enable notifications
 |----------|----------|---------------|
 | `/api/push/reminders` | every ~5 min (external) | Per-item reminders you set on events and tasks |
 | `/api/push/daily` | `0 11 * * *` (UTC) | "Today at a glance" — counts plus the first event. Silent on an empty day. Tapping opens `/today` |
-| `/api/push/digest` | `0 18 * * 0` (UTC) | Sunday week-ahead summary |
+| `/api/push/digest` | `0 18 * * SUN` (UTC) | Sunday week-ahead summary |
 
-Vercel crons run in UTC and there is no per-user send-time preference, so the
+The scheduled pushes run as Cloudflare Workers cron triggers on the `luminae` worker
+(`triggers.crons` in `wrangler.jsonc`, handled in `cf-worker.js`; they used to be Vercel
+crons and must only ever run from one place, or every notification goes out twice). On
+Vercel the routes are still there and can be called by hand with the bearer secret.
+Cron triggers run in UTC and there is no per-user send-time preference, so the
 daily glance goes out at a fixed hour (early morning US Eastern). The subscription
 does store the device's IANA time zone (`time_zone`, falling back to the older
 `tz_offset` for devices that never sent one), so the *contents* — the glance's day,

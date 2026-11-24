@@ -1899,7 +1899,7 @@ A morning push with the day's counts and the first thing on the calendar:
 Tapping it opens `/today`; the service worker honours a `url` in the push payload,
 same-origin only. It is **silent on an empty day**, because a push that says "nothing
 today" every morning trains you to ignore the app's notifications entirely, which then
-costs you the reminders that matter. It runs at `0 11 * * *` UTC. Vercel crons run once
+costs you the reminders that matter. It runs at `0 11 * * *` UTC. The cron runs once
 for everyone with no per-user send time, but each subscription records its device's time
 zone (see [above](#reminders-fire-on-your-clock-not-the-servers)), so the *contents* are
 computed against that device's own calendar day even when the hour is not ideal — and
@@ -1925,7 +1925,7 @@ longer reads "2 events, — busiest day", which came from joining the busiest-da
 with a comma.
 
 Toggle it in the focus timer's "Your week" section. It requires sign-in, and the cron is
-configured in `vercel.json` against `GET /api/push/digest`, protected by the same bearer
+configured in `wrangler.jsonc` against `GET /api/push/digest`, protected by the same bearer
 secret.
 
 **The opt-in is per account, and defaults on.** It lives in `users.digest_enabled`, read
@@ -3315,8 +3315,10 @@ npm run cf:deploy    # build and deploy (wrangler.jsonc names the worker and its
   `open-next.config.ts` rather than as a secret.
 - `public/_headers` gives `/sw.js` the same no-cache headers `next.config.mjs` gives it on
   Vercel, because Workers serve static files before Next sees the request.
-- The scheduled pushes (`vercel.json` crons) are not set up on Workers. Run them from one
-  host only, or every notification goes out twice.
+- The scheduled pushes (daily glance 11:00 UTC, Sunday digest 18:00 UTC) run only here, as
+  cron triggers (`triggers.crons` in `wrangler.jsonc`). `cf-worker.js` wraps OpenNext's worker
+  and calls each route in-process with the worker's `CRON_SECRET`. Vercel has no crons, so
+  nothing goes out twice; never schedule them in both places.
 
 ### Tests
 
@@ -3484,7 +3486,8 @@ accepts — and on the closed field `↑`/`↓` nudge by five minutes without op
 
 ```
 schema.sql                  # Source of truth for the database
-vercel.json                 # Cron schedules
+cf-worker.js                # Workers entry: OpenNext + the scheduled pushes
+wrangler.jsonc              # Workers config, incl. cron schedules
 scripts/gen-icons.mjs       # Regenerates the PWA icons
 docs/
 ├── NOTIFICATIONS.md        # Push setup, cron wiring, troubleshooting
