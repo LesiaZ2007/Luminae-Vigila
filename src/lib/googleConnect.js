@@ -51,8 +51,18 @@ export function connectGoogleAccount({ email } = {}) {
     const url = email ? `/api/google/auth?email=${encodeURIComponent(email)}` : '/api/google/auth'
 
     fetch(url)
-      .then(r => r.json())
+      .then(r => {
+        // A 401 means nobody is signed in on this address. The app works signed out, and
+        // each address keeps its own sign-in, so this is easy to hit after a move.
+        if (r.status === 401) return { error: 'signed_out' }
+        return r.json()
+      })
       .then(data => {
+        if (data?.error === 'signed_out') {
+          try { popup.close() } catch {}
+          finish({ ok: false, reason: 'signed_out', error: 'Sign in first, then add a Google account.' })
+          return
+        }
         if (data?.error === 'not_configured') {
           try { popup.close() } catch {}
           finish({ ok: false, reason: 'not_configured', error: 'Google sign-in is not configured on this deployment.' })
