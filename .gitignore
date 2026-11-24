@@ -36,3 +36,8 @@ yarn-error.log*
 
 # Editor and OS cruft
 .DS_Store
+
+# cloudflare (OpenNext build output, wrangler state, local secrets)
+/.open-next/
+/.wrangler/
+.dev.vars*

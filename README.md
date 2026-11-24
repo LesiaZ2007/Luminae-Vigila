@@ -3285,7 +3285,7 @@ caught rather than thrown out of an effect, so it cannot take the planner down w
 | Auth | Google OAuth 2.0, [jose](https://github.com/panva/jose) JWT sessions in an httpOnly cookie |
 | Icons | [Lucide](https://lucide.dev) |
 | Tests | Vitest, Testing Library, jsdom |
-| Hosting | [Vercel](https://vercel.com) |
+| Hosting | [Vercel](https://vercel.com); also builds for Cloudflare Workers (see below) |
 
 ```bash
 npm run dev        # dev server on :3000
@@ -3294,6 +3294,29 @@ npm run lint       # eslint
 npm test           # vitest run
 npm run test:watch
 ```
+
+### Cloudflare Workers
+
+The same code also runs on Cloudflare Workers through
+[OpenNext](https://opennext.js.org/cloudflare). Vercel ignores all of this; `next build` is
+unchanged.
+
+```bash
+npm run cf:build     # OpenNext build into .open-next/
+npm run cf:preview   # build, then run it locally in the Workers runtime
+npm run cf:deploy    # build and deploy (wrangler.jsonc names the worker and its domain)
+```
+
+- Server variables are Worker secrets: `npx wrangler secret put NAME` for each one listed in
+  [Environment variables](#environment-variables). Leave `GOOGLE_REDIRECT_URI` unset there,
+  so the Google callback follows the address the request came in on, and register that
+  address's `/api/google/callback` with Google.
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is built into the browser bundle, so it is set in
+  `open-next.config.ts` rather than as a secret.
+- `public/_headers` gives `/sw.js` the same no-cache headers `next.config.mjs` gives it on
+  Vercel, because Workers serve static files before Next sees the request.
+- The scheduled pushes (`vercel.json` crons) are not set up on Workers. Run them from one
+  host only, or every notification goes out twice.
 
 ### Tests
 
