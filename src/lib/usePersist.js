@@ -43,7 +43,28 @@ import { useEffect } from 'react'
  * `revive` runs on a successfully parsed value only — it is where a collection
  * drops its expired tombstones, or rejects a shape it cannot use.
  */
+let demoStore = null
+
+/** Activate an isolated in-memory store for /demo so real localStorage stays untouched. */
+export function enableDemoStore(seed = {}) {
+  demoStore = { ...seed }
+}
+
+export function isDemoStore() {
+  return demoStore !== null
+}
+
+/** Clear the in-memory /demo store when leaving demo mode. */
+export function disableDemoStore() {
+  demoStore = null
+}
+
 export function readStored(key, fallback, revive) {
+  if (demoStore !== null) {
+    if (!Object.prototype.hasOwnProperty.call(demoStore, key)) return fallback
+    const val = demoStore[key]
+    return revive ? revive(val) : val
+  }
   try {
     const raw = localStorage.getItem(key)
     if (raw == null) return fallback
@@ -57,6 +78,10 @@ export function readStored(key, fallback, revive) {
 /** Write `value` to localStorage under `key` whenever it changes. */
 export function usePersist(key, value) {
   useEffect(() => {
+    if (demoStore !== null) {
+      demoStore[key] = value
+      return
+    }
     try {
       localStorage.setItem(key, JSON.stringify(value))
     } catch {

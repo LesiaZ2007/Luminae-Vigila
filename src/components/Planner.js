@@ -1,0 +1,3993 @@
+'use client'
+
+import { useState, useEffect, useCallback, useRef, useMemo, useSyncExternalStore } from 'react'
+import dynamic from 'next/dynamic'
+import Link from 'next/link'
+import { useTheme } from 'next-themes'
+import { CheckSquare, Sun, Moon, Plus, ChevronRight, CalendarDays, ListTodo, LogOut, Settings, Search, Timer, RefreshCw, AlignLeft, NotebookPen, GraduationCap } from 'lucide-react'
+import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts'
+import { useDialogOpen } from '@/lib/dialogStack'
+import Dialog from '@/components/Dialog'
+import { readStored, usePersist } from '@/lib/usePersist'
+import { useNow } from '@/lib/useNow'
+import { withThemeTransition } from '@/lib/themeTransition'
+import ShortcutsHelp from '@/components/ShortcutsHelp'
+import AgendaView from '@/components/AgendaView'
+import TaskActionMenu from '@/components/TaskActionMenu'
+import CrowIcon from '@/components/CrowIcon'
+import LiveClock, { NextUpCard } from '@/components/LiveClock'
+
+function subscribeResize(onChange) {
+  window.addEventListener('resize', onChange)
+  return () => window.removeEventListener('resize', onChange)
+}
+
+/** The window's width, kept current. The server has no window, so it assumes a desktop. */
+function useWindowWidth() {
+  return useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1280)
+}
+
+/** Nothing to subscribe to — see `mounted` in the planner. */
+const subscribeNothing = () => () => {}
+
+/**
+ * A zero-size rect at the pointer, for anchoring a popover to a click that had no
+ * element worth measuring behind it. FullCalendar hands over `info.el` for a chip, but
+ * a long-press or a synthetic click may not, and anchoring to the point is fine —
+ * useAnchoredPosition treats it the same as any other rect.
+ */
+function pointRect(jsEvent) {
+  const x = jsEvent?.clientX ?? 0
+  const y = jsEvent?.clientY ?? 0
+  return { top: y, bottom: y, left: x, right: x, width: 0, height: 0, x, y }
+}
+
+import TodoPanel  from '@/components/TodoPanel'
+import CustomListPanel, { NewListModal } from '@/components/CustomListPanel'
+import { mergeCustomLists, mergeCustomListsCloudWins, makeList, visibleItems } from '@/lib/customLists'
+import { mergeNotes, mergeNotesCloudWins, makeNote, purgeExpiredTrash, dropEmptyNotes, isNoteEmpty, noteDisplayTitle, notePreview, sortNotes, noteMatches, sharedTextToHtml } from '@/lib/notes'
+import { visible, softDelete, restore, purgeTombstones, mergeWithTombstones, mergeCloudWinsWithTombstones } from '@/lib/tombstones'
+import {
+  mergeTodos, mergeTodosCloudWins, setCompletionForDate, purgeTodos,
+  patchSubtask, addSubtask, applySubtaskEdits, visibleSubtasks,
+} from '@/lib/todoMerge'
+import { setEventPref, mergeEventPrefs, mergeEventPrefsCloudWins, stampAllPrefs } from '@/lib/eventPrefs'
+import { buildSyncDelta, fingerprint } from '@/lib/syncDelta'
+import { applyExceptions, cancelInstance, restoreInstance, addInstance, removeInstance, setExamInstance, clearExamInstance, EXAM_COLOR } from '@/lib/classInstances'
+import { mergeCategories, classCategories } from '@/lib/classCategories'
+import { clearLinksTo }        from '@/lib/classLinks'
+import { classReminderCandidates } from '@/lib/classReminders'
+import { toYMDLocal } from '@/lib/calendarView'
+import { daysBetween, shiftIsoDays } from '@/lib/dateShift'
+import { PENDING_SHARE_KEY } from '@/app/share/page'
+import EventModal from '@/components/EventModal'
+import EventDetailModal from '@/components/EventDetailModal'
+import StudyPlanModal    from '@/components/StudyPlanModal'
+import ExamBlockModal    from '@/components/ExamBlockModal'
+import AddTodoModal from '@/components/AddTodoModal'
+import Toast from '@/components/Toast'
+import GoogleCalendarSettings, { GoogleLogo } from '@/components/GoogleCalendarSettings'
+import BuildInfo from '@/components/BuildInfo'
+import SidebarGoogleSection from '@/components/SidebarGoogleSection'
+import SidebarCanvasSection   from '@/components/SidebarCanvasSection'
+import SidebarScheduleSection from '@/components/SidebarScheduleSection'
+import CanvasSettingsModal    from '@/components/CanvasSettingsModal'
+import ClassScheduleModal     from '@/components/ClassScheduleModal'
+import ClassesPanel           from '@/components/ClassesPanel'
+import ImportExportButton     from '@/components/ImportExportButton'
+import SearchPanel            from '@/components/SearchPanel'
+import ErrorBoundary          from '@/components/ErrorBoundary'
+import MiniMonthCalendar      from '@/components/MiniMonthCalendar'
+import FocusTimer             from '@/components/FocusTimer'
+import SettingsMenu           from '@/components/SettingsMenu'
+import OfflineIndicator       from '@/components/OfflineIndicator'
+import OnboardingWizard, { shouldShowOnboarding, resetOnboarding } from '@/components/OnboardingWizard'
+import { expandRecurring, expandRecurringTodo } from '@/lib/recurrence'
+import { updateStreak } from '@/components/WeeklyRecap'
+import { updateAppBadge } from '@/lib/appBadge'
+import { buildGlance }    from '@/lib/glance'
+import { todayStr, toDateStr } from '@/lib/localDate'
+import { connectGoogleAccount } from '@/lib/googleConnect'
+import { hydrateGooglePrefs }   from '@/lib/googlePrefs'
+import { CalendarSkeleton, NotesPanelSkeleton, ListSkeleton } from '@/components/Skeleton'
+
+// Both of these are code-split, so a cold load has a real gap before the chunk
+// lands. The `loading` fallbacks render a skeleton in the shape of the eventual
+// layout, which reads as "loading" rather than "blank".
+const WeeklyCalendar = dynamic(() => import('@/components/WeeklyCalendar'), {
+  ssr: false,
+  loading: () => <CalendarSkeleton />,
+})
+// Tiptap pulls in ProseMirror, which is sizeable and browser-only — keep it out
+// of the initial bundle so the calendar (the default tab) isn't slowed by it.
+const NotesPanel = dynamic(() => import('@/components/NotesPanel'), {
+  ssr: false,
+  loading: () => <NotesPanelSkeleton />,
+})
+/* Corvus is 1,100 lines that most sessions never open, and it needs the network to do
+   anything. All three split-out chunks are fetched in the background once the planner
+   is idle (see the effect in Home), so opening any of them is instant — and the service
+   worker keeps every chunk it serves, so after one online visit they all load offline
+   too. A chunk nobody has fetched yet still cannot load once the connection drops,
+   which is why the task and event editors stay in the main bundle: they have to open
+   offline even on a device that went offline before the idle fetch ran. */
+const Corvus = dynamic(() => import('@/components/Corvus'), {
+  ssr: false,
+  loading: () => <ListSkeleton rows={4} label="Loading Corvus" padding="20px" />,
+})
+
+// Seed values only. Event categories are user-editable and synced — read
+// `eventCategories` state instead.
+const DEFAULT_EVENT_CATEGORIES = [
+  { id: 'class',    label: 'Class',       color: '#3a6fa8' },
+  { id: 'exam',     label: 'Exam / Quiz', color: '#ef4444' },
+  { id: 'personal', label: 'Personal',    color: '#10b981' },
+  { id: 'health',   label: 'Health',      color: '#f59e0b' },
+  { id: 'social',   label: 'Social',      color: '#8b5cf6' },
+  { id: 'work',     label: 'Work',        color: '#06b6d4' },
+]
+
+/* How often the app quietly pulls cloud changes.
+   Only while the tab is visible — a hidden tab has nothing to refresh, and the
+   visibilitychange handler catches you up the moment you come back. The payload
+   is a few KB of JSON, so 2 minutes is cheap and keeps a phone-then-laptop
+   handoff feeling immediate. */
+const AUTO_SYNC_ACTIVE_MS    = 2 * 60 * 1000  // poll while visible
+const AUTO_SYNC_ON_RETURN_MS = 20 * 1000      // min gap before a re-focus triggers one
+
+/* Ceiling for the idle back-off below. A left-open tab that nobody is editing on
+   another device asked the database the same question every 2 minutes forever, and
+   Neon charges for compute time, not for queries — so the cost of an idle tab was a
+   compute endpoint that never got to sleep.
+
+   This was ten minutes, on the reasoning that a catch-up fires when you come back to
+   the tab anyway. It doesn't always: `visibilitychange` reports the *tab* being
+   hidden, not the window losing focus, so a laptop sitting open on this tab behind
+   another window is still "visible" and never gets caught up. Ticking something off
+   on a phone and looking over at that laptop meant waiting up to ten minutes, which
+   reads as "cross-device sync is broken" and is indistinguishable from it.
+
+   The focus/pageshow handlers below fix the case where you touch the machine. Four
+   minutes covers the one they can't — two devices in front of you, one of them
+   untouched — at roughly 15 idle polls an hour instead of 6. */
+const AUTO_SYNC_IDLE_MAX_MS  = 4 * 60 * 1000
+
+/* Minimum gap between mirrors out to Google Calendar — see maybeMirrorToGoogle. */
+const MIRROR_MIN_GAP_MS = 15 * 60 * 1000
+
+const DEFAULT_TODO_CATS = [
+  { id: 'academic', label: 'Academic', color: '#3a6fa8' },
+  { id: 'personal', label: 'Personal', color: '#10b981' },
+  { id: 'work',     label: 'Work',     color: '#f59e0b' },
+  { id: 'health',   label: 'Health',   color: '#ef4444' },
+]
+
+/* How a stored collection is read back (see lib/usePersist). Expired
+   tombstones are dropped on load, and so are blank notes a previous session left
+   behind (discardEmptyNote below is the live version of the same rule). An empty
+   event-category list falls through to the defaults: it would leave the user with
+   no categories at all and no obvious way back. */
+const reviveNotes           = list => dropEmptyNotes(purgeExpiredTrash(list))
+const reviveEventCategories = list => (Array.isArray(list) && list.length > 0 ? list : DEFAULT_EVENT_CATEGORIES)
+
+/** "14:05" from whatever shape an occurrence's start/end arrived in. */
+function hhmmLocal(value) {
+  if (!value) return ''
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+export default function Planner({ demo = false, onResetDemo } = {}) {
+  const { theme, setTheme } = useTheme()
+
+  // Every theme switch goes through here so the mode cross-fades instead of
+  // snapping — see lib/themeTransition.js. The cleanup is kept in a ref so an
+  // unmount mid-animation cannot leave the transition class stuck on <html>.
+  const themeCleanupRef = useRef(null)
+  const setThemeSmooth = useCallback(next => {
+    themeCleanupRef.current = withThemeTransition(() => setTheme(next))
+  }, [setTheme])
+  useEffect(() => () => themeCleanupRef.current?.(), [])
+
+  // False on the server and during hydration, so both agree on rendering nothing;
+  // true on every render after that. Everything below may assume a browser once
+  // this is true — the state initialisers read localStorage on that basis.
+  const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false)
+  const [todoPanelWidth, setTodoPanelWidth] = useState(520)
+  const resizingRef    = useRef(false)
+  const startXRef      = useRef(0)
+  const startWRef      = useRef(280)
+  const addMenuRef     = useRef(null)
+
+  // ── Raw vs visible ────────────────────────────────────────────────────────
+  // The *raw* arrays include tombstones (items carrying `deletedAt`). Those have
+  // to keep syncing, otherwise other devices never learn about the delete and
+  // re-upload the item — see lib/tombstones.js for the full failure mode.
+  //
+  // Everything in the UI reads the derived `events` / `todos` / `customLists`,
+  // which have tombstones filtered out, so no read site had to change. Only the
+  // sync and persistence paths touch the raw arrays.
+  //
+  // Each of these is read from localStorage on the first render and written back by
+  // usePersist further down — see lib/usePersist.
+  const [eventsRaw,      setEvents]         = useState(() => readStored('lv-events', [], purgeTombstones))
+  const [todosRaw,       setTodos]          = useState(() => readStored('lv-todos',  [], purgeTodos))
+  const events = useMemo(() => visible(eventsRaw), [eventsRaw])
+  const todos  = useMemo(() => visible(todosRaw),  [todosRaw])
+  const [todoCategories, setTodoCategories] = useState(() => readStored('lv-todo-cats', DEFAULT_TODO_CATS))
+  const [eventCategories, setEventCategories] = useState(() => readStored('lv-event-cats', DEFAULT_EVENT_CATEGORIES, reviveEventCategories))
+  const [studySessions,  setStudySessions]  = useState(() => readStored('lv-study-sessions', []))
+  const [toasts,         setToasts]         = useState([])
+  // Declared up here because the cloud-sync effect below toasts from inside it.
+  const pushToast = useCallback((title, subtitle, actions, opts = {}) => {
+    const id = String(Date.now())
+    setToasts(p => [...p, { id, title, subtitle, ...(actions ? { actions } : {}), ...opts }])
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), actions ? 6000 : 5000)
+    return id
+  }, [])
+
+  const [eventModal,    setEventModal]    = useState({ open: false, event: null, date: null })
+  // The event whose detail view is open. A tap lands here first; Edit hands off to
+  // eventModal. Null when no detail view is showing.
+  const [detailEvent,   setDetailEvent]   = useState(null)
+  const [studyPlanPending, setStudyPlanPending] = useState(null) // exam event that just got saved
+  // The class period being turned into an exam: { classId, dateStr, occurrence }.
+  const [examDraft,        setExamDraft]        = useState(null)
+  const [showTodoModal,   setShowTodoModal]   = useState(false)
+  const [editingTodo,     setEditingTodo]     = useState(null)
+  const [initialTodoDate, setInitialTodoDate] = useState(null)
+  // "Add task" from inside a class card, so the new task arrives already filed under
+  // that class rather than under whichever category happens to be first in the list.
+  const [initialTodoCategory, setInitialTodoCategory] = useState(null)
+  /* The task clicked on the main calendar, and where its little menu should open:
+     { todoId, instanceId, title, done, anchor }. See TaskActionMenu — a click on a task
+     chip offers done / edit / delete rather than dropping straight into the form. */
+  const [taskMenu,      setTaskMenu]      = useState(null)
+  const [activeNav,     setActiveNav]     = useState('calendar')
+  const [corvusFloat,   setCorvusFloat]   = useState(false)
+  // The day the deadline nudge was last dismissed (YYYY-MM-DD). Corvus writes the same key.
+  const [nudgeDismissedOn, setNudgeDismissedOn] = useState(() => {
+    if (demo) return null
+    try { return localStorage.getItem('corvus-nudge-dismissed') } catch { return null }
+  })
+  const [focusOpen,     setFocusOpen]     = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [showAddMenu,   setShowAddMenu]   = useState(false)
+  const [showHelpOverlay,   setShowHelpOverlay]   = useState(false)
+  const [showSearchPopup,   setShowSearchPopup]   = useState(false)
+  const [searchClosing,     setSearchClosing]     = useState(false)
+  const [searchQuery,       setSearchQuery]       = useState('')
+  const [searchScope,       setSearchScope]       = useState('all')
+  const [searchStatus,      setSearchStatus]      = useState('all')
+  const [searchHighlightId, setSearchHighlightId] = useState(null)
+  const [calendarTargetDate, setCalendarTargetDate] = useState(null)
+
+  const [googleEvents,       setGoogleEvents]       = useState([])
+  const [showGoogleSettings, setShowGoogleSettings] = useState(false)
+  const [gcSyncing,          setGcSyncing]          = useState(false)
+  const [syncingCloud,       setSyncingCloud]       = useState(false)
+  /* When the cloud was last successfully read. Shown in Settings beside the build
+     marker: "is this device up to date" is otherwise unanswerable from the UI, which
+     is exactly the question you have when two devices disagree. */
+  const [lastSyncedAt,       setLastSyncedAt]       = useState(null)
+  const [eventPrefs,         setEventPrefs]         = useState(() => readStored('lv-event-prefs', {}))
+
+  // ── Custom Lists ──
+  const [customListsRaw,   setCustomLists]      = useState(() => readStored('lv-custom-lists', [], purgeTombstones))
+  const customLists = useMemo(() => visible(customListsRaw), [customListsRaw])
+  const [activeListId,     setActiveListId]     = useState('my-tasks')
+  const [showNewListModal, setShowNewListModal] = useState(false)
+  const [showHiddenGcal,     setShowHiddenGcal]     = useState(false)
+
+  // ── Notes ──
+  const [notes,        setNotes]        = useState(() => readStored('lv-notes', [], reviveNotes))
+  const [activeNoteId, setActiveNoteId] = useState(null)
+  // Draft carried from a note into the task/event editor, plus which note to
+  // link back to once the item is actually saved.
+  const [noteConvertDraft, setNoteConvertDraft] = useState(null)
+  const [pendingNoteLink,  setPendingNoteLink]  = useState(null)
+
+  // Declared up here (rather than with the rest of the notes CRUD below) so the
+  // keyboard-shortcut hook a few lines down can reference it without hitting
+  // the const temporal dead zone.
+  const createNote = useCallback((overrides = {}) => {
+    const note = makeNote(overrides)
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+    return note
+  }, [])
+
+  // Open an existing note from wherever it was linked.
+  const openNoteById = useCallback((id) => {
+    setActiveNav('notes')
+    setActiveNoteId(id)
+  }, [])
+
+  // Start a note already attached to the thing you were looking at.
+  const createLinkedNote = useCallback((linkedTo) => {
+    setActiveNav('notes')
+    const note = makeNote({ linkedTo })
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+  }, [])
+
+  /**
+   * Turn a note (or the text selected inside it) into a task or an event.
+   *
+   * Opens the relevant editor prefilled rather than creating silently — a task
+   * usually wants a due date and an event wants a time, and guessing those
+   * would be worse than asking. The note is linked to whatever gets created, so
+   * the two stay connected afterwards.
+   */
+  const convertNote = useCallback((kind, { noteId, title, notes: body }) => {
+    if (kind === 'task') {
+      setPendingNoteLink({ noteId, kind: 'task' })
+      setInitialTodoDate(null)
+      setEditingTodo(null)
+      setNoteConvertDraft({ title, notes: body })
+      setShowTodoModal(true)
+    } else {
+      setPendingNoteLink({ noteId, kind: 'event' })
+      setActiveNav('calendar')
+      setNoteConvertDraft({ title, notes: body })
+      setEventModal({ open: true, event: null, date: null })
+    }
+  }, [])
+
+  // Quick capture from anywhere — jump to the Notes tab with a blank note open.
+  const quickCaptureNote = useCallback(() => {
+    setActiveNav('notes')
+    createNote()
+  }, [createNote])
+
+  const openSearchPopup = useCallback(() => {
+    setSearchQuery('')
+    setSearchScope('all')
+    setSearchStatus('upcoming')
+    setShowSearchPopup(true)
+  }, [])
+
+  const closeSearchPopup = useCallback(() => {
+    setSearchClosing(true)
+    setTimeout(() => { setShowSearchPopup(false); setSearchClosing(false) }, 180)
+  }, [])
+
+  // Ctrl+K / Cmd+K to open search from anywhere
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openSearchPopup() }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [openSearchPopup])
+
+  // ── Canvas state ──
+  const [canvasAssignments,  setCanvasAssignments]  = useState(() => readStored('lv-canvas-assignments', []))
+  /* Raw vs visible, the same split events and todos use. The raw array keeps
+     tombstones so a delete can reach other devices; everything on screen reads the
+     visible one. Without this a deleted class was simply absent locally, which the
+     merge cannot tell apart from a class created on another device — so it came
+     back on the next sync. See lib/tombstones.js. */
+  const [canvasClassesRaw,   setCanvasClasses]      = useState(() => readStored('lv-canvas-classes', [], purgeTombstones))
+  const canvasClasses = useMemo(() => visible(canvasClassesRaw), [canvasClassesRaw])
+
+  /* Task categories as the pickers see them: the user's own, plus one per class on the
+     schedule. Derived rather than stored, so renaming a class renames its category and
+     removing a class removes it — no second copy to keep in step. `todoCategories`
+     stays the stored list, because that is what the category manager edits. */
+  const todoCategoryOptions = useMemo(
+    () => mergeCategories(todoCategories, classCategories(canvasClasses)),
+    [todoCategories, canvasClasses],
+  )
+  const [canvasCalEvents,    setCanvasCalEvents]    = useState(() => readStored('lv-canvas-cal-events', []))
+  const [canvasIcsEvents,    setCanvasIcsEvents]    = useState(() => readStored('lv-canvas-ics-events', []))
+  const [showCanvasSettings, setShowCanvasSettings] = useState(false)
+  const [showClassModal,     setShowClassModal]     = useState(false)
+  const [editingClass,       setEditingClass]       = useState(null)
+  const [cvSyncing,          setCvSyncing]          = useState(false)
+  const [canvasTodoModal,    setCanvasTodoModal]    = useState(false)
+  const [editingCanvas,      setEditingCanvas]      = useState(null)
+  // Canvas calendar visibility prefs (lifted to state for immediate re-render)
+  const [canvasCalPrefs, setCanvasCalPrefs] = useState(() => {
+    if (demo) return { showOnCalendar: true, coursesEnabled: {}, courseColors: {} }
+    try {
+      const p = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      return { showOnCalendar: p.showOnCalendar !== false, coursesEnabled: p.coursesEnabled ?? {}, courseColors: p.courseColors ?? {} }
+    } catch { return { showOnCalendar: true, coursesEnabled: {}, courseColors: {} } }
+  })
+
+  const shownReminders  = useRef(new Set())
+  const hasMergedCloud  = useRef(false)   // true only after initial cloud pull SUCCEEDS
+  const mergeStarted    = useRef(false)   // an attempt is in flight right now
+  const syncTimerRef    = useRef(null)    // debounce handle for ongoing cloud saves
+  /* Fingerprint of the last push the server accepted, so the next one can send only
+     what actually changed. POST /api/sync answers every array it receives with a
+     DELETE of that table followed by one INSERT per row, so sending all nine
+     collections every time meant renaming one todo rewrote every event and note the
+     account owned — hundreds of row writes to record one change, all of it Neon
+     compute we pay for. Declared up here because the initial merge's push-back seeds
+     it, and that runs earlier in the file. See lib/syncDelta.js. */
+  const lastPushedRef   = useRef(null)
+  const gcDisconnectWarnedRef = useRef(null) // last disconnected-account set we toasted about
+
+  // True once the initial merge has failed enough times to be worth admitting to.
+  // Sync failing silently is what makes people reload the page to "fix" it; a
+  // retry that is visibly happening is the difference between broken and busy.
+  const [syncStalled, setSyncStalled] = useState(false)
+
+  const [digestEnabled, setDigestEnabled] = useState(false)
+  const [digestSaving,  setDigestSaving]  = useState(false)
+
+  /* A minute tick, not a second one. The ticking clock and the "next up" countdown
+     own their own one-second timers (components/LiveClock), so a second going by no
+     longer re-renders the whole planner. This tick stays because panels work out
+     "today" and "overdue" while rendering: a re-render a minute keeps those right
+     across midnight, or across a due time, on a tab nobody is touching. */
+  const now = useNow(60_000)
+  const [weather,      setWeather]      = useState(null)
+  const [militaryTime, setMilitaryTime] = useState(() => readStored('lv-clock-24h', false))
+  const [currentUser,  setCurrentUser]  = useState(null)
+  const windowWidth = useWindowWidth()
+  const isMobile  = windowWidth < 640
+  const isTablet  = windowWidth >= 640 && windowWidth < 1100
+
+  // ── Global keyboard shortcuts ──────────────────────────────────────────────
+  // anyModalOpen suppresses non-Escape shortcuts while a blocking overlay is visible.
+  const anyModalOpen = eventModal.open || showTodoModal || showGoogleSettings || showCanvasSettings || showClassModal || canvasTodoModal || showSearchPopup || showHelpOverlay
+  /* Every dialog, including the ones this list never named (the event detail view,
+     the exam and study-plan forms, the onboarding tour, a child panel's own modals) —
+     straight from the dialog stack, so a new dialog can't be forgotten here. */
+  const dialogOpen = useDialogOpen()
+  useKeyboardShortcuts(
+    {
+      onNewEvent:    () => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) },
+      onNewTask:     () => { setShowTodoModal(true); setEditingTodo(null) },
+      onNewNote:     () => quickCaptureNote(),
+      onToggleFocus: () => setFocusOpen(v => !v),
+      onShowHelp:    () => setShowHelpOverlay(true),
+      // Only reached when no dialog is open — dialogs, the search popup and the
+      // shortcuts overlay among them, take Escape from the dialog stack. What is
+      // left are the planner's own non-modal layers, one per press.
+      onEscape:      () => {
+        if (focusOpen)         { setFocusOpen(false);       return }
+        if (corvusFloat)       { setCorvusFloat(false);     return }
+      },
+    },
+    anyModalOpen,
+  )
+
+  // Count events that are actively hidden — local OR google, not stale localStorage entries
+  const hiddenEventCount = useMemo(
+    () => [...events, ...googleEvents].filter(e => eventPrefs[e.id]?.hidden).length,
+    [events, googleEvents, eventPrefs],
+  )
+
+  // Warm every split-out chunk once the first render has settled — see the dynamic()
+  // calls above. Fetching them is also what puts them in the service worker's cache,
+  // so this is the step that makes the calendar and notes open offline later.
+  useEffect(() => {
+    const whenIdle   = window.requestIdleCallback ?? (cb => setTimeout(cb, 2000))
+    const cancelIdle = window.cancelIdleCallback  ?? clearTimeout
+    const id = whenIdle(() => {
+      import('@/components/WeeklyCalendar').catch(() => {})
+      import('@/components/NotesPanel').catch(() => {})
+      import('@/components/Corvus').catch(() => {})
+    })
+    return () => cancelIdle(id)
+  }, [])
+
+  useEffect(() => {
+    if (demo) return
+    // Small delay so the app renders first, then the wizard slides in gracefully
+    const id = setTimeout(() => { if (shouldShowOnboarding()) setShowOnboarding(true) }, 600)
+    return () => clearTimeout(id)
+  }, [demo])
+
+  // If the user was on the mobile-only 'settings' tab and the window grows past mobile breakpoint,
+  // redirect them to calendar so they don't land on a blank screen. Done during render rather
+  // than in an effect, so the blank frame never paints.
+  if (!isMobile && activeNav === 'settings') setActiveNav('calendar')
+
+  // Fetch current user for display / logout. Retried on reconnect and on returning to
+  // the tab until the server has answered once: an app opened with no connection
+  // (which the service worker now makes possible) would otherwise stay signed out —
+  // and unsynced — until a reload. A 401 is an answer; a network error or 5xx is not.
+  useEffect(() => {
+    if (demo) return
+    let answered = false
+    let inFlight = false
+    const load = () => {
+      if (answered || inFlight) return
+      inFlight = true
+      fetch('/api/auth/me')
+        .then(r => {
+          if (r.status >= 500) throw new Error(`auth/me ${r.status}`)
+          return r.ok ? r.json() : null
+        })
+        .then(d => { answered = true; if (d?.user) setCurrentUser(d.user) })
+        .catch(() => {})
+        .finally(() => { inFlight = false })
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    load()
+    window.addEventListener('online', load)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', load)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [demo])
+
+  /* ── Initial cloud merge ──────────────────────────────────────────────────
+     Pulls cloud data, merges it with local state, then pushes the merged result
+     back so new local items are uploaded.
+
+     Everything else depends on this succeeding. `hasMergedCloud` gates BOTH the
+     debounced push and the background pull — deliberately, because uploading
+     before a successful read could clobber the cloud with a half-empty local
+     state. The consequence is that a single failed GET at load used to disable
+     sync in both directions for the entire session: the effect only depends on
+     `currentUser`, so nothing re-ran it, and the old comment said as much
+     ("let a reload retry the merge"). Opening the app on a flaky connection —
+     or catching a cold database — meant syncing was silently dead until you
+     reloaded, which is exactly the "I have to refresh all the time" symptom.
+
+     So it retries now, with backoff, and on the two events that mean a retry is
+     likely to work: coming back online, and returning to the tab. */
+  const mergeAttempts  = useRef(0)
+  const mergeRetryTimer = useRef(null)
+  // Declared before the callback that uses it: the retry timer fires long after the
+  // render that scheduled it, so it must reach the *current* callback, and reading a
+  // ref declared further down would be a use-before-declaration.
+  const runInitialMergeRef = useRef(null)
+
+  const runInitialMerge = useCallback(async () => {
+    if (!currentUser) return
+    if (hasMergedCloud.current) return
+    if (mergeStarted.current) return          // an attempt is already in flight
+    mergeStarted.current = true
+    mergeAttempts.current += 1
+
+    const scheduleRetry = () => {
+      mergeStarted.current = false
+      // 2s, 4s, 8s, 16s, 32s, then every 60s. Unbounded on purpose: the
+      // alternative is an app that has quietly stopped syncing forever.
+      const delay = Math.min(2000 * 2 ** (mergeAttempts.current - 1), 60_000)
+      clearTimeout(mergeRetryTimer.current)
+      mergeRetryTimer.current = setTimeout(() => { runInitialMergeRef.current?.() }, delay)
+      setSyncStalled(mergeAttempts.current >= 3)
+    }
+
+    let cloud = null
+    try {
+      const res = await fetch('/api/sync')
+      cloud = res.ok ? await res.json() : null
+    } catch {
+      cloud = null
+    }
+
+    // A failed/empty GET must NOT unlock the debounced POST — otherwise the next
+    // local state change would upload our (possibly empty) local state and
+    // clobber the cloud we never managed to read.
+    if (!cloud) { scheduleRetry(); return }
+
+    {
+
+        // Read current local arrays straight from localStorage — the source of
+        // truth at load time. Computing the merge synchronously lets us set state
+        // AND POST the exact same object, eliminating the old 500ms "wait for
+        // React to flush" race that could upload a stale snapshot.
+        const localEvents   = readStored('lv-events',         [])
+        const localTodos    = readStored('lv-todos',          [])
+        const localCats     = readStored('lv-todo-cats',      [])
+        const localEvCats   = readStored('lv-event-cats',     [])
+        const localClasses  = readStored('lv-canvas-classes', [])
+        const localPrefs    = readStored('lv-event-prefs',    {})
+        const localSessions = readStored('lv-study-sessions', [])
+        const localLists    = readStored('lv-custom-lists',   [])
+        const localNotes    = readStored('lv-notes',          [])
+
+        /* The hand-rolled mergeById that used to live here is gone. It was the
+           pre-tombstone merge, and it survived here long after the collections it
+           touched had moved on — so one collection was resolved three different
+           ways depending on how you arrived: this at sign-in, mergeWithTombstones
+           on the background pull, mergeCloudWinsWithTombstones on the refresh
+           button. Three implementations of one rule is three places to miss it,
+           which is how the class-resurrection bug survived.
+
+           It also carried the defect tombstones.js documents: local wins whenever
+           *either* side lacks updatedAt. A study session tagged on a laptop stamps
+           updatedAt precisely so it wins that merge (see updateStudySession), but
+           the phone's untouched copy has no stamp at all — so the phone won as
+           "local" and pushed the untagged copy back, undoing the tag on sign-in.
+           And it compared updatedAt as raw strings rather than parsed dates, so a
+           timestamp written in any other shape ordered wrong. */
+
+        // Tombstone-aware: a delete is a change, not an absence, so it wins by
+        // timestamp instead of being mistaken for an offline creation.
+        const mergedEvents   = purgeTombstones(mergeWithTombstones(cloud.events, localEvents))
+        /* mergeTodos, not mergeWithTombstones: a recurring task's completion is
+           per-date, so the row cannot be resolved as one unit without letting two
+           devices' unrelated ticks overwrite each other. See lib/todoMerge. */
+        const mergedTodos    = purgeTodos(mergeTodos(cloud.todos,  localTodos))
+        const mergedCatsRaw  = mergeWithTombstones(cloud.todoCategories, localCats)
+        const mergedCats     = mergedCatsRaw.length > 0 ? mergedCatsRaw : localCats // keep defaults if empty
+        const mergedEvCatsRaw = mergeWithTombstones(cloud.eventCategories, localEvCats)
+        const mergedEvCats    = mergedEvCatsRaw.length > 0 ? mergedEvCatsRaw : DEFAULT_EVENT_CATEGORIES
+        /* Classes were the first collection moved off the old hand-rolled mergeById
+           and onto this one: the two disagreeing meant a class could arrive on a
+           later background poll but not on the sign-in that should have fetched it.
+           Everything here now uses the same merge, so that class of divergence is
+           gone rather than fixed one collection at a time. */
+        const mergedClasses  = purgeTombstones(mergeWithTombstones(cloud.classSchedule, localClasses))
+        /* Per entry by timestamp, not a wholesale spread. A pref is one decision
+           per event, and merging the object as one unit let a stale entry for one
+           event ride in on the same spread that carried a fresh one for another. */
+        const mergedPrefs    = mergeEventPrefs(cloud.eventPrefs, localPrefs)
+        const mergedSessions = mergeWithTombstones(cloud.studySessions,  localSessions)
+        const mergedLists    = purgeTombstones(mergeCustomLists(cloud.customLists ?? [], localLists))
+        // Notes resolve strictly by updatedAt — a note body is one blob, so
+        // "local wins" would silently drop edits made on another device.
+        const mergedNotes    = purgeExpiredTrash(mergeNotes(cloud.notes ?? [], localNotes))
+
+        // Commit merged state
+        setEvents(mergedEvents)
+        setTodos(mergedTodos)
+        setTodoCategories(mergedCats)
+        setEventCategories(mergedEvCats)
+        setCanvasClasses(mergedClasses)
+        setEventPrefs(mergedPrefs)
+        setStudySessions(mergedSessions)
+        setCustomLists(mergedLists)
+        setNotes(mergedNotes)
+
+        // Merge succeeded — NOW it's safe for the debounced effect to upload.
+        hasMergedCloud.current = true
+
+        // Push the exact merged result back immediately — no timeout, no re-read.
+        const cloudEventIds = new Set((cloud.events ?? []).map(e => e.id))
+        const cloudTodoIds  = new Set((cloud.todos  ?? []).map(t => t.id))
+        const newEvents = mergedEvents.filter(e => !cloudEventIds.has(e.id)).length
+        const newTodos  = mergedTodos.filter(t => !cloudTodoIds.has(t.id)).length
+
+        // The one push that legitimately sends everything: the merged result is the
+        // first thing the server has seen this session. Its fingerprint is recorded so
+        // the debounced push that follows sends only what changes *after* this.
+        const mergedPayload = {
+          events:         mergedEvents,
+          todos:          mergedTodos,
+          todoCategories: mergedCats,
+          eventCategories: mergedEvCats,
+          classSchedule:  mergedClasses,
+          eventPrefs:     mergedPrefs,
+          studySessions:  mergedSessions,
+          customLists:    mergedLists,
+          notes:          mergedNotes,
+        }
+        const mergedFingerprint = fingerprint(mergedPayload)
+
+        fetch('/api/sync', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(mergedPayload),
+        }).then((res) => {
+          if (res.ok) lastPushedRef.current = mergedFingerprint
+          if (newEvents + newTodos > 0) {
+            pushToast(
+              'Synced to your account',
+              `${newEvents} event${newEvents !== 1 ? 's' : ''} and ${newTodos} task${newTodos !== 1 ? 's' : ''} uploaded.`,
+            )
+          }
+        }).catch(() => {})
+
+      // The read succeeded, which is what the rest of sync was waiting for. A
+      // failed push-back is recoverable on its own — the debounced push is live
+      // now and will retry on the next change.
+      mergeAttempts.current = 0
+      setSyncStalled(false)
+      clearTimeout(mergeRetryTimer.current)
+    }
+    // pushToast is declared below this point, so listing it here would be a
+    // use-before-declaration flag. Same omission the original merge effect used.
+  }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { runInitialMergeRef.current = runInitialMerge }, [runInitialMerge])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Kicked off after the current commit rather than during it. The merge sets
+    // state on completion, and starting it inside the effect body makes that
+    // indistinguishable from a synchronous setState-in-effect — to the linter and
+    // to React's scheduler both. A zero timeout also lets the first paint land
+    // before a network round trip competes with it.
+    const kickoff = setTimeout(() => { runInitialMergeRef.current?.() }, 0)
+
+    // Both of these mean "a retry is likely to work now", which is far better
+    // than waiting out a backoff that started while the connection was down.
+    const retryIfUnmerged = () => {
+      if (!hasMergedCloud.current) runInitialMergeRef.current?.()
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') retryIfUnmerged() }
+
+    window.addEventListener('online', retryIfUnmerged)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearTimeout(kickoff)
+      window.removeEventListener('online', retryIfUnmerged)
+      document.removeEventListener('visibilitychange', onVisible)
+      clearTimeout(mergeRetryTimer.current)
+    }
+  }, [currentUser])
+
+  /* ── Mirror out to Google Calendar ────────────────────────────────────────
+     Every write to the cloud is a candidate for re-mirroring, but a reconcile is
+     a Google API round trip per changed item, so doing it on every 2-second
+     debounce would burn quota while someone is typing. Fifteen minutes is well
+     inside how fresh a lock-screen glance needs to be, and the button in Google
+     settings covers "I want it now".
+
+     Kept in a ref rather than state: this must not re-render anything, and the
+     value only ever gates a fetch. */
+  const lastMirrorAt = useRef(0)
+
+  const maybeMirrorToGoogle = useCallback(async () => {
+    if (!currentUser) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    if (Date.now() - lastMirrorAt.current < MIRROR_MIN_GAP_MS) return
+    lastMirrorAt.current = Date.now()
+    // No toast either way. The user did not ask for this on this keystroke, and the
+    // settings panel is where a real result belongs.
+    try { await fetch('/api/google/mirror', { method: 'POST' }) } catch {}
+  }, [currentUser])
+
+  /** Push whatever changed since the last accepted push. Returns a promise. */
+  const pushChanges = useCallback(() => {
+    const { body, sent, isEmpty } = buildSyncDelta({
+      events:         eventsRaw,
+      todos:          todosRaw,
+      todoCategories,
+      eventCategories,
+      classSchedule:  canvasClassesRaw,
+      eventPrefs,
+      studySessions,
+      customLists:    customListsRaw,
+      notes,
+    }, lastPushedRef.current)
+
+    // Nothing to say. An effect can re-run for reasons that never touched the data
+    // (a re-render, a dependency identity change), and those used to cost a full
+    // rewrite of every table.
+    if (isEmpty) return Promise.resolve(false)
+
+    return fetch('/api/sync', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(res => {
+      // Only remember it once the server has taken it. Recording the fingerprint
+      // optimistically would make a failed push permanent: the collection would look
+      // unchanged from then on and never be retried.
+      if (res.ok) lastPushedRef.current = sent
+      return res.ok
+    })
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes])
+
+  // ── Ongoing debounced cloud sync ────────────────────────────────────────────
+  // Pushes whatever changed 2 seconds after any change.
+  // Only runs after the initial merge is complete (hasMergedCloud guard).
+  useEffect(() => {
+    if (!currentUser || !hasMergedCloud.current) return
+    clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = setTimeout(() => {
+      pushChanges()
+        // Mirror out to Google afterwards, never before: the mirror reads the app's
+        // data from the database, so running it first would publish the previous
+        // state. Rate-limited and fire-and-forget — a glance surface being a few
+        // minutes stale is fine, and a Google outage must not affect saving.
+        .then(pushed => { if (pushed) maybeMirrorToGoogle() })
+        .catch(() => {})
+    }, 2000)
+    return () => clearTimeout(syncTimerRef.current)
+  }, [eventsRaw, todosRaw, todoCategories, eventCategories, canvasClassesRaw, eventPrefs, studySessions, customListsRaw, notes, currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Immediately push the current state to the cloud (bypasses the debounce).
+  // Used on reconnect so pending offline edits upload the moment we're back
+  // online, rather than waiting for the next state change to wake the debounce.
+  const flushSyncNow = useCallback(() => {
+    if (!currentUser || !hasMergedCloud.current) return
+    pushChanges().catch(() => {})
+  }, [currentUser, pushChanges])
+
+  /* ── Background auto-sync ─────────────────────────────────────────────────
+     The debounced effect above only *pushes*. Without a periodic pull, edits
+     made on another device don't show up until a reload or a manual refresh —
+     which is exactly the case this app is for (phone in class, laptop later).
+
+     This runs a silent pull every AUTO_SYNC_MS and merges newest-wins, so it's
+     symmetric with the initial merge: nothing is clobbered, and tombstoned
+     deletes still propagate. Local edits made since the last push carry a newer
+     updatedAt, so typing while a sync lands does not lose work.
+
+     Deliberately quiet — no toast. A background sync the user didn't ask for
+     shouldn't interrupt them; the manual refresh in Settings still confirms. */
+  const autoSyncInFlight = useRef(false)
+  /* Raw text of the last cloud payload, used only to tell a pull that changed
+     something from one that did not. */
+  const lastCloudTextRef = useRef(null)
+
+  const autoSync = useCallback(async () => {
+    if (!currentUser || !hasMergedCloud.current) return false
+    if (autoSyncInFlight.current) return false                 // don't stack runs
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false
+
+    autoSyncInFlight.current = true
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return false
+      const text  = await res.text()
+      const cloud = text ? JSON.parse(text) : null
+      if (!cloud) return false
+
+      setEvents(local => purgeTombstones(mergeWithTombstones(cloud.events, local)))
+      setTodos(local  => purgeTodos(mergeTodos(cloud.todos,  local)))
+      setCustomLists(local => purgeTombstones(mergeCustomLists(cloud.customLists ?? [], local)))
+      setNotes(local  => purgeExpiredTrash(mergeNotes(cloud.notes ?? [], local)))
+      setStudySessions(local => mergeWithTombstones(cloud.studySessions, local))
+      setCanvasClasses(local => purgeTombstones(mergeWithTombstones(cloud.classSchedule, local)))
+      // Categories: an empty cloud array means "not synced yet", not "the user
+      // deleted every category" — falling through to local avoids wiping them.
+      setTodoCategories(local => {
+        const merged = mergeWithTombstones(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeWithTombstones(cloud.eventCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventPrefs(local => mergeEventPrefs(cloud.eventPrefs, local))
+
+      /* Did that pull actually bring anything? Compared as the raw response text
+         rather than per-collection: this only decides how soon to ask again, so a
+         cheap whole-payload comparison is the right precision. Drives the back-off
+         in the polling effect. */
+      const changed = text !== lastCloudTextRef.current
+      lastCloudTextRef.current = text
+      setLastSyncedAt(Date.now())
+      return changed
+    } catch {
+      // Offline or a transient failure — the next tick tries again.
+      return false
+    } finally {
+      autoSyncInFlight.current = false
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!currentUser) return
+
+    // Only poll while the tab is actually being looked at. A hidden tab has
+    // nothing to refresh and polling it just burns battery and DB requests —
+    // the visibilitychange handler below covers the moment it matters, which is
+    // when you come back to it.
+    /* A self-rescheduling timeout rather than a fixed interval, so the gap can grow
+       while nothing is changing. Every pull that finds something resets it to the
+       base rate, so an active handoff stays as responsive as it was. */
+    let id = null
+    let delay = AUTO_SYNC_ACTIVE_MS
+
+    const tick = async () => {
+      const changed = await autoSync()
+      delay = changed
+        ? AUTO_SYNC_ACTIVE_MS
+        : Math.min(delay * 2, AUTO_SYNC_IDLE_MAX_MS)
+      if (id !== null) id = setTimeout(tick, delay)
+    }
+
+    const startPolling = () => { if (id === null) id = setTimeout(tick, delay) }
+    const stopPolling  = () => { if (id !== null) { clearTimeout(id); id = null } }
+
+    let lastSync = Date.now()
+    /* An explicit catch-up means the user is back and probably expects to see the
+       other device's edits, so the back-off starts over. */
+    const syncNow = () => { lastSync = Date.now(); delay = AUTO_SYNC_ACTIVE_MS; autoSync() }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        // Catch up right away, but not if we just synced — flipping between
+        // tabs shouldn't hammer the endpoint.
+        if (Date.now() - lastSync > AUTO_SYNC_ON_RETURN_MS) syncNow()
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    }
+
+    /* Coming back to the window, which is not the same event as coming back to the
+       tab. `visibilitychange` only fires when the tab itself is hidden — switched
+       away from, or the window minimised. A browser sitting open on this tab behind
+       another application is still `visible`, so returning to it fired nothing and
+       the back-off kept running: you ticked something off on your phone, looked at
+       the laptop, and waited. `focus` is the event that actually means "the user is
+       here now".
+
+       `pageshow` covers the restore case — a tab resumed from the back/forward cache
+       runs no effects and would otherwise show whatever it was showing when it was
+       frozen. */
+    function onReturn() {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastSync <= AUTO_SYNC_ON_RETURN_MS) return
+      syncNow()
+    }
+
+    if (document.visibilityState === 'visible') startPolling()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onReturn)
+    window.addEventListener('pageshow', onReturn)
+    // Back online after a gap: pull straight away rather than waiting a tick.
+    window.addEventListener('online', syncNow)
+
+    return () => {
+      stopPolling()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onReturn)
+      window.removeEventListener('pageshow', onReturn)
+      window.removeEventListener('online', syncNow)
+    }
+  }, [currentUser, autoSync])
+
+  // Close "+ New" popup on outside click
+  useEffect(() => {
+    if (!showAddMenu) return
+    function onDown(e) { if (!addMenuRef.current?.contains(e.target)) setShowAddMenu(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showAddMenu])
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(({ coords: { latitude: lat, longitude: lon } }) => {
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode&hourly=precipitation_probability,weathercode&forecast_days=1&timezone=auto`)
+        .then(r => r.json())
+        .then(d => {
+          const temp = Math.round(d.current.temperature_2m)
+          const code = d.current.weathercode
+          const nowHour = new Date().getHours()
+          const hours   = d.hourly?.time?.map((t, i) => ({
+            hour: new Date(t).getHours(),
+            precip: d.hourly.precipitation_probability[i],
+            wcode:  d.hourly.weathercode[i],
+          })) || []
+          const isRainingNow = code >= 51 && code <= 82
+          let rainMsg = null
+          if (isRainingNow) {
+            // Find when rain stops (next hour with precip < 30)
+            const stopHour = hours.find(h => h.hour > nowHour && h.precip < 30)
+            if (stopHour) {
+              const mins = (stopHour.hour - nowHour) * 60
+              rainMsg = `Rain stops in ~${mins < 60 ? mins + 'm' : Math.round(mins/60) + 'h'}`
+            }
+          } else {
+            // Find next hour with precip >= 60
+            const startHour = hours.find(h => h.hour > nowHour && h.precip >= 60)
+            if (startHour) {
+              const mins = (startHour.hour - nowHour) * 60
+              rainMsg = `Rain in ~${mins < 60 ? mins + 'm' : Math.round(mins/60) + 'h'}`
+            }
+          }
+          setWeather({ temp, code, rainMsg })
+        })
+        .catch(() => {})
+    }, () => {})
+  }, [])
+
+  /* ── Incoming Web Share ──────────────────────────────────────────────────
+     /share stashes the payload and redirects here (see src/app/share/page.js).
+     `notes` is already read from localStorage by the time this runs, so the
+     shared note is prepended to the real list. It used to run *before* a separate
+     load effect, which then replaced the list and dropped the share. */
+  useEffect(() => {
+    if (demo) return
+    let raw
+    try {
+      raw = localStorage.getItem(PENDING_SHARE_KEY)
+      // Clear immediately: if anything below throws, a bad payload shouldn't
+      // reopen on every launch.
+      if (raw) localStorage.removeItem(PENDING_SHARE_KEY)
+    } catch { return }
+    if (!raw) return
+
+    let payload
+    try { payload = JSON.parse(raw) } catch { return }
+
+    const title = (payload?.title ?? '').trim()
+    const body  = (payload?.body  ?? '').trim()
+
+    const note = makeNote({
+      title,
+      // Escape before wrapping in <p> — shared text is arbitrary and would
+      // otherwise be parsed as markup by the editor.
+      html: sharedTextToHtml(body),
+      tags: ['shared'],
+    })
+
+    // Taking a one-shot handoff out of localStorage is a side effect — the read clears
+    // the key — so it belongs in an effect, not in a state initialiser that must stay pure.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNotes(prev => [note, ...prev])
+    setActiveNoteId(note.id)
+    setActiveNav('notes')
+  }, [demo])
+
+  /* ── Home-screen shortcut deep links ─────────────────────────────────────
+     Manifest shortcuts (long-press the app icon) land here with a query flag.
+     The flag is stripped via replaceState so a refresh doesn't reopen the modal
+     and the URL stays clean if it gets shared. */
+  useEffect(() => {
+    let params
+    try { params = new URLSearchParams(window.location.search) } catch { return }
+    if (![...params.keys()].some(k => k === 'new' || k === 'focus')) return
+
+    if (params.get('new') === 'task') {
+      // Reading the launch URL is precisely the "synchronise from an external
+      // system" case the rule carves out — there is no lazy initialiser that can
+      // open a modal, and it runs once on mount.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEditingTodo(null)
+      setShowTodoModal(true)
+      setActiveNav('todos')
+    }
+    if (params.get('focus') === '1') setFocusOpen(true)
+
+    params.delete('new')
+    params.delete('focus')
+    const qs = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
+  }, [])
+
+  /* ── Save to localStorage ── read back in each useState initialiser above. */
+  usePersist('lv-events',             eventsRaw)
+  usePersist('lv-todos',              todosRaw)
+  usePersist('lv-todo-cats',          todoCategories)
+  usePersist('lv-event-cats',         eventCategories)
+  usePersist('lv-event-prefs',        eventPrefs)
+  usePersist('lv-study-sessions',     studySessions)
+  usePersist('lv-custom-lists',       customListsRaw)
+  usePersist('lv-notes',              notes)
+  usePersist('lv-canvas-assignments', canvasAssignments)
+  usePersist('lv-canvas-classes',     canvasClassesRaw)
+  usePersist('lv-canvas-cal-events',  canvasCalEvents)
+  usePersist('lv-canvas-ics-events',  canvasIcsEvents)
+  usePersist('lv-clock-24h',          militaryTime)
+
+  // ── Proactive nudge: a deadline cluster with no study time booked (client-side, no AI cost) ──
+  // Derived, not stored: it is a function of the lists and today's dismissal, so it
+  // recomputes whenever either changes instead of an effect setting it after the fact.
+  const nudgeCluster = useMemo(() => {
+    try {
+      // Local, not UTC: a UTC date rolls over at 8pm in New York, so a nudge
+      // dismissed in the evening came back the next afternoon, or not at all.
+      if (nudgeDismissedOn === todayStr()) return null   // already dismissed today
+
+      const now    = new Date()
+      const cutoff = new Date(now.getTime() + 72 * 60 * 60 * 1000)
+      const items  = []
+
+      todos.forEach(t => {
+        if (!t.completed && t.dueDate) {
+          const d = new Date(t.dueDate + 'T23:59:00')
+          if (d >= now && d <= cutoff) items.push({ label: t.title, due: t.dueDate, type: 'task' })
+        }
+      })
+      canvasAssignments.forEach(a => {
+        if (!a.done && !a.hidden && a.dueAt) {
+          const d = new Date(a.dueAt)
+          if (d >= now && d <= cutoff) items.push({ label: `[${a.courseName}] ${a.title}`, due: a.dueAt, type: 'assignment' })
+        }
+      })
+
+      if (items.length < 3) return null
+
+      // Check for existing study blocks in that window
+      const studyKws = ['study', 'review', 'work on', 'prep', 'prepare', 'homework', 'hw', 'read', 'practice']
+      const hasStudy = events.some(e => {
+        if (!e.start) return false
+        const d = new Date(e.start)
+        if (d < now || d > cutoff) return false
+        return studyKws.some(kw => (e.title || '').toLowerCase().includes(kw))
+      })
+
+      return hasStudy ? null : { items }
+    } catch (_) { return null }
+  }, [todos, canvasAssignments, events, nudgeDismissedOn])
+
+  const dismissNudge = useCallback(() => {
+    const today = todayStr()
+    if (!demo) {
+      try { localStorage.setItem('corvus-nudge-dismissed', today) } catch (_) {}
+    }
+    setNudgeDismissedOn(today)
+  }, [demo])
+
+  // ── Manual cloud refresh ─────────────────────────────────────────────────────
+  // Pulls the latest cloud state and merges it into local — cloud wins on conflicts,
+  // local-only items are preserved. Safe to call at any time; spinner while in flight.
+  const pullCloudSync = useCallback(async () => {
+    if (!currentUser || syncingCloud) return
+    setSyncingCloud(true)
+    try {
+      const res = await fetch('/api/sync')
+      if (!res.ok) return
+      const cloud = await res.json()
+      if (!cloud) return
+
+      /* The hand-rolled cloud-wins merge that used to live here is gone. It keyed
+         local and cloud by id and let cloud overwrite, with no notion of a
+         tombstone — so a class deleted here and not yet uploaded was overwritten by
+         the cloud's live copy and came back, and hitting Sync was enough to undo the
+         delete. Classes soft-delete (see deleteCanvasClass), and the background pull
+         has been tombstone-aware since tombstones landed; this path simply never
+         got updated, which left the resurrection bug alive in the one place the
+         user reaches by pressing a button. */
+      setEvents(local => mergeCloudWinsWithTombstones(cloud.events, local))
+      setTodos(local => purgeTodos(mergeTodosCloudWins(cloud.todos, local)))
+      // Categories: an empty cloud array means "not synced yet", not "the user
+      // deleted every category" — falling through to local avoids wiping them.
+      setTodoCategories(local => {
+        const merged = mergeCloudWinsWithTombstones(cloud.todoCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setEventCategories(local => {
+        const merged = mergeCloudWinsWithTombstones(cloud.eventCategories, local)
+        return merged.length > 0 ? merged : local
+      })
+      setCanvasClasses(local => purgeTombstones(mergeCloudWinsWithTombstones(cloud.classSchedule, local)))
+      /* This used to spread the other way round from the two merges above, so the
+         same two devices could settle on different answers for one event depending
+         on whether you signed in or pressed Sync. Both resolve per entry now. */
+      setEventPrefs(local => mergeEventPrefsCloudWins(cloud.eventPrefs, local))
+      setStudySessions(local => mergeCloudWinsWithTombstones(cloud.studySessions, local))
+      /* The hand-rolled pass that used to re-apply local list tombstones here is
+         gone: mergeCustomListsCloudWins is tombstone-aware now, so a local delete
+         already survives a cloud row that hasn't heard about it. */
+      setCustomLists(local => mergeCustomListsCloudWins(cloud.customLists ?? [], local))
+      setNotes(local => purgeExpiredTrash(mergeNotesCloudWins(cloud.notes ?? [], local)))
+
+      setLastSyncedAt(Date.now())
+      pushToast('Synced', 'Latest data pulled from the cloud.')
+    } catch (_) {
+      // non-fatal — user can try again
+    } finally {
+      setSyncingCloud(false)
+    }
+  }, [currentUser, syncingCloud, pushToast])
+
+  /* ── Reminder checker ── */
+  useEffect(() => {
+    function check() {
+      const now = Date.now()
+
+      function fire(key, title, body) {
+        if (shownReminders.current.has(key)) return
+        shownReminders.current.add(key)
+        pushToast(title, body)
+        if (typeof window !== 'undefined' && Notification?.permission === 'granted')
+          new Notification(title, { body })
+        // Background/closed-app delivery is handled server-side by the
+        // /api/push/reminders cron (dedup'd), so we don't fire a push here.
+      }
+
+      // ── Reminders set on the item itself ──
+      ;[...events.map(ev => ({ item: ev, key: 'ev-' + ev.id, date: ev.start, title: ev.title })),
+        ...todos.map(td => ({ item: td, key: 'td-' + td.id, date: td.dueDate ? td.dueDate + 'T00:00:00' : null, title: td.title })),
+        // Notes carry an absolute reminder.at only — no due date to offset from.
+        ...notes.filter(n => !n.trashedAt).map(n => ({ item: n, key: 'nt-' + n.id, date: null, title: noteDisplayTitle(n) })),
+      ].forEach(({ item, key, date, title }) => {
+        if (!item.reminder || item.completed) return
+        const due = date ? new Date(date).getTime() : null
+        const at  = item.reminder.at
+          ? new Date(item.reminder.at).getTime()
+          : due != null ? due - item.reminder.ms : null
+        if (at == null) return
+        if (now >= at && now < at + 120_000) fire(key, `Reminder: ${title}`, item.reminder.label)
+      })
+
+      /* ── Reminders a class implies ──
+         A rule on a class covers everything filed under it, including the Canvas
+         assignments the cron cannot see (Canvas data is never persisted server-side).
+         `classReminderCandidates` skips anything carrying its own reminder, so the
+         loop above and this one can never both fire for the same item. */
+      for (const c of classReminderCandidates({ classes: canvasClasses, todos, assignments: canvasAssignments })) {
+        if (now >= c.at && now < c.at + 120_000) fire(c.key, c.title, c.body)
+      }
+    }
+    check()
+    const id = setInterval(check, 60_000)
+    return () => clearInterval(id)
+  }, [events, todos, notes, canvasClasses, canvasAssignments, pushToast])
+
+  /* ── Digest preference ──
+     Account-level, so it is read from the server rather than localStorage. The old
+     version cached it per device, which meant each browser displayed its own guess
+     at a setting it may never have written — and since the flag was stored per
+     subscription, enabling it on one device really did leave the others opted out. */
+  useEffect(() => {
+    if (!currentUser) return
+    let cancelled = false
+    fetch('/api/push/digest-pref')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled && d) setDigestEnabled(d.digest_enabled === true) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [currentUser])
+
+  const toggleDigest = useCallback(async () => {
+    if (!currentUser) return
+    setDigestSaving(true)
+    const next = !digestEnabled
+    try {
+      // No subscription lookup: the preference is about the account. Requiring a
+      // push subscription on *this* device to change it was what made the setting
+      // unreachable from whichever device you happened to be holding.
+      const res = await fetch('/api/push/digest-pref', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ digest_enabled: next }),
+      })
+      if (res.ok) {
+        setDigestEnabled(next)
+        pushToast(
+          next ? 'Sunday digest enabled' : 'Sunday digest disabled',
+          next
+            ? 'Every Sunday at 6 PM UTC, on every device where you\'ve enabled notifications.'
+            : 'No more weekly digest pushes.',
+        )
+      } else {
+        pushToast('Could not update digest preference', 'Please try again.')
+      }
+    } catch {
+      pushToast('Could not update digest preference', 'Please try again.')
+    } finally {
+      setDigestSaving(false)
+    }
+  }, [currentUser, digestEnabled, pushToast])
+
+  /* ── PWA App Icon Badge ──────────────────────────────────────────────────
+     Counts overdue as well as due-today: a badge that drops back to zero while
+     you still have late work is actively misleading, and overdue is the part
+     you most want nagging you from the home screen.
+
+     buildGlance is shared with /today and the daily push so all three agree —
+     and it uses local dates, which the old `toISOString().slice(0,10)` did not.
+     That bug made the badge switch to tomorrow's count every evening. */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const glance = buildGlance({
+      todos,
+      assignments: canvasAssignments,
+      dateStr: todayStr(),
+    })
+    updateAppBadge(glance.counts.dueToday + glance.counts.overdue)
+  }, [todos, canvasAssignments])
+
+  /* ── Retroactively tag a past focus session ──
+     The course comes from whatever was selected in the timer when the session
+     finished, which is easy to forget and was previously impossible to correct
+     — leaving that time stuck under "Untagged" in every breakdown forever.
+     updatedAt is stamped so the edit wins the last-write-wins sync merge against
+     a stale copy on another device. */
+  const updateStudySession = useCallback((id, patch) => {
+    setStudySessions(prev => prev.map(s =>
+      s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
+    ))
+  }, [])
+
+  /* ── Event CRUD ── */
+
+  /**
+   * Stamp an event as just-written.
+   *
+   * The sync merge is last-write-wins on `updatedAt`, and events were the one
+   * collection that never set it — todos, notes and study sessions all did. With no
+   * timestamp on either side the merge fell back to "local wins", so an event edited
+   * on one device lost to the other device's untouched copy *and* got overwritten in
+   * the cloud by it. Every write below goes through here.
+   */
+  const touchEvent = useCallback(e => ({ ...e, updatedAt: new Date().toISOString() }), [])
+
+  const saveEvent = useCallback((ev, scope = 'single') => {
+    if (scope === 'all') {
+      // "Edit all in series": delete every existing instance then re-expand from scratch
+      const groupId = ev.recurrenceGroupId
+      if (!groupId) return
+      const baseEvent = { ...ev, id: groupId }
+      const newExpanded = expandRecurring(baseEvent).map(touchEvent)
+      setEvents(prev => [
+        ...prev.filter(e => e.recurrenceGroupId !== groupId && e.id !== groupId),
+        ...newExpanded,
+      ])
+    } else {
+      const expanded = expandRecurring(ev).map(touchEvent)
+      const isNewEvent = !ev.id || !events.some(e => e.id === ev.id)
+      if (!isNewEvent) {
+        // Moving an exam drags its auto-generated study sessions along, keeping
+        // the run-up intact. Shifted by whole days rather than by the raw
+        // millisecond delta, so each session keeps the time of day it was
+        // originally slotted into (findBestSlot picked those around your classes).
+        const prevEv  = events.find(e => e.id === ev.id)
+        const dayDiff = prevEv ? daysBetween(prevEv.start, ev.start) : 0
+        const sessions = dayDiff !== 0
+          ? events.filter(e => e.extendedProps?.studyPlanOf === ev.id)
+          : []
+
+        /* Single edit — replace that one event with whatever the save expands to.
+           Usually that is one event and this is a plain swap. It is more than one when
+           the edit is what *made* the event repeat: an event that didn't recur before
+           has no series to "edit all" of, so turning Repeats on arrives here with a
+           full expansion. Writing `expanded[0]` dropped every occurrence after the
+           first, and nothing else ever re-expands a stored event — so the later weeks
+           never appeared at all until the series happened to be rebuilt by an "edit
+           all in series" save. */
+        setEvents(prev => prev.flatMap(e => {
+          if (e.id === ev.id) return expanded
+          if (dayDiff !== 0 && e.extendedProps?.studyPlanOf === ev.id) {
+            return touchEvent({ ...e, start: shiftIsoDays(e.start, dayDiff), end: shiftIsoDays(e.end, dayDiff) })
+          }
+          return e
+        }))
+
+        if (sessions.length > 0) {
+          const originals = sessions.map(s => ({ id: s.id, start: s.start, end: s.end }))
+          pushToast(
+            `Moved ${sessions.length} study session${sessions.length !== 1 ? 's' : ''}`,
+            `Shifted ${Math.abs(dayDiff)} day${Math.abs(dayDiff) !== 1 ? 's' : ''} ${dayDiff > 0 ? 'later' : 'earlier'} to follow the exam.`,
+            [{
+              label: 'Keep original dates',
+              dismiss: true,
+              onClick: () => setEvents(prev => prev.map(e => {
+                const o = originals.find(x => x.id === e.id)
+                return o ? touchEvent({ ...e, start: o.start, end: o.end }) : e
+              })),
+            }],
+          )
+        }
+      } else {
+        setEvents(prev => [...prev, ...expanded])
+      }
+      // If this event came from a note, link the note to it now.
+      if (isNewEvent) {
+        const created = expanded[0] ?? ev
+        setPendingNoteLink(link => {
+          if (link?.kind === 'event') {
+            setNotes(prev => prev.map(n => n.id === link.noteId
+              ? { ...n, linkedTo: { type: 'event', id: created.id, label: created.title }, updatedAt: new Date().toISOString() }
+              : n))
+          }
+          return null
+        })
+      }
+
+      // After saving a NEW exam event, offer to generate a study plan
+      if (isNewEvent && ev.extendedProps?.category === 'exam') {
+        // expanded[0] has the final id (from expandRecurring or the original)
+        setStudyPlanPending(expanded[0] ?? { ...ev, id: ev.id || String(Date.now()) })
+      }
+    }
+  }, [events, pushToast, touchEvent])
+
+  const deleteEvent = useCallback((id, groupId, deleteAll = false) => {
+    const matches = e => (deleteAll && groupId)
+      ? (e.recurrenceGroupId === groupId || e.id === id)
+      : e.id === id
+
+    const toDelete = eventsRaw.filter(matches)
+    if (toDelete.length === 0) return
+    const deletedIds = new Set(toDelete.map(e => e.id))
+
+    // Pure updater — the toast and the follow-up work happen outside it. This
+    // used to run inside setEvents, which React StrictMode double-invokes in
+    // dev, producing two toasts per delete.
+    setEvents(prev => prev.map(e => (deletedIds.has(e.id) ? softDelete(e) : e)))
+
+    const label = toDelete[0]?.title || 'Event'
+    const count = toDelete.length
+
+    pushToast(
+      `${count > 1 ? `${count} events` : `"${label}"`} deleted`,
+      undefined,
+      [{
+        label: 'Undo',
+        dismiss: true,
+        onClick: () => setEvents(cur => cur.map(e => (deletedIds.has(e.id) ? restore(e) : e))),
+      }],
+      { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+    )
+
+    // Once the undo window closes, tidy up anything that pointed at the event —
+    // but only if it's still deleted, i.e. the user didn't hit Undo.
+    setTimeout(() => {
+      setEvents(curEvs => {
+        const stillGone = new Set(
+          [...deletedIds].filter(eid => curEvs.find(e => e.id === eid)?.deletedAt)
+        )
+        if (stillGone.size === 0) return curEvs
+
+        setTodos(curTodos => curTodos.map(t =>
+          stillGone.has(t.linkedEventId)
+            ? { ...t, linkedEventId: null, updatedAt: new Date().toISOString() }
+            : t
+        ))
+
+        // Offer to clean up study sessions generated for a deleted exam.
+        const orphaned = curEvs.filter(e =>
+          !e.deletedAt && stillGone.has(e.extendedProps?.studyPlanOf)
+        )
+        if (orphaned.length > 0) {
+          const sessionIds = new Set(orphaned.map(s => s.id))
+          pushToast(
+            `Delete ${orphaned.length} study session${orphaned.length !== 1 ? 's' : ''}?`,
+            'Linked study sessions for the deleted exam were found.',
+            [
+              {
+                label: 'Delete sessions',
+                dismiss: true,
+                onClick: () => setEvents(c => c.map(e => (sessionIds.has(e.id) ? softDelete(e) : e))),
+              },
+              { label: 'Keep', dismiss: true, onClick: () => {} },
+            ],
+            { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+          )
+        }
+        return curEvs
+      })
+    }, 6200)
+  }, [eventsRaw, pushToast])
+
+  // ── Drag-to-reschedule handlers ──────────────────────────────────────────
+  const handleEventDrop = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    const duration = new Date(ev.end || ev.start).getTime() - new Date(ev.start).getTime()
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   new Date(info.event.start.getTime() + Math.max(duration, 0)).toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  const handleEventResize = useCallback((info) => {
+    const ev = events.find(e => e.id === info.event.id)
+    if (!ev) { info.revert(); return }
+    saveEvent({
+      ...ev,
+      start: info.event.start.toISOString(),
+      end:   info.event.end.toISOString(),
+    }, 'single')
+  }, [events, saveEvent])
+
+  /* ── Event prefs ──
+     All five writers go through setEventPref, which stamps the entry. A pref is
+     one decision per event, and the merge resolves it per event by that stamp —
+     so an unstamped write is one that silently loses to a stale copy on another
+     device. Spreading into prev[id] here instead is how that gets forgotten. */
+  const handleRecolorEvent = useCallback((id, color) => {
+    setEventPrefs(prev => setEventPref(prev, id, { color }))
+  }, [])
+
+  const hideEvent = useCallback((id) => {
+    setEventPrefs(prev => setEventPref(prev, id, { hidden: true }))
+    setToasts(prev => prev.filter(t => t.eventId !== id))
+  }, [])
+
+  /* Un-hiding writes `hidden: false` rather than deleting the key, which is what
+     lets the merge see it. A removed key is an absence, and an absence is
+     indistinguishable from "never set" — the same reason deletes need tombstones. */
+  const unhideEvent = useCallback((id) => {
+    setEventPrefs(prev => setEventPref(prev, id, { hidden: false }))
+  }, [])
+
+  /**
+   * Flag an event as important.
+   *
+   * Lives in eventPrefs rather than on the event itself so it works the same for
+   * every source — a Google invite, a Canvas due date, and a class period can
+   * all be marked, and none of those are ours to edit. It rides the existing
+   * eventPrefs sync and backup for free.
+   */
+  const toggleImportantEvent = useCallback((id) => {
+    setEventPrefs(prev => setEventPref(prev, id, { important: !prev[id]?.important }))
+  }, [])
+
+  const setGoogleEventColor = useCallback((id, color) => {
+    setEventPrefs(prev => setEventPref(prev, id, { color }))
+    setToasts(prev => prev.map(toast => toast.eventId === id
+      ? {
+          ...toast,
+          actions: toast.actions?.map(action => action.type === 'color' ? { ...action, value: color } : action),
+        }
+      : toast
+    ))
+  }, [])
+
+  /** Toggle semi-transparent display of hidden GCal events */
+  const showHiddenEvents = useCallback(() => {
+    setShowHiddenGcal(v => !v)
+  }, [])
+
+  /* ── Todo CRUD ── */
+  const addTodo    = useCallback((t) => {
+    const created = { ...t, id: String(Date.now()), completed: false }
+    setTodos(p => [...p, created])
+    // If this task came from a note, link the note to it now that it has an id.
+    setPendingNoteLink(link => {
+      if (link?.kind === 'task') {
+        setNotes(prev => prev.map(n => n.id === link.noteId
+          ? { ...n, linkedTo: { type: 'task', id: created.id, label: created.title }, updatedAt: new Date().toISOString() }
+          : n))
+      }
+      return null
+    })
+    return created
+  }, [])
+  /* Is *this occurrence* ticked off? A recurring task records completion per date in
+     completedDates rather than one flag, so the answer differs between Thursday's copy
+     and next Thursday's. Mirrors the id parsing in toggleTodo below. */
+  const isTodoDoneOn = useCallback((todo, instanceId) => {
+    const rMatch = String(instanceId).match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
+    if (rMatch) return (todo.completedDates || []).includes(rMatch[2])
+    return !!todo.completed
+  }, [])
+
+  /* Ticking a task off is an edit, so it has to stamp `updatedAt` like every other
+     mutator here. It didn't, and that is precisely why completion refused to sync:
+     the sync merge resolves by `updatedAt` (see mergeWithTombstones), and a toggle
+     left the timestamp untouched. So the phone and the laptop held the same task
+     with the same timestamp but a different `completed` flag, the merge hit its
+     `localT >= cloudT` tie-break, and the *local* — stale — copy won and was pushed
+     straight back over the real change. The task itself synced fine, because a new
+     id is absent on the other side and merges unconditionally; only the flag
+     silently reverted, which is what made this look like a display bug. */
+  const toggleTodo = useCallback((id) => {
+    const now = new Date().toISOString()
+    // Handle recurring instances: id looks like "baseId-r-YYYY-MM-DD"
+    const rMatch = id.match(/^(.+)-r-(\d{4}-\d{2}-\d{2})$/)
+    if (rMatch) {
+      const [, baseId, dateStr] = rMatch
+      setTodos(p => p.map(t => {
+        if (t.id !== baseId) return t
+        const wasCompleted = (t.completedDates || []).includes(dateStr)
+        if (!wasCompleted) updateStreak(dateStr)
+        /* setCompletionForDate rather than splicing the array by hand: it stamps
+           this date in completionStamps and bumps the row's updatedAt too, and the
+           three moving together is what lets the merge resolve each occurrence
+           separately — including an untick, which a bare array cannot express. */
+        return setCompletionForDate(t, dateStr, !wasCompleted, now)
+      }))
+    } else {
+      setTodos(p => p.map(t => {
+        if (t.id !== id) return t
+        const nowCompleting = !t.completed
+        if (nowCompleting) updateStreak()
+        return { ...t, completed: nowCompleting, updatedAt: now }
+      }))
+    }
+  }, [])
+  const deleteTodo = useCallback((id) => {
+    const todo = todosRaw.find(t => t.id === id)
+    if (!todo) return
+
+    // The updater stays pure. pushToast used to be called *inside* it, and React
+    // StrictMode double-invokes updaters in dev to surface exactly this — which
+    // is why deleting raised two toasts.
+    setTodos(prev => prev.map(t => (t.id === id ? softDelete(t) : t)))
+
+    pushToast(
+      `"${todo.title}" deleted`,
+      undefined,
+      [{
+        label: 'Undo',
+        dismiss: true,
+        onClick: () => setTodos(cur => cur.map(t => (t.id === id ? restore(t) : t))),
+      }],
+      { icon: 'trash', iconBg: 'rgba(239,68,68,.12)', iconColor: '#ef4444' },
+    )
+  }, [todosRaw, pushToast])
+  /* The editor hands back the subtask array it was holding — the visible ones — so
+     writing it straight through would drop every tombstone and resurrect deleted
+     subtasks on the next merge, exactly as the list reorder handler once did.
+     applySubtaskEdits takes the editor's content and order but turns removals into
+     tombstones and leaves untouched subtasks on the stamp they already had. */
+  const updateTodo = useCallback((updated) => setTodos(p => p.map(t => {
+    if (t.id !== updated.id) return t
+    const now = new Date().toISOString()
+    const { subtasks, ...fields } = updated
+    return applySubtaskEdits({ ...t, ...fields }, subtasks ?? visibleSubtasks(t), now)
+  })), [])
+  /* Drag a task to another day on the coursework month.
+     Only the due date moves. A reminder is stored as an *offset* from the due date, so
+     it follows on its own and rewriting it here would double-apply the move; an
+     absolute one was pinned to a wall-clock time deliberately and is not ours to
+     shift. Recurrence is left alone too — dragging one occurrence is not a statement
+     about the pattern. */
+  const rescheduleTodo = useCallback((todoId, dueDate) => {
+    setTodos(prev => prev.map(t =>
+      t.id === todoId ? { ...t, dueDate, updatedAt: new Date().toISOString() } : t,
+    ))
+  }, [])
+
+  /* A subtask is its own merge unit now, not a field of the parent's blob. It used
+     to be resolved by the parent row, which is the completedDates mistake one level
+     down: three steps under one task are three decisions sharing one timestamp, so
+     ticking "outline" on the phone and "draft" on the laptop meant the newer row won
+     whole and one tick was lost. patchSubtask stamps the subtask *and* the row — the
+     row still resolves the task's own fields. */
+  const toggleSubtask = useCallback((todoId, subtaskId) => {
+    setTodos(prev => prev.map(t => {
+      if (t.id !== todoId) return t
+      const current = (t.subtasks ?? []).find(s => s.id === subtaskId)
+      return patchSubtask(t, subtaskId, { completed: !current?.completed })
+    }))
+  }, [])
+
+  // Append a subtask from the inline composer on a task row.
+  const addSubtaskToTodo = useCallback((todoId, title) => {
+    const trimmed = (title ?? '').trim()
+    if (!trimmed) return
+    setTodos(prev => prev.map(t => (t.id === todoId ? addSubtask(t, trimmed) : t)))
+  }, [])
+
+  // Bulk-remove finished tasks. Recurring todos track completion per-date in
+  // completedDates rather than a `completed` flag, so they're deliberately left
+  // alone — clearing one would delete the whole series, not just today's.
+  const clearCompletedTodos = useCallback(() => {
+    const doomed = todos.filter(t => t.completed)
+    if (doomed.length === 0) return
+    const doomedIds = new Set(doomed.map(t => t.id))
+    setTodos(prev => prev.map(t => (doomedIds.has(t.id) ? softDelete(t) : t)))
+    pushToast(
+      `Cleared ${doomed.length} completed task${doomed.length !== 1 ? 's' : ''}`,
+      undefined,
+      [{
+        label: 'Undo',
+        onClick: () => setTodos(prev => prev.map(t => (doomedIds.has(t.id) ? restore(t) : t))),
+      }],
+      { icon: 'trash' },
+    )
+  }, [todos, pushToast])
+
+  /* ── Custom Lists CRUD ── */
+  const createCustomList = useCallback((name, icon, color, dueDate = null) => {
+    const list = { ...makeList(name, icon, color), dueDate: dueDate ?? null }
+    setCustomLists(prev => [...prev, list])
+  }, [])
+
+  /* The list row resolves by `updatedAt` like everything else, so a rename or a
+     colour change has to stamp it. The item-level helpers in lib/customLists
+     already stamp the list on their way through; this backstop covers the edits
+     that only touch list-level fields (the edit modal, clearing a due date). */
+  const updateCustomList = useCallback((updated) => {
+    const stamped = { ...updated, updatedAt: new Date().toISOString() }
+    setCustomLists(prev => prev.map(l => l.id === updated.id ? stamped : l))
+  }, [])
+
+  const deleteCustomList = useCallback((id) => {
+    // Tombstone rather than drop — a removed list used to come back from any
+    // device that hadn't synced yet.
+    setCustomLists(prev => prev.map(l => (l.id === id ? softDelete(l) : l)))
+    // If currently viewing the deleted list, go back to My Tasks
+    setActiveListId(cur => cur === id ? 'my-tasks' : cur)
+  }, [])
+
+  /* ── Notes CRUD ── */
+  // Every mutation stamps updatedAt — mergeNotes() resolves cross-device
+  // conflicts on that field, so a patch that forgets it would lose the race.
+  const updateNote = useCallback((id, patch) => {
+    setNotes(prev => prev.map(n => {
+      if (n.id !== id) return n
+      // Autosave fires on a timer and can land after the note is unchanged;
+      // skip the write so we don't bump updatedAt (and re-sync) for nothing.
+      const changed = Object.keys(patch).some(k => JSON.stringify(n[k]) !== JSON.stringify(patch[k]))
+      if (!changed) return n
+      return { ...n, ...patch, updatedAt: new Date().toISOString() }
+    }))
+  }, [])
+
+  // Soft delete. The note stays in state (and in sync) with trashedAt set, so
+  // Undo is a flag flip rather than a resurrection, and other devices see it go.
+  const trashNote = useCallback((id) => {
+    const note = notes.find(n => n.id === id)
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : n))
+    setActiveNoteId(cur => cur === id ? null : cur)
+    pushToast(
+      'Note moved to trash',
+      note ? noteDisplayTitle(note) : undefined,
+      [{
+        label: 'Undo',
+        onClick: () => {
+          setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: null, updatedAt: new Date().toISOString() } : n))
+          setActiveNoteId(id)
+        },
+      }],
+      { icon: 'trash' },
+    )
+  }, [notes, pushToast])
+
+  /**
+   * Throw away a note nobody wrote in.
+   *
+   * Pressing W (or New) creates the note immediately — that is what makes quick
+   * capture feel instant — so wandering off without typing used to leave an
+   * "Untitled note" in the list forever. Closing one that is still blank now
+   * removes it outright rather than sending it to the trash: there is nothing in
+   * it to undo, and an undo toast for a note with no content is just noise.
+   *
+   * Deferred by a tick on purpose. NoteEditor flushes its pending autosave from
+   * an unmount cleanup, and that flush is what decides whether the note is
+   * actually empty — running the check first would delete a note whose last
+   * keystrokes were still in the debounce.
+   */
+  const discardEmptyNote = useCallback((id) => {
+    if (!id) return
+    setTimeout(() => {
+      setNotes(prev => prev.filter(n => !(n.id === id && !n.trashedAt && isNoteEmpty(n))))
+    }, 0)
+  }, [])
+
+  // Every path that closes a note — picking another, going back to the list,
+  // creating one, trashing one — moves activeNoteId, so watching it covers them
+  // all without each caller having to remember.
+  const prevActiveNoteId = useRef(null)
+  useEffect(() => {
+    const prev = prevActiveNoteId.current
+    prevActiveNoteId.current = activeNoteId
+    if (prev && prev !== activeNoteId) discardEmptyNote(prev)
+  }, [activeNoteId, discardEmptyNote])
+
+  // Leaving the Notes tab counts as closing the note too, even though the
+  // selection survives so coming back lands where you left off.
+  useEffect(() => {
+    if (activeNav === 'notes') return
+    discardEmptyNote(activeNoteId)
+  }, [activeNav]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restoreNote = useCallback((id) => {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, trashedAt: null, updatedAt: new Date().toISOString() } : n))
+  }, [])
+
+  const purgeNote = useCallback((id) => {
+    setNotes(prev => prev.filter(n => n.id !== id))
+    setActiveNoteId(cur => cur === id ? null : cur)
+  }, [])
+
+  // Things a note can be attached to. Capped so the picker stays scannable —
+  // courses first (they're the durable ones), then near-term events and tasks.
+  const noteLinkOptions = useMemo(() => [
+    // Canvas courses, derived from assignments so the ids match the ones
+    // CourseCard renders against. Class-schedule entries use `cls_*` ids and are
+    // a separate thing, hence the distinct 'class' type below.
+    ...[...new Map(canvasAssignments
+        .filter(a => a.courseId && a.courseName)
+        .map(a => [String(a.courseId), a.courseName])).entries()]
+      .map(([id, label]) => ({ type: 'course', id, label })),
+    /* `courseName` is the field a class actually has — `name`/`title` never existed on
+       one, so every class in this picker read as the literal word "Class". */
+    ...canvasClasses.map(c => ({ type: 'class', id: c.id, label: c.courseName ?? 'Class' })),
+    ...events.slice(0, 40).map(e => ({ type: 'event', id: e.id, label: e.title })),
+    ...todos.filter(t => !t.completed).slice(0, 40).map(t => ({ type: 'task', id: t.id, label: t.title })),
+  ].filter(o => o.id && o.label), [canvasAssignments, canvasClasses, events, todos])
+
+  // Accepts an array of todos already stamped with sortOrder by DraggableList.
+  // Stamped like any other edit — order is synced state, so an unstamped reorder
+  // loses the same tie-break that completion used to lose.
+  const reorderTodos = useCallback((reordered) => {
+    const now = new Date().toISOString()
+    setTodos(prev => {
+      const orderMap = Object.fromEntries(reordered.map(t => [t.id, t.sortOrder]))
+      return prev.map(t => t.id in orderMap ? { ...t, sortOrder: orderMap[t.id], updatedAt: now } : t)
+    })
+  }, [])
+
+  /* ── Import / Export ── */
+  /* What a backup contains. The *raw* arrays, tombstones included: a tombstone is a
+     record that something was deleted, and dropping them would let a restore onto a
+     fresh device resurrect everything you had ever thrown away. */
+  const backupCollections = useMemo(() => ({
+    events:          eventsRaw,
+    todos:           todosRaw,
+    todoCategories,
+    eventCategories,
+    notes,
+    classSchedule:   canvasClassesRaw,
+    customLists:     customListsRaw,
+    studySessions,
+  }), [eventsRaw, todosRaw, todoCategories, eventCategories, notes, canvasClassesRaw, customListsRaw, studySessions])
+
+  // ImportExportButton handles conflict resolution and sends the fully-merged arrays.
+  // We just set state directly — the existing localStorage sync effects will persist them.
+  const handleImport = useCallback(({ collections: merged, eventPrefs: importedPrefs, mode }) => {
+    /* Every collection the backup carries, restored by the same rule: the component
+       has already merged each one against what is here, so these are final arrays.
+       A collection the file said nothing about arrives unchanged, which is what lets
+       an ICS import — or an older backup — touch only what it actually contains. */
+    if (Array.isArray(merged?.events))          setEvents(merged.events)
+    if (Array.isArray(merged?.todos))           setTodos(merged.todos)
+    if (Array.isArray(merged?.todoCategories))  setTodoCategories(merged.todoCategories)
+    if (Array.isArray(merged?.eventCategories)) setEventCategories(merged.eventCategories)
+    if (Array.isArray(merged?.notes))           setNotes(merged.notes)
+    if (Array.isArray(merged?.classSchedule))   setCanvasClasses(merged.classSchedule)
+    if (Array.isArray(merged?.customLists))     setCustomLists(merged.customLists)
+    if (Array.isArray(merged?.studySessions))   setStudySessions(merged.studySessions)
+
+    /* `undefined` means the file had no opinion on hidden/recoloured events, which is
+       different from it saying you have none — only the latter should overwrite.
+
+       Restored entries are stamped as of the restore. They carry whatever stamp the
+       backup was written with, or none if the file predates stamping, so without
+       this they would lose the next merge to a fresher copy on another device and
+       the restore would quietly undo itself. */
+    if (importedPrefs && typeof importedPrefs === 'object') {
+      setEventPrefs(prev => ({ ...prev, ...stampAllPrefs(importedPrefs) }))
+    }
+
+    /* A restore replaces rather than adds, so counting what grew would describe it
+       backwards — "+0 events" for a file that just reinstated forty of them. */
+    if (mode === 'replace') {
+      const live = arr => (Array.isArray(arr) ? arr.filter(x => !x?.deletedAt && !x?.trashedAt).length : 0)
+      const total = Object.values(merged ?? {}).reduce((n, arr) => n + live(arr), 0)
+      pushToast('Restored from backup', `This device now matches the file — ${total} item${total !== 1 ? 's' : ''}.`)
+      return
+    }
+
+    const grew = (after, before) => (Array.isArray(after) ? after.length - before.length : 0)
+    const counts = [
+      ['event', grew(merged?.events, eventsRaw)],
+      ['task',  grew(merged?.todos,  todosRaw)],
+      ['note',  grew(merged?.notes,  notes)],
+      ['class', grew(merged?.classSchedule, canvasClassesRaw)],
+      ['list',  grew(merged?.customLists,   customListsRaw)],
+    ].filter(([, n]) => n > 0)
+
+    const parts = counts.length > 0
+      ? counts.map(([noun, n]) => `+${n} ${noun}${n !== 1 ? (noun === 'class' ? 'es' : 's') : ''}`)
+      : ['Nothing new to add']
+    pushToast('Import complete', parts.join(', ') + '.')
+  }, [eventsRaw, todosRaw, notes, canvasClassesRaw, customListsRaw, pushToast])
+
+  /* ── Google Calendar sync ── */
+  // The Reconnect toast below re-runs this sync from inside it. A callback can't name
+  // itself while it is still being declared, so the toast goes through this ref, which
+  // always holds the current one — same arrangement as runInitialMergeRef.
+  const syncGoogleCalendarRef = useRef(null)
+  const syncGoogleCalendar = useCallback(async () => {
+    if (demo) return
+    setGcSyncing(true)
+    try {
+      const prefs    = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
+      const requests = []
+
+      for (const [accountId, accPref] of Object.entries(prefs)) {
+        if (accPref?.enabled === false) continue
+        const calendarIds    = []
+        const calendarColors = {}
+        for (const [calId, calPref] of Object.entries(accPref?.calendars ?? {})) {
+          const isEnabled = typeof calPref === 'boolean' ? calPref : calPref?.enabled !== false
+          if (isEnabled) {
+            calendarIds.push(calId)
+            calendarColors[calId] = (typeof calPref === 'object' && calPref?.color) ? calPref.color : '#4285f4'
+          }
+        }
+        if (calendarIds.length > 0) requests.push({ accountId, calendarIds, calendarColors })
+      }
+
+      if (requests.length === 0) { setGoogleEvents([]); return }
+
+      const res = await fetch('/api/google/events', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ requests }),
+      })
+      if (!res.ok) return
+      const { events: gcEvents, disconnected } = await res.json()
+      setGoogleEvents(gcEvents ?? [])
+
+      // Surface dead accounts so the user can reconnect, instead of silently
+      // showing an empty calendar. Only warn once per disconnected set.
+      if (Array.isArray(disconnected) && disconnected.length > 0) {
+        const sig = disconnected.map(d => d.accountId).sort().join(',')
+        if (gcDisconnectWarnedRef.current !== sig) {
+          gcDisconnectWarnedRef.current = sig
+          const label = disconnected.map(d => d.email).filter(Boolean).join(', ')
+          pushToast(
+            'Google Calendar disconnected',
+            `Reconnect ${label || 'your account'} to keep events syncing.`,
+            // Was window.open('/api/google/auth') — that endpoint returns JSON holding
+            // the consent URL, not a redirect, so the popup showed raw JSON and the
+            // most reachable way back from a disconnect simply did not work.
+            [{
+              label: 'Reconnect',
+              onClick: async () => {
+                // Reconnect the first dead account by email so Google skips the
+                // chooser; picking wrong there adds a second account and leaves this
+                // one broken.
+                const result = await connectGoogleAccount({ email: disconnected[0]?.email })
+                if (!result.ok && result.error) {
+                  pushToast('Could not reconnect', result.error)
+                  return
+                }
+                gcDisconnectWarnedRef.current = null
+                syncGoogleCalendarRef.current?.()
+              },
+            }],
+          )
+        }
+      } else {
+        gcDisconnectWarnedRef.current = null
+      }
+    } catch (err) {
+      console.error('Google Calendar sync failed:', err)
+    } finally {
+      setGcSyncing(false)
+    }
+  }, [pushToast, demo])
+  useEffect(() => { syncGoogleCalendarRef.current = syncGoogleCalendar }, [syncGoogleCalendar])
+
+  /* ── Initial sync, after pulling saved calendar choices down ──
+     Hydrating first matters on a device that has never seen these accounts: without
+     it, a fresh browser (or one where the account was just reconnected under a new id)
+     has an empty local cache, syncs zero calendars, and shows nothing — then silently
+     corrects itself only if the user happens to open Google settings.
+
+     Hydration is keyed by email, so hidden calendars stay hidden across a reconnect
+     and across devices. */
+  useEffect(() => {
+    if (demo) return
+    let cancelled = false
+    ;(async () => {
+      let accounts = []
+      try {
+        const res = await fetch('/api/google/accounts')
+        if (res.ok) accounts = (await res.json())?.accounts ?? []
+      } catch { /* signed out or offline — fall back to the local cache below */ }
+
+      if (cancelled) return
+      if (accounts.length) await hydrateGooglePrefs(accounts)
+      if (cancelled) return
+
+      const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
+      if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    })()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic sync every 15 minutes
+  useEffect(() => {
+    if (demo) return
+    const id = setInterval(() => {
+      const prefs = JSON.parse(localStorage.getItem('lv-google-prefs') ?? '{}')
+      if (Object.keys(prefs).length > 0) syncGoogleCalendar()
+    }, 15 * 60_000)
+    return () => clearInterval(id)
+  }, [syncGoogleCalendar, demo])
+
+  /* ── Canvas sync ── */
+  const syncCanvasAssignments = useCallback(async () => {
+    if (demo) return
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    if (!prefs.connected) return
+    const enabledCourses = Object.entries(prefs.coursesEnabled ?? {})
+      .filter(([, v]) => v !== false)
+      .map(([id]) => Number(id))
+    if (!enabledCourses.length) { setCanvasAssignments([]); return }
+
+    // Fetch course names from cached assignment data or re-fetch courses
+    let courseNames = {}
+    try {
+      const { courses: list } = await fetch('/api/canvas/courses').then(r => r.json())
+      for (const c of list ?? []) courseNames[c.id] = c.name
+    } catch { /* use empty names */ }
+
+    const courses = enabledCourses.map(id => ({ id, name: courseNames[id] ?? String(id) }))
+    const res = await fetch('/api/canvas/assignments', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ courses }),
+    })
+    if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
+    if (!res.ok) return
+    const { assignments: fresh } = await res.json()
+
+    // ── New-assignment notification ───────────────────────────────────────
+    try {
+      const seenRaw  = localStorage.getItem('lv-canvas-seen-ids')
+      const seenIds  = new Set(seenRaw ? JSON.parse(seenRaw) : [])
+      const freshIds = (fresh ?? []).map(a => a.id)
+
+      if (seenRaw !== null) {
+        // Not the first sync — diff for genuinely new items
+        const newOnes = (fresh ?? []).filter(a => !seenIds.has(a.id))
+        if (newOnes.length > 0) {
+          const names  = newOnes.slice(0, 3).map(a => a.title).join(', ')
+          const suffix = newOnes.length > 3 ? ` +${newOnes.length - 3} more` : ''
+          pushToast(`${newOnes.length} new Canvas assignment${newOnes.length > 1 ? 's' : ''}`, names + suffix)
+          if (typeof window !== 'undefined' && Notification?.permission === 'granted') {
+            new Notification('New Canvas Assignments', { body: names + suffix })
+          }
+        }
+      }
+      // Always update seen set (first sync seeds it silently)
+      localStorage.setItem('lv-canvas-seen-ids', JSON.stringify(freshIds))
+    } catch (_) { /* non-fatal */ }
+
+    setCanvasAssignments(prev => {
+      const prevMap = Object.fromEntries(prev.map(a => [a.id, a]))
+      return (fresh ?? []).map(a => ({
+        ...a,
+        done:          prevMap[a.id]?.done          ?? (a.submissionState === 'submitted' || a.submissionState === 'graded'),
+        doneDate:      prevMap[a.id]?.doneDate      ?? null,
+        hidden:        prevMap[a.id]?.hidden        ?? false,
+        linkedEventId: prevMap[a.id]?.linkedEventId ?? null,
+        priority:      prevMap[a.id]?.priority      ?? 'medium',
+        notes:         prevMap[a.id]?.notes         ?? null,
+        reminder:      prevMap[a.id]?.reminder      ?? null,
+      }))
+    })
+
+    // Update lastSyncAt
+    const updated = { ...prefs, lastSyncAt: new Date().toISOString() }
+    localStorage.setItem('lv-canvas-prefs', JSON.stringify(updated))
+  }, [pushToast, demo])
+
+  const syncCanvasCalEvents = useCallback(async () => {
+    if (demo) return
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    if (!prefs.connected) return
+    const enabledIds = Object.entries(prefs.coursesEnabled ?? {})
+      .filter(([, v]) => v !== false)
+      .map(([id]) => Number(id))
+    if (!enabledIds.length) { setCanvasCalEvents([]); return }
+
+    const now      = new Date()
+    const startDate = new Date(now); startDate.setDate(startDate.getDate() - 14)
+    const endDate   = new Date(now); endDate.setDate(endDate.getDate() + 60)
+
+    const res = await fetch('/api/canvas/calendar', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        courseIds: enabledIds,
+        startDate: toDateStr(startDate),
+        endDate:   toDateStr(endDate),
+      }),
+    })
+    if (res.status === 401) { pushToast('Canvas token expired', 'Please reconnect Canvas in Settings.'); return }
+    if (!res.ok) return
+    const { events: calEvs } = await res.json()
+
+    // Apply course colors from prefs
+    const prefs2 = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    setCanvasCalEvents((calEvs ?? []).map(e => ({
+      ...e,
+      color: e.color || '#E8751A',
+    })))
+  }, [pushToast, demo])
+
+  /* ── Canvas ICS feed sync (no token required) ── */
+  const syncCanvasIcs = useCallback(async () => {
+    if (demo) return
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    const icsUrl = prefs.icsUrl
+    if (!icsUrl) return
+
+    try {
+      const res = await fetch('/api/canvas/ics', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ url: icsUrl }),
+      })
+      if (!res.ok) return
+      const { events: rawEvents } = await res.json()
+      if (!Array.isArray(rawEvents)) return
+
+      const mapped = rawEvents.map(e => ({
+        id:    `canvasics_${e.id}`,
+        title: e.title,
+        start: e.start,
+        end:   e.end || null,
+        allDay: e.allDay ?? false,
+        color:  '#E8751A',
+        extendedProps: {
+          source:      'canvas-ics',
+          location:    e.location    || null,
+          description: e.description || null,
+          htmlUrl:     e.htmlUrl     || null,
+        },
+      }))
+      setCanvasIcsEvents(mapped)
+    } catch (err) {
+      console.error('Canvas ICS sync failed:', err)
+    }
+  }, [demo])
+
+  const syncCanvas = useCallback(async () => {
+    setCvSyncing(true)
+    try {
+      await Promise.all([syncCanvasAssignments(), syncCanvasCalEvents(), syncCanvasIcs()])
+    } catch (err) {
+      console.error('Canvas sync failed:', err)
+    } finally {
+      setCvSyncing(false)
+    }
+  }, [syncCanvasAssignments, syncCanvasCalEvents, syncCanvasIcs])
+
+  // Initial sync on mount
+  useEffect(() => {
+    if (demo) return
+    const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+    // Starting a network sync is what effects are for; the only synchronous update in it
+    // is the spinner flag, and everything else lands when the requests do.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (prefs.connected) syncCanvas()
+    else if (prefs.icsUrl) syncCanvasIcs()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic 15-min sync
+  useEffect(() => {
+    if (demo) return
+    const id = setInterval(() => {
+      const prefs = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+      if (prefs.connected) syncCanvas()
+      else if (prefs.icsUrl) syncCanvasIcs()
+    }, 15 * 60_000)
+    return () => clearInterval(id)
+  }, [syncCanvas, syncCanvasIcs, demo])
+
+  /* ── Canvas calendar visibility prefs ── */
+  const toggleCanvasOnCalendar = useCallback(() => {
+    setCanvasCalPrefs(prev => {
+      const next = { ...prev, showOnCalendar: !prev.showOnCalendar }
+      if (!demo) {
+        try {
+          const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+          localStorage.setItem('lv-canvas-prefs', JSON.stringify({ ...lsPref, showOnCalendar: next.showOnCalendar }))
+        } catch {}
+      }
+      return next
+    })
+  }, [demo])
+
+  const updateCourseColors = useCallback((courseColors) => {
+    setCanvasCalPrefs(prev => ({ ...prev, courseColors: courseColors ?? {} }))
+  }, [])
+
+  const toggleCourseOnCalendar = useCallback((courseId, enabled) => {
+    setCanvasCalPrefs(prev => {
+      const next = { ...prev, coursesEnabled: { ...prev.coursesEnabled, [String(courseId)]: enabled } }
+      if (!demo) {
+        try {
+          const lsPref = JSON.parse(localStorage.getItem('lv-canvas-prefs') ?? '{}')
+          localStorage.setItem('lv-canvas-prefs', JSON.stringify({ ...lsPref, coursesEnabled: next.coursesEnabled }))
+        } catch {}
+      }
+      return next
+    })
+  }, [demo])
+
+  /* ── Canvas CRUD ── */
+  const toggleCanvasAssignment = useCallback((id) => {
+    setCanvasAssignments(prev => prev.map(a => {
+      if (a.id !== id) return a
+      const nowDone = !a.done
+      if (nowDone) updateStreak()
+      return { ...a, done: nowDone, doneDate: nowDone ? todayStr() : null }
+    }))
+  }, [])
+
+  const hideCanvasAssignment = useCallback((id) => {
+    setCanvasAssignments(prev => prev.map(a =>
+      a.id === id ? { ...a, hidden: !a.hidden } : a
+    ))
+  }, [])
+
+  const updateCanvasAssignment = useCallback((updated) => {
+    setCanvasAssignments(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a))
+  }, [])
+
+  const updateCanvasNotes = useCallback((id, notes) => {
+    setCanvasAssignments(prev => prev.map(a => a.id === id ? { ...a, notes } : a))
+  }, [])
+
+  /* ── Class schedule CRUD ── */
+  /* Stamped for the same reason events are: the sync merge resolves by `updatedAt`,
+     and a class that never carries one is unresolvable — the merge falls back to a
+     guess, and the guess is "keep local". So a class edited on the laptop lost to
+     whatever the phone already had, and never arrived. Classes were missed when events
+     were fixed; the two paths behave the same way now. */
+  const saveCanvasClass = useCallback((entry) => {
+    setCanvasClasses(prev => {
+      const existing = prev.find(c => c.id === entry.id)
+      // The edit form rebuilds the entry from its fields, so anything it does not have
+      // an input for would be dropped on save. `exceptions` is exactly that: cancelled
+      // dates and one-off meetings are managed elsewhere, and editing the room number
+      // must not quietly un-cancel a holiday. `reminders` is the same story — the rules
+      // are edited on the class card, not in the form.
+      const stamped = {
+        ...entry,
+        exceptions: entry.exceptions ?? existing?.exceptions,
+        reminders:  entry.reminders  ?? existing?.reminders,
+        updatedAt:  new Date().toISOString(),
+      }
+      return existing ? prev.map(c => (c.id === stamped.id ? stamped : c)) : [...prev, stamped]
+    })
+  }, [])
+
+  /* "Add meeting times" on a Canvas course that has no schedule entry yet.
+     Opens the ordinary class form as a *draft* — no id, so it saves as a new class —
+     pre-filled with the course's name and its Canvas link, which are the two things
+     already known. Everything else is the form's usual defaults, because Canvas does
+     not know when the class meets; that is the whole reason the entry is being made. */
+  const adoptCanvasCourse = useCallback((entry) => {
+    setEditingClass({ courseName: entry.courseName, canvasCourseId: entry.courseId })
+    setShowClassModal(true)
+  }, [])
+
+  /* One-off changes to a recurring class — a holiday, a cancelled lecture, an extra
+     review session. These edit the class entry's `exceptions`, never its pattern, so
+     the normal week stays intact and every change is reversible. See
+     lib/classInstances.js. */
+  const cancelClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? cancelInstance(c, dateStr) : c)))
+  }, [])
+
+  const restoreClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? restoreInstance(c, dateStr) : c)))
+  }, [])
+
+  const addClassMeeting = useCallback((classId, entry) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? addInstance(c, entry) : c)))
+  }, [])
+
+  const removeClassMeeting = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? removeInstance(c, dateStr) : c)))
+  }, [])
+
+  const markClassExam = useCallback((classId, entry) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? setExamInstance(c, entry) : c)))
+  }, [])
+
+  const clearClassExam = useCallback((classId, dateStr) => {
+    setCanvasClasses(prev => prev.map(c => (c.id === classId ? clearExamInstance(c, dateStr) : c)))
+  }, [])
+
+  const deleteCanvasClass = useCallback((id) => {
+    // Tombstone rather than drop: an absent row reads as "created on another device"
+    // to the merge, so a hard delete came back on the next sync.
+    //
+    // Any section linked into this class is stood back on its own at the same time.
+    // The resolver already ignores a link whose target is deleted, so this is not what
+    // makes the delete safe — it is what stops a dead id syncing forever.
+    setCanvasClasses(prev => clearLinksTo(prev.map(c => (c.id === id ? softDelete(c) : c)), id))
+  }, [])
+
+  /* ── Expand class schedule entries into calendar events ── */
+  const canvasClassEvents = useMemo(() => {
+    return canvasClasses
+      .filter(cls => cls.enabled !== false && cls.days?.length && cls.semesterStart && cls.semesterEnd)
+      .flatMap(cls => {
+        const baseEvent = {
+          id:    cls.id,
+          title: cls.courseName + (cls.section ? ` (${cls.section})` : ''),
+          start: `${cls.semesterStart}T${cls.startTime}:00`,
+          end:   `${cls.semesterStart}T${cls.endTime}:00`,
+          color: cls.color || '#3a6fa8',
+          extendedProps: {
+            source:    'canvas-class',
+            classId:   cls.id,
+            professor: cls.professor,
+            location:  cls.location,
+            courseName: cls.courseName,
+          },
+          recurrence: {
+            type:  'custom',
+            days:  cls.days,
+            until: cls.semesterEnd,
+          },
+        }
+        const meetings = expandRecurring(baseEvent).map(ev => ({
+          ...ev,
+          id: `canvascls_${cls.id}_${ev.id.split('-r-')[1] ?? 'base'}`,
+        }))
+
+        /* Cancelled dates drop out, one-off meetings get added. An extra carries the
+           same shape as a regular meeting so the calendar and the detail view need no
+           special case — only `isExtra`, which decides whether the detail view offers
+           "cancel this meeting" or "remove this meeting". */
+        return applyExceptions(cls, meetings, extra => ({
+          ...baseEvent,
+          id:    `canvasclsx_${cls.id}_${extra.date}`,
+          start: `${extra.date}T${extra.startTime}:00`,
+          end:   `${extra.date}T${extra.endTime}:00`,
+          recurrence: null,
+          extendedProps: {
+            ...baseEvent.extendedProps,
+            location: extra.location ?? cls.location,
+            notes:    extra.note ?? null,
+            isExtra:  true,
+          },
+        }),
+        /* An exam replaces the period in place: same id, so anything anchored to that
+           occurrence still resolves. Times fall back to the meeting's own rather than
+           the class pattern's, which is what makes marking an already-moved one-off as
+           the exam keep its hours. The exam red overrides the course colour — a
+           midterm has to stand out from the fifteen ordinary meetings around it. */
+        (meeting, exam) => {
+          const day = exam.date
+          return {
+            ...meeting,
+            title: exam.title || `${cls.courseName} — Exam`,
+            start: exam.startTime ? `${day}T${exam.startTime}:00` : meeting.start,
+            end:   exam.endTime   ? `${day}T${exam.endTime}:00`   : meeting.end,
+            color: EXAM_COLOR,
+            extendedProps: {
+              ...meeting.extendedProps,
+              category: 'exam',
+              location: exam.location ?? meeting.extendedProps.location,
+              notes:    exam.note ?? meeting.extendedProps.notes ?? null,
+              isExam:   true,
+            },
+          }
+        })
+      })
+  }, [canvasClasses])
+
+  /* ── Calendar handlers ── */
+  const handleViewChange = useCallback((viewType) => {
+    if (viewType === 'timeGridDay')  setTodoPanelWidth(w => Math.max(w, 420))
+    if (viewType === 'timeGridWeek') setTodoPanelWidth(w => w > 380 ? 280 : w)
+  }, [])
+
+  const handleDateClick  = useCallback((info) => {
+    if (info.allDay) {
+      setInitialTodoDate(info.dateStr)
+      setEditingTodo(null)
+      setShowTodoModal(true)
+    } else {
+      setEventModal({ open: true, event: null, date: info.dateStr })
+    }
+  }, [])
+  /* Dragging a range on the calendar opens the event form spanning exactly it.
+     Only real drags arrive here — WeeklyCalendar drops single-cell and single-slot
+     selections, which are clicks and already mean something else — so this adds the
+     one thing that had no gesture at all: creating a multi-day event by hand. */
+  const handleSelectRange = useCallback(({ startStr, endStr, allDay }) => {
+    setEventModal({ open: true, event: null, date: startStr, end: endStr, allDay })
+  }, [])
+
+  const handleEventClick = useCallback((info) => {
+    /* A task on the calendar answers with a small menu rather than the edit form.
+       Most clicks on one are "done", and that was the one thing the form made
+       expensive; delete wasn't reachable from the calendar at all. It also no longer
+       yanks the nav over to the todos tab — the point of clicking a task where it sits
+       is to deal with it without leaving the calendar. */
+    if (info.event.extendedProps?.type === 'todo') {
+      const todoId = info.event.extendedProps.todoId
+      const todo   = todos.find(t => t.id === todoId)
+      if (!todo) return
+      /* `toggleTodo` takes the *instance* id, because a recurring task records each
+         occurrence in completedDates rather than one flag — so ticking off Thursday's
+         copy must not tick off the series. The chip's own id carries it. */
+      const instanceId = String(info.event.id).replace(/^cal-(todo|linked)-/, '') || todo.id
+      setTaskMenu({
+        todoId, instanceId,
+        title: todo.title,
+        done: isTodoDoneOn(todo, instanceId),
+        anchor: info.el?.getBoundingClientRect?.() ?? pointRect(info.jsEvent),
+      })
+      return
+    }
+    // Custom list due-date markers — navigate to that list
+    if (info.event.extendedProps?.type === 'custom-list-due' ||
+        info.event.extendedProps?.type === 'custom-list-item-due') {
+      const { listId } = info.event.extendedProps
+      setActiveNav('todos')
+      setActiveListId(listId)
+      return
+    }
+
+    // Everything else — own events, Google, and all three Canvas sources — opens the
+    // detail view. Each of those used to answer a tap with its own toast, which could
+    // only ever be a line of text; they all carry a location and often a description,
+    // and those deserve the same layout as an own event. Editing, hiding, recoloring
+    // and the Canvas deep link are all reachable from in there.
+    setDetailEvent(info.event)
+  }, [todos, isTodoDoneOn])
+
+  /* ── Merge todos + Google events → calendar events ── */
+  const visibleEvents = useMemo(
+    () => events
+      .filter(e => !eventPrefs[e.id]?.hidden)
+      .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
+    [events, eventPrefs],
+  )
+  const visibleGoogleEvents = useMemo(
+    () => googleEvents
+      .filter(e => !eventPrefs[e.id]?.hidden)
+      .map(e => eventPrefs[e.id]?.color ? { ...e, color: eventPrefs[e.id].color } : e),
+    [googleEvents, eventPrefs],
+  )
+  /** Hidden events (local + GCal) shown semi-transparently when the toggle is on */
+  const hiddenGcalEvents = useMemo(
+    () => {
+      if (!showHiddenGcal) return []
+      // A recolour survives being hidden, for local events as for Google ones, so
+      // "show hidden" brings an event back in the colour you gave it.
+      const hiddenLocal = events
+        .filter(e => eventPrefs[e.id]?.hidden)
+        .map(e => ({
+          ...e,
+          color: eventPrefs[e.id]?.color || e.color,
+          extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
+        }))
+      const hiddenGcal = googleEvents
+        .filter(e => eventPrefs[e.id]?.hidden)
+        .map(e => ({
+          ...e,
+          color: eventPrefs[e.id]?.color || e.color,
+          extendedProps: { ...(e.extendedProps ?? {}), isHiddenEvent: true },
+        }))
+      return [...hiddenLocal, ...hiddenGcal]
+    },
+    [events, googleEvents, eventPrefs, showHiddenGcal],
+  )
+  // Canvas calendar events filtered by prefs
+  const visibleCanvasCalEvents = useMemo(() =>
+    canvasCalEvents.filter(e =>
+      canvasCalPrefs.showOnCalendar &&
+      canvasCalPrefs.coursesEnabled[String(e.extendedProps?.courseId)] !== false,
+    ),
+  [canvasCalEvents, canvasCalPrefs])
+
+  // Canvas ICS feed events — shown when showOnCalendar is enabled (same toggle)
+  const visibleCanvasIcsEvents = useMemo(() =>
+    canvasCalPrefs.showOnCalendar ? canvasIcsEvents : [],
+  [canvasIcsEvents, canvasCalPrefs.showOnCalendar])
+
+  // Map from Canvas courseId → class schedule color (for linked courses)
+  const scheduleColorByCourseId = useMemo(() => {
+    const map = {}
+    for (const cls of canvasClasses) {
+      if (cls.canvasCourseId) map[cls.canvasCourseId] = cls.color
+    }
+    return map
+  }, [canvasClasses])
+
+  // Canvas assignments shown as all-day task markers (like todos) — not done, has due date
+  const canvasAssignmentTasks = useMemo(() =>
+    canvasCalPrefs.showOnCalendar
+      ? canvasAssignments
+          .filter(a =>
+            !a.done && !a.hidden && a.dueAt &&
+            canvasCalPrefs.coursesEnabled[String(a.courseId)] !== false,
+          )
+          .map(a => ({
+            id:    `cal-canvas-${a.id}`,
+            title: a.title,
+            start: a.dueAt.slice(0, 10),
+            allDay: true,
+            // Color priority: schedule-linked color > user-set course color > Canvas orange
+            color: scheduleColorByCourseId[a.courseId]
+              ?? canvasCalPrefs.courseColors?.[a.courseId]
+              ?? '#E8751A',
+            extendedProps: { type: 'canvas-assignment', canvasId: a.id, courseName: a.courseName, htmlUrl: a.htmlUrl },
+          }))
+      : [],
+  [canvasAssignments, canvasCalPrefs, scheduleColorByCourseId])
+
+  // Custom list due-date markers (all-day, "Tasks" row)
+  const customListCalEvents = useMemo(() => {
+    const markers = []
+    for (const list of customLists) {
+      const accent = list.color || '#3a6fa8'
+      const items  = visibleItems(list) // tombstoned items are off the list
+      const totalCount   = items.length
+      const checkedCount = items.filter(i => i.checked).length
+      const isComplete   = totalCount > 0 && checkedCount === totalCount
+
+      // List-level due date — only when list is not fully complete
+      if (list.dueDate && !isComplete) {
+        markers.push({
+          id:     `cal-list-${list.id}`,
+          title:  list.name,
+          start:  list.dueDate,
+          allDay: true,
+          color:  accent,
+          extendedProps: { type: 'custom-list-due', listId: list.id },
+        })
+      }
+
+      // Item-level due dates — only unchecked items
+      for (const item of items) {
+        if (!item.checked && item.dueDate) {
+          markers.push({
+            id:     `cal-listitem-${list.id}-${item.id}`,
+            title:  item.text,
+            start:  item.dueDate,
+            allDay: true,
+            color:  accent,
+            extendedProps: { type: 'custom-list-item-due', listId: list.id, itemId: item.id },
+          })
+        }
+      }
+    }
+    return markers
+  }, [customLists])
+
+  /* Completed tasks stay on the calendar instead of vanishing. A day you have
+     finished emptying out reads as "nothing was ever due here", which is the
+     opposite of the truth and makes the calendar a poor record of the term. They
+     render struck through and faded, so "done" is still obvious at a glance —
+     see `done` in extendedProps, which WeeklyCalendar styles on. */
+  const todoCalendarItems = useMemo(() => {
+    // Lookups by id, built once, rather than a linear search per task. First match
+    // wins, as `find` did.
+    const colorByCategory = new Map()
+    for (const c of todoCategories) if (!colorByCategory.has(c.id)) colorByCategory.set(c.id, c.color)
+    const eventById = new Map()
+    for (const e of visibleEvents) if (!eventById.has(e.id)) eventById.set(e.id, e)
+
+    return todos.flatMap(t => {
+      const todoCatColor = colorByCategory.get(t.category) || '#94a3b8'
+      const instances = expandRecurringTodo(t)
+      const done = Boolean(t.completed)
+      const calItems = instances.map(inst => ({
+        id: `cal-todo-${inst.id}`, title: inst.title, start: inst.dueDate, allDay: true,
+        color: todoCatColor,
+        extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
+      }))
+      if (t.linkedEventId && !t.recurrence) {
+        const ev = eventById.get(t.linkedEventId)
+        if (ev) calItems.push({
+          id: `cal-linked-${t.id}`, title: `↳ ${t.title}`, start: (ev.start || '').slice(0, 10),
+          allDay: true, color: todoCatColor,
+          extendedProps: { type: 'todo', todoId: t.id, priority: t.priority, done },
+        })
+      }
+      return calItems
+    })
+  }, [todos, todoCategories, visibleEvents])
+
+  /* The important flag is stamped on at the end rather than inside each of the
+     source-specific memos above: it is keyed by event id in eventPrefs, applies
+     to every source alike, and doing it once here means a new source picks it up
+     without remembering to.
+
+     Memoised, and that matters: this is the array FullCalendar is handed, and it
+     used to be rebuilt — every recurring task re-expanded, every event copied — on
+     each render of the planner, which until recently meant once a second. */
+  const allCalendarEvents = useMemo(() => [
+    ...visibleEvents,
+    ...visibleGoogleEvents,
+    ...hiddenGcalEvents,
+    ...canvasClassEvents,
+    ...visibleCanvasCalEvents,
+    ...visibleCanvasIcsEvents,
+    ...canvasAssignmentTasks,
+    ...customListCalEvents,
+    ...todoCalendarItems,
+  ].map(e => (eventPrefs[e.id]?.important
+    ? { ...e, extendedProps: { ...(e.extendedProps ?? {}), important: true } }
+    : e)), [
+    visibleEvents, visibleGoogleEvents, hiddenGcalEvents, canvasClassEvents,
+    visibleCanvasCalEvents, visibleCanvasIcsEvents, canvasAssignmentTasks,
+    customListCalEvents, todoCalendarItems, eventPrefs,
+  ])
+
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const now = new Date()
+
+    // Human-friendly due-date label for tasks due within 2 weeks
+    function smartDueLabel(dateStr) {
+      if (!dateStr) return 'No due date'
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      const due = new Date(dateStr + 'T00:00:00')
+      const diffDays = Math.round((due - today) / 86_400_000)
+      if (diffDays < 0) return `Due ${dateStr}`
+      if (diffDays === 0) return 'Due today'
+      if (diffDays === 1) return 'Due tomorrow'
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+      const dayName = dayNames[due.getDay()]
+      const mm = String(due.getMonth() + 1).padStart(2, '0')
+      const dd = String(due.getDate()).padStart(2, '0')
+      const dateFmt = `${mm}/${dd}`
+      if (diffDays <= 6) return `Due this ${dayName} (${dateFmt})`
+      if (diffDays <= 13) return `Due next ${dayName} (${dateFmt})`
+      return `Due ${dateStr}`
+    }
+    const matchesText = (value) => String(value || '').toLowerCase().includes(query)
+
+    const shouldIncludeStatus = (item, type) => {
+      if (searchStatus === 'all') return true
+      if (type === 'todo') {
+        if (searchStatus === 'done') return item.completed === true
+        if (searchStatus === 'upcoming') return item.dueDate && new Date(item.dueDate + 'T23:59:59') >= now
+        return true
+      }
+      if (type === 'canvas') {
+        if (searchStatus === 'done') return item.done || item.submissionState === 'graded' || item.submissionState === 'submitted'
+        if (searchStatus === 'upcoming') return !item.done && (!item.dueAt || new Date(item.dueAt) >= now)
+        return true
+      }
+      if (type === 'event' || type === 'google') {
+        if (searchStatus === 'done') return false
+        if (searchStatus === 'upcoming') return item.start && new Date(item.start) >= now
+        return true
+      }
+      return true
+    }
+
+    const result = {
+      events: [],
+      googleEvents: [],
+      canvasAssignments: [],
+      todos: [],
+      notes: [],
+      listItems: [],
+    }
+
+    // Unchecked items across every custom list. Like notes, these ignore the
+    // upcoming/done status filter — a grocery item has no due date, so every
+    // status value would exclude it.
+    const listItemResults = (query) => customLists.flatMap(list =>
+      visibleItems(list)
+        .filter(item => !item.checked && (!query || matchesText(item.text) || matchesText(item.note)))
+        .map(item => ({
+          kind: 'listItem',
+          label: item.text,
+          subtitle: list.name,
+          source: 'List',
+          item: { ...item, listId: list.id },
+          tagLabel: list.name,
+          tagColor: list.color || 'var(--blue)',
+        }))
+    )
+
+    // Notes deliberately ignore the upcoming/done status filter — they have no
+    // completion state or due date, so every status value would exclude them.
+    const toNoteResult = note => ({
+      kind: 'note',
+      label: noteDisplayTitle(note),
+      subtitle: notePreview(note, 70) || 'Empty note',
+      source: 'Note',
+      item: note,
+      tagLabel: note.tags?.[0] || 'Note',
+      tagColor: note.color || 'var(--blue)',
+    })
+
+    const categoryColor = (categoryId) => eventCategories.find(c => c.id === categoryId)?.color || 'var(--blue)'
+    const categoryLabel = (categoryId) => eventCategories.find(c => c.id === categoryId)?.label || categoryId || 'Event'
+
+    const eventFilter = (e) => {
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.notes || e.description || ''
+      const category = e.extendedProps?.category || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category)) && shouldIncludeStatus(e, 'event')
+    }
+
+    const googleFilter = (e) => {
+      // Google events use `title` (set by API route), not `summary`
+      const title = e.title || e.summary || ''
+      const notes = e.extendedProps?.description || e.description || ''
+      return (matchesText(title) || matchesText(notes)) && shouldIncludeStatus(e, 'google')
+    }
+
+    const canvasFilter = (a) => {
+      const title = a.title || ''
+      const course = a.courseName || ''
+      const status = a.submissionState || ''
+      return (matchesText(title) || matchesText(course) || matchesText(status) || matchesText(a.htmlUrl)) && shouldIncludeStatus(a, 'canvas')
+    }
+
+    const todoFilter = (t) => {
+      const title = t.title || ''
+      const notes = t.notes || ''
+      const category = todoCategories.find(c => c.id === t.category)?.label || t.category || ''
+      const linked = events.find(e => e.id === t.linkedEventId)?.title || ''
+      return (matchesText(title) || matchesText(notes) || matchesText(category) || matchesText(linked)) && shouldIncludeStatus(t, 'todo')
+    }
+
+    if (!query) {
+      const weekFromNow = new Date(now.getTime() + 7 * 24 * 3600_000)
+      if (searchScope === 'all' || searchScope === 'events') {
+        result.events = events
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 5)
+          .map(event => ({
+            kind: 'event',
+            label: event.title || event.summary || 'Untitled event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Event',
+            item: event,
+            tagLabel: categoryLabel(event.extendedProps?.category),
+            tagColor: categoryColor(event.extendedProps?.category),
+          }))
+        result.googleEvents = googleEvents
+          .filter(e => { const s = e.start ? new Date(e.start) : null; return s && s >= now && s <= weekFromNow && !eventPrefs[e.id]?.hidden })
+          .sort((a, b) => new Date(a.start) - new Date(b.start))
+          .slice(0, 5)
+          .map(event => ({
+            kind: 'google',
+            label: event.title || event.summary || 'Untitled event',
+            subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+            source: 'Google Calendar',
+            item: event,
+            tagLabel: 'Google',
+            tagColor: eventPrefs[event.id]?.color || event.color || event.backgroundColor || '#4285f4',
+          }))
+      }
+      if (searchScope === 'all' || searchScope === 'tasks') {
+        result.todos = todos.filter(todoFilter).map(todo => ({
+          kind: 'todo',
+          label: todo.title,
+          subtitle: smartDueLabel(todo.dueDate),
+          source: 'Task',
+          item: todo,
+          tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+          tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+        }))
+      }
+      if (searchScope === 'all' || searchScope === 'canvas') {
+        const nowIso = now.toISOString()
+        result.canvasAssignments = canvasAssignments
+          .filter(a => !a.done && !a.hidden && a.dueAt && a.dueAt >= nowIso)
+          .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+          .slice(0, 5)
+          .map(a => ({
+            kind: 'canvas',
+            label: a.title,
+            subtitle: a.courseName || 'Canvas assignment',
+            source: 'Canvas',
+            item: a,
+            tagLabel: a.courseName || 'Canvas',
+            tagColor: '#E8751A',
+          }))
+      }
+      if (searchScope === 'all' || searchScope === 'notes') {
+        result.notes = sortNotes(notes.filter(n => !n.trashedAt)).slice(0, 5).map(toNoteResult)
+      }
+      if (searchScope === 'all' || searchScope === 'lists') {
+        result.listItems = listItemResults('').slice(0, 5)
+      }
+      return result
+    }
+
+    if (searchScope === 'all' || searchScope === 'events') {
+      result.events = events
+        .filter(eventFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'event',
+          label: event.title || event.summary || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Event',
+          item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
+          tagLabel: categoryLabel(event.extendedProps?.category),
+          tagColor: categoryColor(event.extendedProps?.category),
+        }))
+      result.googleEvents = googleEvents
+        .filter(googleFilter)
+        .filter(e => !e.start || new Date(e.start) >= now)
+        .sort((a, b) => new Date(a.start) - new Date(b.start))
+        .slice(0, 15)
+        .map(event => ({
+          kind: 'google',
+          label: event.summary || event.title || 'Untitled event',
+          subtitle: event.start ? new Date(event.start).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'No date',
+          source: 'Google Calendar',
+          item: event,
+          hidden: !!eventPrefs[event.id]?.hidden,
+          tagLabel: 'Google',
+          tagColor: event.color || event.backgroundColor || '#4285f4',
+        }))
+    }
+    if (searchScope === 'all' || searchScope === 'canvas') {
+      result.canvasAssignments = canvasAssignments.filter(canvasFilter).map(assignment => ({
+        kind: 'canvas',
+        label: assignment.title,
+        subtitle: assignment.courseName || 'Canvas assignment',
+        source: 'Canvas',
+        item: assignment,
+        tagLabel: assignment.courseName || 'Canvas',
+        tagColor: assignment.color || '#E8751A',
+      }))
+    }
+    if (searchScope === 'all' || searchScope === 'tasks') {
+      result.todos = todos.filter(todoFilter).map(todo => ({
+        kind: 'todo',
+        label: todo.title,
+        subtitle: smartDueLabel(todo.dueDate),
+        source: 'Task',
+        item: todo,
+        tagLabel: todoCategories.find(c => c.id === todo.category)?.label || todo.category || 'Task',
+        tagColor: todoCategories.find(c => c.id === todo.category)?.color || '#10b981',
+      }))
+    }
+    if (searchScope === 'all' || searchScope === 'notes') {
+      result.notes = sortNotes(
+        notes.filter(n => !n.trashedAt && noteMatches(n, searchQuery))
+      ).slice(0, 15).map(toNoteResult)
+    }
+    if (searchScope === 'all' || searchScope === 'lists') {
+      result.listItems = listItemResults(query).slice(0, 15)
+    }
+    return result
+  }, [searchQuery, searchScope, searchStatus, events, googleEvents, canvasAssignments, todos, todoCategories, eventCategories, eventPrefs, notes, customLists])
+
+  const openSearchResult = useCallback((result) => {
+    closeSearchPopup()
+    if (result.kind === 'event' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      const evDate = result.item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      setDetailEvent(result.item)
+      return
+    }
+    if (result.kind === 'google' && result.item) {
+      setActiveNav('calendar')
+      setSearchHighlightId(result.item.id)
+      const evDate = (result.item.start?.dateTime || result.item.start?.date || result.item.start)?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      return
+    }
+    if (result.kind === 'canvas') {
+      setActiveNav('classes')
+      return
+    }
+    if (result.kind === 'todo' && result.item) {
+      setActiveNav('todos')
+      setEditingTodo(result.item)
+      setShowTodoModal(true)
+      return
+    }
+    if (result.kind === 'listItem' && result.item) {
+      setActiveNav('todos')
+      setActiveListId(result.item.listId)
+      return
+    }
+    if (result.kind === 'note' && result.item) {
+      setActiveNav('notes')
+      setActiveNoteId(result.item.id)
+      return
+    }
+  }, [closeSearchPopup])
+
+  const navigateToItem = useCallback((item, type) => {
+    if (type === 'event') {
+      setActiveNav('calendar')
+      setSearchHighlightId(item.id)
+      const evDate = item.start?.slice(0, 10)
+      if (evDate) setCalendarTargetDate(evDate)
+      setDetailEvent(item)
+    } else if (type === 'task') {
+      setActiveNav('todos')
+      setEditingTodo(item)
+      setShowTodoModal(true)
+    }
+  }, [])
+
+  // Everything with a time the sidebar's "next up" card can announce: own events,
+  // Google events and class meetings. See NextUpCard.
+  const upNextEvents = useMemo(
+    () => [...visibleEvents, ...visibleGoogleEvents, ...canvasClassEvents],
+    [visibleEvents, visibleGoogleEvents, canvasClassEvents],
+  )
+
+  function weatherIcon(code) {
+    if (code === 0)         return '☀️'
+    if (code <= 3)          return '⛅'
+    if (code <= 48)         return '🌫️'
+    if (code <= 67)         return '🌧️'
+    if (code <= 77)         return '🌨️'
+    if (code <= 82)         return '🌦️'
+    return '⛈️'
+  }
+
+  if (!mounted) return null
+
+  const canvasConnected = canvasAssignments.length > 0
+  const NAV_ITEMS = [
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={22}/> },
+    { id: 'agenda',   label: 'Agenda',   icon: <AlignLeft size={22}/> },
+    { id: 'todos',    label: 'To-Do',    icon: <ListTodo size={22}/> },
+    { id: 'notes',    label: 'Notes',    icon: <NotebookPen size={22}/> },
+    { id: 'search',   label: 'Search',   icon: <Search size={22}/> },
+    /* One tab for classes, whether or not Canvas is connected. There used to be two —
+       "Courses" (Canvas assignments, hidden without a token) beside "My Classes"
+       (the schedule entries) — which asked the reader to work out which of two
+       similarly-named lists held the thing they wanted. The panel gains the Canvas
+       chrome when there is a Canvas to talk to; that is the real difference.
+
+       `shortLabel` is what the mobile bar uses: every tab there is `flex: 1`, so on a
+       narrow phone each gets around 45px and "My Classes" would wrap onto its icon. */
+    { id: 'classes',  label: 'My Classes', shortLabel: 'Classes', icon: <GraduationCap size={22}/> },
+    { id: 'corvus',   label: 'Corvus',   icon: <CrowIcon size={21} color="currentColor"/> },
+    // Settings tab — mobile only (sidebar handles settings on desktop)
+    ...(isMobile ? [{ id: 'settings', label: 'More', icon: <Settings size={22}/> }] : []),
+  ]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100dvh', overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }}>
+
+      {/* ── Sidebar (hidden on mobile — replaced by bottom tabs) ── */}
+      {!isMobile && <aside style={{ width: isTablet ? 168 : 220, background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: 'var(--shadow-lg)', position: 'relative', overflow: 'hidden', transition: 'width 0.25s cubic-bezier(0.16,1,0.3,1)' }}>
+        {/* Decorative blobs */}
+        <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'radial-gradient(circle, rgba(147,197,253,.12), transparent)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', bottom: 80, left: -30, width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle, rgba(96,165,250,.08), transparent)', pointerEvents: 'none' }} />
+
+        {/* Logo */}
+        <div style={{ padding: '20px 16px 16px', position: 'relative', display: 'flex', justifyContent: 'flex-start' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CrowIcon size={isTablet ? 22 : 28} />
+            <span style={{ fontSize: isTablet ? '0.72rem' : '0.78rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              <span style={{ color: '#fff' }}>luminae</span><span style={{ color: '#93c5fd', marginLeft: 4 }}>Vigila</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Nav */}
+        <nav style={{ padding: '0 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {NAV_ITEMS.filter(item => item.id !== 'search').map(item => {
+            const isActive = activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => setActiveNav(item.id)}
+                      style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+                      gap: 10, padding: '9px 12px',
+                      borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: isTablet ? '0.78rem' : '0.82rem', fontWeight: 600, width: '100%', textAlign: 'left', transition: 'all .13s',
+                      background: isActive ? 'rgba(255,255,255,.12)' : 'transparent',
+                      color: isActive ? '#fff' : 'rgba(147,197,253,.6)',
+                    }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,.06)' }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}>
+              {item.icon}
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.soon && <span style={{ fontSize: '0.62rem', fontWeight: 700, background: 'rgba(147,197,253,.2)', color: '#93c5fd', padding: '2px 6px', borderRadius: 999 }}>soon</span>}
+              {isActive && <ChevronRight size={12} style={{ opacity: 0.4 }} />}
+            </button>
+            )
+          })}
+        </nav>
+
+        {/* Live info panel */}
+        <div style={{ margin: '0 10px 10px', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
+          <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} />
+
+          {weather && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: '1rem', lineHeight: 1 }}>{weatherIcon(weather.code)}</span>
+                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>{weather.temp}°C</span>
+              </div>
+              {weather.rainMsg && (
+                <div style={{ marginTop: 4, fontSize: '0.65rem', fontWeight: 600, color: '#93c5fd', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  🌧 {weather.rainMsg}
+                </div>
+              )}
+            </div>
+          )}
+
+          <NextUpCard events={upNextEvents} />
+        </div>
+
+        {/* ── Mini month navigator (desktop/tablet only) ── */}
+        {!isMobile && (
+          <div style={{ padding: '0 10px 10px', flexShrink: 0 }}>
+            <MiniMonthCalendar
+              currentDate={now}
+              highlightWeekOf={now}
+              onDayClick={(dateStr) => {
+                setActiveNav('calendar')
+                setCalendarTargetDate(dateStr)
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Google Calendar inline section ── */}
+        {!demo && (
+          <SidebarGoogleSection
+            onOpenSettings={() => setShowGoogleSettings(true)}
+            onSync={syncGoogleCalendar}
+            syncing={gcSyncing}
+          />
+        )}
+
+        {/* ── Canvas inline section ── */}
+        {!demo && (
+          <SidebarCanvasSection
+            onOpenSettings={() => setShowCanvasSettings(true)}
+            onSync={syncCanvas}
+            syncing={cvSyncing}
+            canvasCalPrefs={canvasCalPrefs}
+            onToggleCanvasOnCalendar={toggleCanvasOnCalendar}
+            onToggleCourseOnCalendar={toggleCourseOnCalendar}
+          />
+        )}
+
+        {/* ── Class Schedule inline section (independent of Canvas) ── */}
+        <SidebarScheduleSection
+          canvasClasses={canvasClasses}
+          onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+          onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+        />
+
+        {/* Bottom actions */}
+        <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Sign-in / user display (or local demo pill) */}
+          {demo ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 10, background: 'rgba(147,197,253,.10)', border: '1px solid rgba(147,197,253,.22)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#93c5fd', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Demo · local only
+                </span>
+                {onResetDemo && (
+                  <button
+                    type="button"
+                    onClick={onResetDemo}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, color: 'rgba(255,255,255,.8)' }}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <Link
+                href="/"
+                style={{ fontSize: '0.72rem', fontWeight: 600, color: 'rgba(255,255,255,.85)', textDecoration: 'none' }}
+              >
+                Open full planner →
+              </Link>
+            </div>
+          ) : currentUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, background: 'rgba(255,255,255,.05)' }}>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Signed in as</div>
+                <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,.8)', fontWeight: 600, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
+              </div>
+              <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                      style={{ background: 'none', border: 'none', padding: 4, cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s', flexShrink: 0 }}
+                      onMouseEnter={e => { if (!syncingCloud) e.currentTarget.style.color = '#93c5fd' }}
+                      onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
+                <RefreshCw size={14} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+              </button>
+              {/* The worker's saved pages were rendered signed in; drop them on the way
+                  out (see public/sw.js). Fire-and-forget, so it never delays the POST. */}
+              <form action="/api/auth/logout" method="POST" style={{ flexShrink: 0 }}
+                    onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
+                <button type="submit" title="Sign out"
+                        style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'rgba(147,197,253,.4)', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color .13s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#fca5a5'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'rgba(147,197,253,.4)'}>
+                  <LogOut size={14} />
+                </button>
+              </form>
+            </div>
+          ) : (
+            <a href="/login"
+               style={{
+                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                 padding: '8px 12px', borderRadius: 10, textDecoration: 'none',
+                 border: '1px solid rgba(255,255,255,.12)', background: 'transparent',
+                 color: 'rgba(147,197,253,.6)', fontFamily: 'inherit',
+                 fontSize: '0.78rem', fontWeight: 600, transition: 'all .13s',
+               }}
+               onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.28)'; e.currentTarget.style.color = '#fff' }}
+               onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.12)'; e.currentTarget.style.color = 'rgba(147,197,253,.6)' }}
+            >
+              <GoogleLogo size={13} /> Sign in to sync
+            </a>
+          )}
+
+          {/* + New button with Event / Task popup */}
+          <div ref={addMenuRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowAddMenu(v => !v)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: showAddMenu ? 'var(--blue-hover)' : 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', transition: 'filter .15s' }}
+              onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+              onMouseLeave={e => e.currentTarget.style.filter = 'none'}>
+              <Plus size={14}/> New
+            </button>
+            {showAddMenu && (
+              <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--shadow-modal)', animation: 'modal-in .16s cubic-bezier(.22,1,.36,1)', zIndex: 300 }}>
+                <button
+                  onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <CalendarDays size={13}/> Event
+                </button>
+                <div style={{ height: 1, background: 'var(--border)' }}/>
+                <button
+                  onClick={() => { setShowTodoModal(true); setShowAddMenu(false) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, transition: 'background .12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <ListTodo size={13}/> Task
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Settings menu — dark mode, accent color, show tour */}
+          <SettingsMenu
+            theme={theme}
+            onSetTheme={setThemeSmooth}
+            onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+            signedIn={!!currentUser}
+            variant="sidebar"
+          />
+        </div>
+      </aside>}
+
+      {/* ── Main ── */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: isTablet && activeNav === 'calendar' ? 'column' : 'row' }}>
+        {activeNav === 'calendar' && (
+          <>
+            <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: isMobile ? '10px 6px 6px' : 20, position: 'relative' }}>
+              {isMobile && (
+                <button
+                  onClick={() => setShowGoogleSettings(true)}
+                  title="Google Calendar settings"
+                  style={{ position: 'absolute', bottom: hiddenEventCount > 0 ? 58 : 18, left: 18, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, boxShadow: 'var(--shadow)', color: 'var(--text-2)', fontSize: '0.72rem', fontWeight: 600, transition: 'bottom .2s' }}>
+                  <GoogleLogo size={14} />
+                  {googleEvents.length > 0 && <span>{googleEvents.length}</span>}
+                </button>
+              )}
+              {(hiddenEventCount > 0 || showHiddenGcal) && (
+                <button
+                  onClick={showHiddenEvents}
+                  title={showHiddenGcal ? 'Hide hidden events' : 'Show hidden events semi-transparently'}
+                  style={{
+                    position: 'absolute',
+                    bottom: 18,
+                    left: 18,
+                    zIndex: 10,
+                    background: showHiddenGcal ? 'var(--blue-bg)' : 'var(--surface)',
+                    border: `1px solid ${showHiddenGcal ? 'var(--blue)' : 'var(--border)'}`,
+                    borderRadius: 8,
+                    padding: '6px 10px',
+                    cursor: 'pointer',
+                    boxShadow: 'var(--shadow)',
+                    color: 'var(--blue-text)',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    transition: 'background .15s, border-color .15s',
+                  }}>
+                  {showHiddenGcal ? `Hide hidden (${hiddenEventCount})` : `Show hidden (${hiddenEventCount})`}
+                </button>
+              )}
+              <ErrorBoundary>
+                <WeeklyCalendar events={allCalendarEvents} todos={todos}
+                                onDateClick={handleDateClick} onEventClick={handleEventClick}
+                                onSelectRange={handleSelectRange}
+                                onViewChange={handleViewChange}
+                                isMobile={isMobile}
+                                highlightEventId={searchHighlightId}
+                                targetDate={calendarTargetDate}
+                                onEventDrop={handleEventDrop}
+                                onEventResize={handleEventResize}
+                                onRecolorEvent={handleRecolorEvent}
+                                arrowNavEnabled={!anyModalOpen && !dialogOpen}
+                                colorSwatches={eventCategories.map(c => c.color)} />
+              </ErrorBoundary>
+            </main>
+
+            {/* Resize handle — desktop only */}
+            {!isTablet && !isMobile && (
+              <div
+                style={{ width: 4, cursor: 'col-resize', flexShrink: 0, background: 'transparent', transition: 'background .15s', zIndex: 10 }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--blue)'}
+                onMouseLeave={e => { if (!resizingRef.current) e.currentTarget.style.background = 'transparent' }}
+                onMouseDown={e => {
+                  resizingRef.current = true
+                  startXRef.current   = e.clientX
+                  startWRef.current   = todoPanelWidth
+                  const onMove = mv => {
+                    const delta = startXRef.current - mv.clientX
+                    setTodoPanelWidth(Math.max(220, Math.min(600, startWRef.current + delta)))
+                  }
+                  const onUp = () => {
+                    resizingRef.current = false
+                    window.removeEventListener('mousemove', onMove)
+                    window.removeEventListener('mouseup', onUp)
+                  }
+                  window.addEventListener('mousemove', onMove)
+                  window.addEventListener('mouseup', onUp)
+                }}
+              />
+            )}
+
+            {/* Todo panel — side on desktop, bottom strip on tablet, hidden on mobile (own tab) */}
+            {!isMobile && (
+              <aside style={{
+                width: isTablet ? '100%' : todoPanelWidth,
+                height: isTablet ? 240 : 'auto',
+                borderLeft: isTablet ? 'none' : '1px solid var(--border)',
+                borderTop: isTablet ? '1px solid var(--border)' : 'none',
+                background: 'var(--surface)', overflowY: isTablet ? 'auto' : 'hidden', flexShrink: 0,
+                transition: 'width 0.35s cubic-bezier(0.16,1,0.3,1)',
+                display: 'flex', flexDirection: 'column',
+              }}>
+                <ErrorBoundary>
+                  <CustomListPanel
+                    lists={customLists}
+                    activeListId={activeListId}
+                    onSelectList={setActiveListId}
+                    onCreateList={() => setShowNewListModal(true)}
+                    onUpdateList={updateCustomList}
+                    onDeleteList={deleteCustomList}
+                    fullPage={false}
+                    isMobile={isMobile}
+                  >
+                    <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                               onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
+                               onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                               onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                               onAddSubtask={addSubtaskToTodo} onClearCompleted={clearCompletedTodos}
+                               onReorder={reorderTodos} isMobile={isMobile}
+                               canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                               onToggleCanvas={toggleCanvasAssignment}
+                               onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                               onHideCanvas={hideCanvasAssignment} />
+                  </CustomListPanel>
+                </ErrorBoundary>
+              </aside>
+            )}
+          </>
+        )}
+
+
+        {activeNav === 'todos' && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <ErrorBoundary>
+              <CustomListPanel
+                lists={customLists}
+                activeListId={activeListId}
+                onSelectList={setActiveListId}
+                onCreateList={() => setShowNewListModal(true)}
+                onUpdateList={updateCustomList}
+                onDeleteList={deleteCustomList}
+                fullPage
+                isMobile={isMobile}
+              >
+                <TodoPanel todos={todos} events={[...events, ...canvasClassEvents]} todoCategories={todoCategories}
+                           onToggle={toggleTodo} onDelete={deleteTodo} onAddClick={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId ?? null); setShowTodoModal(true) }}
+                           onEditClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                           onCategoriesChange={setTodoCategories} onToggleSubtask={toggleSubtask}
+                               onAddSubtask={addSubtaskToTodo} onClearCompleted={clearCompletedTodos}
+                           onReorder={reorderTodos} fullPage isMobile={isMobile}
+                           canvasAssignments={canvasAssignments} canvasClasses={canvasClasses}
+                           onToggleCanvas={toggleCanvasAssignment}
+                           onEditCanvas={a => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                           onHideCanvas={hideCanvasAssignment} />
+              </CustomListPanel>
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {activeNav === 'notes' && (
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--surface)' }}>
+            <ErrorBoundary>
+              <NotesPanel
+                notes={notes}
+                activeNoteId={activeNoteId}
+                onSelect={setActiveNoteId}
+                onCreate={() => createNote()}
+                onConvert={convertNote}
+                onUpdate={updateNote}
+                onTrash={trashNote}
+                onRestore={restoreNote}
+                onPurge={purgeNote}
+                linkOptions={noteLinkOptions}
+                isMobile={isMobile}
+                pushToast={pushToast}
+                signedIn={!!currentUser}
+              />
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {activeNav === 'agenda' && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {/* Header */}
+            <div style={{
+              padding: isMobile ? '14px 16px 10px' : '18px 20px 12px',
+              borderBottom: '1px solid var(--border)',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <AlignLeft size={17} style={{ color: 'var(--blue)' }} />
+                  Agenda
+                </div>
+                <div style={{ fontSize: '0.74rem', color: 'var(--text-3)', marginTop: 2 }}>
+                  Next 14 days — events, tasks, and Canvas assignments
+                </div>
+              </div>
+            </div>
+            <ErrorBoundary>
+              <AgendaView
+                events={visibleEvents}
+                todos={todos}
+                canvasAssignments={canvasAssignments}
+                canvasClassEvents={canvasClassEvents}
+                todoCategories={todoCategories}
+                eventCategories={eventCategories}
+                customLists={customLists}
+                onEventClick={(ev) => setDetailEvent(ev)}
+                onTodoClick={(todo) => { setEditingTodo(todo); setShowTodoModal(true) }}
+                onCanvasClick={(a) => { setEditingCanvas(a); setCanvasTodoModal(true) }}
+                onCustomListClick={(listId) => { setActiveNav('todos'); setActiveListId(listId) }}
+                isMobile={isMobile}
+              />
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {activeNav === 'classes' && (
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+            <ErrorBoundary>
+              {/* Only skeleton the *first* Canvas fetch. On a re-sync the classes are
+                  already on screen, and replacing them with placeholders would be a
+                  downgrade rather than a loading state. */}
+              {cvSyncing && canvasAssignments.length === 0 && canvasClasses.length === 0 ? (
+                <ListSkeleton rows={7} label="Loading classes" padding="20px 28px" />
+              ) : (
+              <ClassesPanel
+                canvasClasses={canvasClasses}
+                todos={todos}
+                canvasClassEvents={canvasClassEvents}
+                canvasAssignments={canvasAssignments}
+                courseColors={canvasCalPrefs.courseColors}
+                notes={notes}
+                studySessions={studySessions}
+                canvasConnected={canvasConnected}
+                syncing={cvSyncing}
+                onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+                onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+                onSaveClass={saveCanvasClass}
+                onAdoptCourse={adoptCanvasCourse}
+                onTodoClick={todo => { setEditingTodo(todo); setShowTodoModal(true) }}
+                onToggleTodo={toggleTodo}
+                onToggleSubtask={toggleSubtask}
+                onDeleteTodo={deleteTodo}
+                arrowNavEnabled={!anyModalOpen && !dialogOpen}
+                onAddTask={categoryId => { setEditingTodo(null); setInitialTodoCategory(categoryId); setShowTodoModal(true) }}
+                onRescheduleTask={(todo, dueDate) => rescheduleTodo(todo.id, dueDate)}
+                onEventClick={ev => setDetailEvent(ev)}
+                onOpenNote={openNoteById}
+                onCreateLinkedNote={createLinkedNote}
+                onToggleAssignment={toggleCanvasAssignment}
+                onUpdateAssignmentNotes={updateCanvasNotes}
+                onTagSession={updateStudySession}
+                onSyncCanvas={syncCanvas}
+                onOpenCanvasSettings={() => setShowCanvasSettings(true)}
+                isMobile={isMobile}
+              />
+              )}
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {activeNav === 'corvus' && (
+          <main style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            <ErrorBoundary>
+            <Corvus
+              events={events}
+              canvasClassEvents={canvasClassEvents}
+              todos={todos}
+              canvasAssignments={canvasAssignments}
+              todoCategories={todoCategoryOptions}
+              eventCategories={eventCategories}
+              onAddTodo={addTodo}
+              onSaveEvent={saveEvent}
+              onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
+              nudgeCluster={nudgeCluster}
+              onNudgeDismiss={dismissNudge}
+            />
+            </ErrorBoundary>
+          </main>
+        )}
+
+        {/* ── Mobile Search tab ── Full-screen search instead of a popup */}
+        {activeNav === 'search' && isMobile && (
+          <main className="dot-grid" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search</div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 2 }}>Upcoming shown by default</div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px' }}>
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
+            </div>
+          </main>
+        )}
+
+        {/* ── Mobile Settings tab ── Shows all the sidebar features on small screens */}
+        {activeNav === 'settings' && isMobile && (
+          <main className="lv-mobile-settings" style={{ flex: 1, overflowY: 'auto', background: 'var(--sidebar)', display: 'flex', flexDirection: 'column', position: 'relative', minHeight: 0 }}>
+            {/* Decorative blobs (match sidebar) */}
+            <div style={{ position: 'absolute', top: -40, right: -40, width: 160, height: 160, borderRadius: '50%', background: 'radial-gradient(circle, rgba(147,197,253,.1), transparent)', pointerEvents: 'none' }} />
+
+            <div style={{ padding: '20px 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <CrowIcon size={24} />
+              <span style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                <span style={{ color: '#fff' }}>luminae</span><span style={{ color: '#93c5fd', marginLeft: 4 }}>Vigila</span>
+              </span>
+            </div>
+
+            {/* Live info */}
+            <div style={{ margin: '12px 12px 0', padding: '12px 14px', borderRadius: 14, background: 'rgba(0,0,0,0.18)', flexShrink: 0 }}>
+              <LiveClock militaryTime={militaryTime} onToggle={() => setMilitaryTime(v => !v)} fontSize="1.1rem" />
+              {weather && (
+                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '1rem' }}>{weatherIcon(weather.code)}</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>{weather.temp}°C</span>
+                  {weather.rainMsg && <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#93c5fd' }}>{weather.rainMsg}</span>}
+                </div>
+              )}
+            </div>
+
+            {/* Account */}
+            <div style={{ margin: '10px 12px 0', padding: '10px 12px', borderRadius: 12, background: 'rgba(0,0,0,0.15)' }}>
+              {currentUser ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signed in as</div>
+                    <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,.85)', fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.email}</div>
+                  </div>
+                  <button onClick={pullCloudSync} title="Pull latest from cloud" disabled={syncingCloud}
+                          style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 10px', cursor: syncingCloud ? 'default' : 'pointer', color: 'rgba(147,197,253,.7)', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <RefreshCw size={13} style={{ animation: syncingCloud ? 'gc-spin 1s linear infinite' : 'none' }} />
+                  </button>
+                  <form action="/api/auth/logout" method="POST"
+                        onSubmit={() => navigator.serviceWorker?.controller?.postMessage({ type: 'clear-shell' })}>
+                    <button type="submit" title="Sign out"
+                            style={{ background: 'rgba(147,197,253,.12)', border: '1px solid rgba(147,197,253,.2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'rgba(147,197,253,.7)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <LogOut size={12} /> Sign out
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <a href="/login"
+                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 12px', borderRadius: 10, textDecoration: 'none', border: '1px solid rgba(255,255,255,.15)', background: 'transparent', color: 'rgba(147,197,253,.7)', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600 }}>
+                  <GoogleLogo size={14} /> Sign in to sync
+                </a>
+              )}
+            </div>
+
+            <BuildInfo lastSyncedAt={lastSyncedAt} signedIn={!!currentUser} />
+
+            {/* Google Calendar */}
+            <SidebarGoogleSection
+              onOpenSettings={() => setShowGoogleSettings(true)}
+              onSync={syncGoogleCalendar}
+              syncing={gcSyncing}
+            />
+
+            {/* Canvas */}
+            <SidebarCanvasSection
+              onOpenSettings={() => setShowCanvasSettings(true)}
+              onSync={syncCanvas}
+              syncing={cvSyncing}
+              canvasCalPrefs={canvasCalPrefs}
+              onToggleCanvasOnCalendar={toggleCanvasOnCalendar}
+              onToggleCourseOnCalendar={toggleCourseOnCalendar}
+            />
+
+            {/* Class Schedule */}
+            <SidebarScheduleSection
+              canvasClasses={canvasClasses}
+              onAddClass={() => { setEditingClass(null); setShowClassModal(true) }}
+              onEditClass={cls => { setEditingClass(cls); setShowClassModal(true) }}
+            />
+
+            {/* Quick actions + theme */}
+            <div style={{ padding: '10px 12px', marginTop: 16, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => { setActiveNav('calendar'); setEventModal({ open: true, event: null, date: null }) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'var(--blue)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer' }}>
+                  <Plus size={14}/> Event
+                </button>
+                <button onClick={() => { setActiveNav('todos'); setShowTodoModal(true) }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(147,197,253,.3)', background: 'rgba(147,197,253,.1)', color: 'rgba(147,197,253,.85)', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer' }}>
+                  <Plus size={14}/> Task
+                </button>
+              </div>
+              <button onClick={() => setFocusOpen(true)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, var(--blue), #2d5a8a)', color: '#fff', fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(58,111,168,.35)' }}>
+                <Timer size={14}/> Focus Timer
+              </button>
+              <ImportExportButton
+                collections={backupCollections}
+                eventPrefs={eventPrefs}
+                classMeetings={canvasClassEvents}
+                onImport={handleImport}
+                inline
+              />
+              {/* Settings menu — dark mode, accent color, show tour */}
+              <SettingsMenu
+                theme={theme}
+                onSetTheme={setThemeSmooth}
+                onShowTour={() => { resetOnboarding(); setShowOnboarding(true) }}
+                signedIn={!!currentUser}
+                variant="sidebar"
+              />
+            </div>
+          </main>
+        )}
+      </div>
+
+      {/* ── Mobile bottom tab bar ── */}
+      {isMobile && (
+        <nav className="lv-bottom-nav" style={{
+          display: 'flex', background: 'var(--sidebar)', borderTop: '1px solid rgba(255,255,255,.08)',
+          flexShrink: 0, zIndex: 20,
+          // Respect iOS home-indicator and Android navigation bar
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+        }}>
+          {NAV_ITEMS.map(item => {
+            const isActive = activeNav === item.id
+            return (
+              <button key={item.id} onClick={() => {
+                if (item.id === 'search' && activeNav !== 'search') {
+                  setSearchQuery(''); setSearchScope('all'); setSearchStatus('upcoming')
+                }
+                setActiveNav(item.id)
+              }}
+                      style={{
+                        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        gap: 3, padding: '10px 4px', border: 'none', background: 'transparent',
+                        color: isActive ? '#fff' : 'rgba(147,197,253,.5)',
+                        fontFamily: 'inherit', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer',
+                        borderTop: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+                        transition: 'all .15s', minHeight: 52,
+                      }}>
+                {item.icon}
+                <span style={{ lineHeight: 1, marginTop: 1 }}>{item.shortLabel ?? item.label}</span>
+              </button>
+            )
+          })}
+        </nav>
+      )}
+
+      {/* ── Modals ── */}
+
+      {/* A task clicked on the calendar. Not a modal — it anchors to the chip and the
+          calendar stays readable behind it, which is the point: ticking something off
+          shouldn't cost you the view you were looking at. */}
+      {taskMenu && (
+        <TaskActionMenu
+          anchor={taskMenu.anchor}
+          title={taskMenu.title}
+          done={taskMenu.done}
+          onToggle={() => toggleTodo(taskMenu.instanceId)}
+          onEdit={() => {
+            const todo = todos.find(t => t.id === taskMenu.todoId)
+            if (todo) { setEditingTodo(todo); setShowTodoModal(true) }
+          }}
+          /* Deletes the whole task, series included — the same thing the task list's
+             trash icon does. Dropping a single occurrence of a repeating task is a
+             different operation, and the edit form is where it belongs. */
+          onDelete={() => deleteTodo(taskMenu.todoId)}
+          onClose={() => setTaskMenu(null)}
+        />
+      )}
+
+      {detailEvent && (
+        <EventDetailModal
+          event={detailEvent}
+          categories={eventCategories}
+          colorOverride={eventPrefs[detailEvent.id]?.color ?? null}
+          hidden={!!eventPrefs[detailEvent.id]?.hidden}
+          important={!!eventPrefs[detailEvent.id]?.important}
+          onToggleImportant={toggleImportantEvent}
+          onEdit={ev => { setDetailEvent(null); setEventModal({ open: true, event: ev, date: null }) }}
+          onDelete={deleteEvent}
+          onHide={hideEvent}
+          onUnhide={unhideEvent}
+          onRecolor={handleRecolorEvent}
+          allNotes={notes}
+          onOpenNote={openNoteById}
+          onCancelMeeting={cancelClassMeeting}
+          onRemoveMeeting={removeClassMeeting}
+          onMarkExam={(classId, dateStr, occurrence) => {
+            setDetailEvent(null)
+            setExamDraft({ classId, dateStr, occurrence })
+          }}
+          onClearExam={clearClassExam}
+          /* Seeded with the day being looked at, so "new event" from an event on
+             Thursday starts on Thursday rather than today. */
+          onNewEvent={start => {
+            setDetailEvent(null)
+            setEventModal({ open: true, event: null, date: start ? toYMDLocal(start) : null })
+          }}
+          onClose={() => setDetailEvent(null)}
+        />
+      )}
+      {eventModal.open && (
+        <EventModal event={eventModal.event} initialDate={eventModal.date}
+                    initialEnd={eventModal.end} initialAllDay={eventModal.allDay}
+                    categories={eventCategories} onCategoriesChange={setEventCategories}
+                    initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes} onSave={saveEvent} onDelete={deleteEvent}
+                    onRecolor={handleRecolorEvent} colorOverride={eventModal.event ? eventPrefs[eventModal.event.id]?.color : null}
+                    allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
+                    onHide={hideEvent}
+                    existingEvents={events}
+                    canvasClasses={canvasClasses}
+                    /* end/allDay are cleared too, or a range dragged out once would
+                       still be prefilled the next time the form opened from a click. */
+                    onClose={() => { setEventModal({ open: false, event: null, date: null, end: null, allDay: false }); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
+      )}
+      {examDraft && (
+        <ExamBlockModal
+          meeting={{
+            courseName: examDraft.occurrence.courseName,
+            title:      examDraft.occurrence.title,
+            location:   examDraft.occurrence.location,
+            startTime:  hhmmLocal(examDraft.occurrence.start),
+            endTime:    hhmmLocal(examDraft.occurrence.end),
+            dateLabel:  new Date(examDraft.occurrence.start).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+          }}
+          defaults={examDraft.existing ?? {}}
+          onConfirm={(entry) => {
+            markClassExam(examDraft.classId, { ...entry, date: examDraft.dateStr })
+            pushToast('Marked as an exam', `${examDraft.occurrence.courseName || 'That period'} on ${examDraft.dateStr}`)
+            /* Same offer a hand-made exam event gets. An exam you have just put on the
+               calendar is the moment you are most likely to want study time for it. */
+            setStudyPlanPending({
+              id:    examDraft.occurrence.id,
+              title: entry.title || `${examDraft.occurrence.courseName || 'Class'} — Exam`,
+              start: entry.startTime ? `${examDraft.dateStr}T${entry.startTime}:00` : examDraft.occurrence.start,
+              extendedProps: { category: 'exam' },
+            })
+            setExamDraft(null)
+          }}
+          onClose={() => setExamDraft(null)}
+        />
+      )}
+      {studyPlanPending && (
+        <StudyPlanModal
+          examEvent={studyPlanPending}
+          existingEvents={events}
+          canvasClasses={canvasClasses}
+          onConfirm={(sessions) => {
+            sessions.forEach(s => saveEvent(s, 'single'))
+            setStudyPlanPending(null)
+            pushToast(`${sessions.length} study session${sessions.length !== 1 ? 's' : ''} scheduled`, `For "${studyPlanPending.title}"`)
+          }}
+          onDismiss={() => setStudyPlanPending(null)}
+        />
+      )}
+      {showTodoModal && (
+        <AddTodoModal events={events} canvasClasses={canvasClasses} todoCategories={todoCategoryOptions}
+                      allNotes={notes} onOpenNote={openNoteById} onCreateLinkedNote={createLinkedNote}
+                      initialTitle={noteConvertDraft?.title} initialNotes={noteConvertDraft?.notes}
+                      onAdd={addTodo} onEdit={updateTodo}
+                      editTodo={editingTodo}
+                      initialDate={initialTodoDate}
+                      initialCategory={initialTodoCategory}
+                      onClose={() => { setShowTodoModal(false); setEditingTodo(null); setInitialTodoDate(null); setInitialTodoCategory(null); setNoteConvertDraft(null); setPendingNoteLink(null) }} />
+      )}
+
+      <Toast toasts={toasts} onDismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
+
+      {showNewListModal && (
+        <NewListModal
+          onClose={() => setShowNewListModal(false)}
+          onCreate={(name, emoji) => {
+            createCustomList(name, emoji)
+            setShowNewListModal(false)
+          }}
+        />
+      )}
+
+      {showGoogleSettings && (
+        <GoogleCalendarSettings
+          onClose={() => {
+            setShowGoogleSettings(false)
+            window.dispatchEvent(new Event('gc-accounts-changed'))
+            syncGoogleCalendar()
+          }}
+          onSync={syncGoogleCalendar}
+        />
+      )}
+
+      {showCanvasSettings && (
+        <CanvasSettingsModal
+          onClose={() => {
+            setShowCanvasSettings(false)
+            window.dispatchEvent(new Event('canvas-credential-changed'))
+            syncCanvas()
+          }}
+          onSync={syncCanvas}
+          onColorsChange={updateCourseColors}
+          onIcsSync={syncCanvasIcs}
+        />
+      )}
+
+      {showClassModal && (
+        <ClassScheduleModal
+          /* The live record, not the snapshot taken when the modal opened: exceptions
+             are applied to state immediately, and a stale prop would show the list
+             unchanged until the form was reopened. */
+          editClass={editingClass ? (canvasClasses.find(c => c.id && c.id === editingClass.id) ?? editingClass) : null}
+          /* The rest of the schedule, so a lab can be declared a section of the
+             lecture it belongs to. */
+          classes={canvasClasses}
+          onSave={saveCanvasClass}
+          onDelete={deleteCanvasClass}
+          onRestoreMeeting={restoreClassMeeting}
+          onRemoveMeeting={removeClassMeeting}
+          onAddMeeting={addClassMeeting}
+          onClearExam={clearClassExam}
+          onClose={() => { setShowClassModal(false); setEditingClass(null) }}
+        />
+      )}
+
+      {canvasTodoModal && editingCanvas && (
+        <AddTodoModal
+          events={[...events, ...canvasClassEvents]}
+          todoCategories={todoCategories}
+          editTodo={editingCanvas}
+          onEditCanvas={updateCanvasAssignment}
+          onAdd={() => {}}
+          onEdit={() => {}}
+          onClose={() => { setCanvasTodoModal(false); setEditingCanvas(null) }}
+        />
+      )}
+
+      {/* Keyboard shortcuts help overlay */}
+      {showHelpOverlay && (
+        <ShortcutsHelp onClose={() => setShowHelpOverlay(false)} />
+      )}
+
+      {/* Search popup — desktop only; mobile uses the full-screen Search tab instead */}
+      {showSearchPopup && !isMobile && (
+        <Dialog label="Search everything" closing={searchClosing} onClose={closeSearchPopup}
+                panelStyle={{
+                  width: 'min(1040px,100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', borderRadius: 22,
+                  background: 'var(--bg)', boxShadow: '0 30px 80px rgba(0,0,0,.35)', border: '1px solid rgba(255,255,255,.08)',
+                }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+              <div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text)' }}>Search everything</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-3)', marginTop: 3 }}>Upcoming shown by default · Ctrl+K to open · Esc to close</div>
+              </div>
+              <button type="button" onClick={closeSearchPopup}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 700, padding: '10px 14px' }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: '18px 20px' }}>
+              <ErrorBoundary>
+                <SearchPanel
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  scope={searchScope}
+                  onScopeChange={setSearchScope}
+                  status={searchStatus}
+                  onStatusChange={setSearchStatus}
+                  results={searchResults}
+                  onSelect={openSearchResult}
+                  onToggleTodo={toggleTodo}
+                  isMobile={isMobile}
+                />
+              </ErrorBoundary>
+            </div>
+        </Dialog>
+      )}
+
+      {/* ── Search FAB (desktop only — mobile keeps search in bottom tab bar) ── */}
+      {!isMobile && (
+        <button
+          onClick={showSearchPopup ? closeSearchPopup : openSearchPopup}
+          title="Search (Ctrl+K)"
+          style={{
+            position: 'fixed', bottom: 24, right: 144,
+            width: 50, height: 50, borderRadius: '50%', border: '1px solid var(--border)',
+            background: showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)',
+            color:      showSearchPopup ? 'var(--blue)'    : 'var(--text-2)',
+            cursor: 'pointer', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-md)', transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.color = 'var(--blue)'; e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = showSearchPopup ? 'var(--blue-bg)' : 'var(--surface)'; e.currentTarget.style.color = showSearchPopup ? 'var(--blue)' : 'var(--text-2)'; e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)' }}
+        >
+          <Search size={20} />
+        </button>
+      )}
+
+      {/* ── Import / Export FAB (desktop only — mobile has it in the Settings tab) ── */}
+      {!isMobile && (
+        <ImportExportButton
+          collections={backupCollections}
+          eventPrefs={eventPrefs}
+          classMeetings={canvasClassEvents}
+          onImport={handleImport}
+        />
+      )}
+
+      {/* ── Focus Timer panel (Pomodoro tied to tasks) ── */}
+      <ErrorBoundary>
+        <FocusTimer
+          open={focusOpen}
+          onClose={() => setFocusOpen(false)}
+          isMobile={isMobile}
+          todos={todos}
+          canvasAssignments={canvasAssignments}
+          events={events}
+          onUpdateTodo={updateTodo}
+          onUpdateCanvas={updateCanvasAssignment}
+          onSaveEvent={saveEvent}
+          onSessionComplete={ss => setStudySessions(prev => {
+            // Guard against duplicate ids (e.g. double-fire edge cases)
+            if (prev.some(s => s.id === ss.id)) return prev
+            return [...prev, ss]
+          })}
+          studySessions={studySessions}
+          onTagSession={updateStudySession}
+          pushToast={pushToast}
+          digest={{ enabled: digestEnabled, saving: digestSaving, onToggle: toggleDigest, signedIn: !!currentUser }}
+        />
+      </ErrorBoundary>
+
+      {/* ── Focus Timer FAB (desktop only — mobile opens it from the Settings tab) ── */}
+      {!isMobile && (
+        <button
+          onClick={() => setFocusOpen(v => !v)}
+          title="Focus timer"
+          style={{
+            position: 'fixed', bottom: 24, right: 206,
+            width: 50, height: 50, borderRadius: '50%', border: '1px solid var(--border)',
+            background: focusOpen ? 'var(--blue-bg)' : 'var(--surface)',
+            color:      focusOpen ? 'var(--blue)'    : 'var(--text-2)',
+            cursor: 'pointer', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: 'var(--shadow-md)', transition: 'background .15s, color .15s, transform .15s, box-shadow .15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--blue-bg)'; e.currentTarget.style.color = 'var(--blue)'; e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = 'var(--shadow-lg)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = focusOpen ? 'var(--blue-bg)' : 'var(--surface)'; e.currentTarget.style.color = focusOpen ? 'var(--blue)' : 'var(--text-2)'; e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)' }}
+        >
+          <Timer size={20} />
+        </button>
+      )}
+
+      {/* ── Offline indicator (always mounted — shows/hides itself) ── */}
+      <OfflineIndicator
+        onReconnect={flushSyncNow}
+        syncStalled={syncStalled}
+        onRetrySync={() => { mergeAttempts.current = 0; runInitialMergeRef.current?.() }}
+      />
+
+      {/* ── Onboarding wizard (first-run only) ── */}
+      {showOnboarding && (
+        <OnboardingWizard
+          onClose={() => setShowOnboarding(false)}
+          onOpenGoogleSettings={() => { setShowOnboarding(false); setShowGoogleSettings(true) }}
+          onOpenCanvasSettings={() => { setShowOnboarding(false); setShowCanvasSettings(true) }}
+        />
+      )}
+
+      {/* ── Floating Corvus widget (desktop only) ── */}
+      {/* On mobile the bottom tab bar has a Corvus item — no floating button needed. */}
+      {!isMobile && activeNav !== 'corvus' && (
+        corvusFloat ? (
+          <div style={{
+            position: 'fixed', bottom: 24, right: 20,
+            width: 360, height: 500, zIndex: 200,
+            borderRadius: 18, overflow: 'hidden',
+            border: '1px solid var(--border)',
+            boxShadow: '0 12px 48px rgba(0,0,0,0.35)',
+            animation: 'corvus-panel-in .22s cubic-bezier(.22,1,.36,1)',
+          }}>
+            <Corvus
+              events={events} canvasClassEvents={canvasClassEvents} todos={todos}
+              canvasAssignments={canvasAssignments}
+              todoCategories={todoCategoryOptions} eventCategories={eventCategories}
+              onAddTodo={addTodo} onSaveEvent={saveEvent} onUpdateTodo={updateTodo}
+              onNavigateToItem={navigateToItem}
+              compact={true}
+              onExpand={() => { setCorvusFloat(false); setActiveNav('corvus') }}
+              onClose={() => setCorvusFloat(false)}
+              nudgeCluster={nudgeCluster}
+              onNudgeDismiss={dismissNudge}
+            />
+          </div>
+        ) : (
+          <div style={{ position: 'fixed', bottom: 24, right: 20, zIndex: 200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+            {/* Proactive nudge chip — only shown when cluster detected and not dismissed today */}
+            {nudgeCluster && activeNav !== 'corvus' && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'var(--surface)', border: '1px solid rgba(239,68,68,0.35)',
+                borderRadius: 16, padding: '8px 12px 8px 10px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+                animation: 'corvus-panel-in .3s cubic-bezier(.22,1,.36,1)',
+                maxWidth: 260,
+              }}>
+                <span style={{ fontSize: '1rem', flexShrink: 0 }}>🚦</span>
+                <button
+                  onClick={() => { setCorvusFloat(true) }}
+                  style={{
+                    flex: 1, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    textAlign: 'left', fontFamily: 'inherit',
+                  }}
+                >
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.3 }}>Busy stretch ahead</div>
+                  <div style={{ fontSize: '0.67rem', color: 'var(--text-2)', lineHeight: 1.3 }}>Want help planning it?</div>
+                </button>
+                <button
+                  onClick={dismissNudge}
+                  style={{ flexShrink: 0, background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--text-3)', display: 'flex', alignItems: 'center' }}
+                  title="Dismiss"
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => setCorvusFloat(true)}
+              title="Open Corvus"
+              style={{
+                width: 50, height: 50, borderRadius: '50%', border: 'none',
+                background: 'var(--blue)', color: '#fff', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                transition: 'transform .15s, box-shadow .15s',
+                position: 'relative',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 6px 28px rgba(0,0,0,0.4)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)';    e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)' }}
+            >
+              <CrowIcon size={22} />
+              {/* Red dot badge when nudge cluster active */}
+              {nudgeCluster && (
+                <span style={{
+                  position: 'absolute', top: 4, right: 4,
+                  width: 9, height: 9, borderRadius: '50%',
+                  background: '#ef4444', border: '2px solid var(--blue)',
+                }} />
+              )}
+            </button>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
