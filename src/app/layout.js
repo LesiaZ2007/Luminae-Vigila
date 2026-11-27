@@ -20,7 +20,11 @@ export const metadata = {
     title: 'luminaeVigila',
   },
   icons: {
-    apple: '/icon.svg',
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: '192x192' },
+    ],
+    apple: '/icon-192.png',
   },
 };
 
