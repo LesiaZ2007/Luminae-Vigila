@@ -3180,6 +3180,7 @@ export default function Planner({ demo = false, onResetDemo } = {}) {
                                 isMobile={isMobile}
                                 highlightEventId={searchHighlightId}
                                 targetDate={calendarTargetDate}
+                                demo={demo}
                                 onEventDrop={handleEventDrop}
                                 onEventResize={handleEventResize}
                                 onRecolorEvent={handleRecolorEvent}

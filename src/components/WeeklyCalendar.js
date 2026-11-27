@@ -68,6 +68,7 @@ export default function WeeklyCalendar({
   // ← / → step through consecutive periods. Parent turns this off while a modal
   // is open so arrows keep their normal meaning inside forms and pickers.
   arrowNavEnabled = true,
+  demo = false,
 }) {
   const calendarRef      = useRef(null)
   const touchStart       = useRef(null)
@@ -83,7 +84,9 @@ export default function WeeklyCalendar({
   // you leave the tab, so this is what makes coming back land where you left off.
   // Falls back to the per-device default when nothing has been stored yet.
   const savedPrefs = useRef(null)
-  if (savedPrefs.current === null) savedPrefs.current = loadCalendarPrefs()
+  if (savedPrefs.current === null) {
+    savedPrefs.current = demo ? { view: null, date: null, focused: true } : loadCalendarPrefs()
+  }
   const initialView = savedPrefs.current.view ?? (isMobile ? 'timeGridDay' : 'timeGridWeek')
 
   const [currentView,    setCurrentView]   = useState(initialView)
@@ -363,15 +366,17 @@ export default function WeeklyCalendar({
   const toggleFocus = useCallback(() => {
     setFocused(prev => {
       const next = !prev
-      const api = calendarRef.current?.getApi()
-      saveCalendarPrefs({
-        view:    api?.view?.type ?? currentView,
-        date:    toYMDLocal(api?.view?.currentStart ?? new Date()),
-        focused: next,
-      })
+      if (!demo) {
+        const api = calendarRef.current?.getApi()
+        saveCalendarPrefs({
+          view:    api?.view?.type ?? currentView,
+          date:    toYMDLocal(api?.view?.currentStart ?? new Date()),
+          focused: next,
+        })
+      }
       return next
     })
-  }, [currentView])
+  }, [currentView, demo])
 
   /**
    * Jump to the day view for a specific date.
@@ -569,7 +574,9 @@ export default function WeeklyCalendar({
     // `currentStart` rather than the visible range's start: in month view the grid
     // usually opens with a few days of the previous month, and saving those would
     // reopen on the wrong month.
-    saveCalendarPrefs({ view: info.view.type, date: toYMDLocal(info.view.currentStart), focused })
+    if (!demo) {
+      saveCalendarPrefs({ view: info.view.type, date: toYMDLocal(info.view.currentStart), focused })
+    }
   }
 
   const containerClass = [
