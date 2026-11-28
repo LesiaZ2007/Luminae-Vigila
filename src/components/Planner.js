@@ -178,6 +178,42 @@ function hhmmLocal(value) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+function DemoStatusCard({ onResetDemo }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 10, background: 'rgba(147,197,253,.10)', border: '1px solid rgba(147,197,253,.22)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#93c5fd', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          Demo · local only
+        </span>
+        {onResetDemo && (
+          <button
+            type="button"
+            onClick={onResetDemo}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, color: 'rgba(255,255,255,.8)' }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <Link
+          href="/"
+          style={{ fontSize: '0.72rem', fontWeight: 600, color: 'rgba(255,255,255,.88)', textDecoration: 'none' }}
+        >
+          Open full planner →
+        </Link>
+        <a
+          href="https://lastivka.dev/guide/luminae/"
+          rel="noopener"
+          style={{ fontSize: '0.68rem', fontWeight: 600, color: 'rgba(147,197,253,.85)', textDecoration: 'none' }}
+        >
+          Lastivka ↗
+        </a>
+      </div>
+    </div>
+  )
+}
+
 export default function Planner({ demo = false, onResetDemo } = {}) {
   const { theme, setTheme } = useTheme()
 
@@ -3031,28 +3067,7 @@ export default function Planner({ demo = false, onResetDemo } = {}) {
         <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {/* Sign-in / user display (or local demo pill) */}
           {demo ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 10, background: 'rgba(147,197,253,.10)', border: '1px solid rgba(147,197,253,.22)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#93c5fd', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                  Demo · local only
-                </span>
-                {onResetDemo && (
-                  <button
-                    type="button"
-                    onClick={onResetDemo}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.68rem', fontWeight: 700, color: 'rgba(255,255,255,.8)' }}
-                  >
-                    Reset
-                  </button>
-                )}
-              </div>
-              <Link
-                href="/"
-                style={{ fontSize: '0.72rem', fontWeight: 600, color: 'rgba(255,255,255,.85)', textDecoration: 'none' }}
-              >
-                Open full planner →
-              </Link>
-            </div>
+            <DemoStatusCard onResetDemo={onResetDemo} />
           ) : currentUser ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, background: 'rgba(255,255,255,.05)' }}>
               <div style={{ flex: 1, overflow: 'hidden' }}>
@@ -3139,7 +3154,7 @@ export default function Planner({ demo = false, onResetDemo } = {}) {
         {activeNav === 'calendar' && (
           <>
             <main className="dot-grid" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: isMobile ? '10px 6px 6px' : 20, position: 'relative' }}>
-              {isMobile && (
+              {isMobile && !demo && (
                 <button
                   onClick={() => setShowGoogleSettings(true)}
                   title="Google Calendar settings"
@@ -3462,8 +3477,10 @@ export default function Planner({ demo = false, onResetDemo } = {}) {
             </div>
 
             {/* Account */}
-            <div style={{ margin: '10px 12px 0', padding: '10px 12px', borderRadius: 12, background: 'rgba(0,0,0,0.15)' }}>
-              {currentUser ? (
+            <div style={{ margin: '10px 12px 0', padding: demo ? 0 : '10px 12px', borderRadius: 12, background: demo ? 'transparent' : 'rgba(0,0,0,0.15)' }}>
+              {demo ? (
+                <DemoStatusCard onResetDemo={onResetDemo} />
+              ) : currentUser ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ flex: 1, overflow: 'hidden' }}>
                     <div style={{ fontSize: '0.62rem', color: 'rgba(147,197,253,.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Signed in as</div>
