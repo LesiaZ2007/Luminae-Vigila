@@ -11,9 +11,23 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata = {
+  metadataBase: new URL('https://luminae.lastivka.dev'),
   title: "luminaeVigila",
   description: "Your personal schedule, calendar, and task manager",
   manifest: '/manifest.webmanifest',
+  openGraph: {
+    type: 'website',
+    siteName: 'luminaeVigila',
+    title: 'luminaeVigila — student planner & weekly schedule',
+    description: 'Your personal schedule, calendar, and task manager built around classes, assignments, and focus sessions.',
+    images: [{ url: '/opengraph-image.png', width: 1200, height: 630, alt: 'luminaeVigila weekly planner and crow mark' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'luminaeVigila — student planner & weekly schedule',
+    description: 'Your personal schedule, calendar, and task manager built around classes, assignments, and focus sessions.',
+    images: ['/opengraph-image.png'],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',

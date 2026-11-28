@@ -64,6 +64,13 @@ export default function NotFound() {
             Try demo
           </Link>
         </div>
+        <a
+          href="https://lastivka.dev/guide/luminae/"
+          rel="noopener"
+          style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-3)', textDecoration: 'none' }}
+        >
+          Back to Lastivka field guide ↗
+        </a>
       </div>
     </main>
   )
